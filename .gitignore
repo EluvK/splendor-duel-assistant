@@ -32,7 +32,7 @@ checkpoints/
 *.pt
 *.onnx
 *.bin
-data/games/
+data/
 logs/
 
 # Reference (外部只读参考)

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import random
 from typing import Dict, Iterator, List, Optional
 import numpy as np
 import torch
@@ -21,10 +22,11 @@ class CompactBatch:
     def num_samples(self) -> int:
         return len(self.action)
 
-    def save_npz(self, path: Path) -> None:
-        """持久化保存为紧凑压缩分片文件."""
+    def save_npz(self, path: Path, compressed: bool = False) -> None:
+        """持久化保存为分片文件 (默认未压缩以取得最大读写吞吐)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
+        save_fn = np.savez_compressed if compressed else np.savez
+        save_fn(
             path,
             obs=self.obs,
             mask=self.mask,
@@ -69,7 +71,7 @@ class FastTensorLoader:
         self.resident_on_device = False
         if device is not None and device.type == "cuda":
             try:
-                # 尝试整块载入显存 (零总线传输瓶颈)
+                # 单个分片通常约几百MB，直接常驻显存，零总线传输延迟
                 self.obs = self.obs.to(device)
                 self.mask = self.mask.to(device)
                 self.action = self.action.to(device)
@@ -145,22 +147,37 @@ class ShardedBuffer:
     def __init__(self, shard_dir: Path) -> None:
         self.shard_dir = Path(shard_dir)
         self.shard_dir.mkdir(parents=True, exist_ok=True)
+        self.refresh()
+
+    def refresh(self) -> None:
         self.shard_files: List[Path] = sorted(list(self.shard_dir.glob("shard_*.npz")))
 
-    def add_shard(self, batch: CompactBatch) -> Path:
-        """保存新分片."""
+    def add_shard(self, batch: CompactBatch, compressed: bool = False) -> Path:
+        """保存新分片到磁盘."""
         shard_idx = len(self.shard_files) + 1
         path = self.shard_dir / f"shard_{shard_idx:05d}.npz"
-        batch.save_npz(path)
+        batch.save_npz(path, compressed=compressed)
         self.shard_files.append(path)
         return path
 
-    def iter_shards(self) -> Iterator[CompactBatch]:
-        """流式遍历所有分片，训练完一个自动释放内存，内存永远恒定."""
-        for p in self.shard_files:
+    def iter_shards(self, shuffle: bool = False) -> Iterator[CompactBatch]:
+        """流式遍历分片，加载完一个训练完即释放，内存恒定稳定."""
+        files = list(self.shard_files)
+        if shuffle:
+            random.shuffle(files)
+        for p in files:
             yield CompactBatch.load_npz(p)
 
+    def count_total_samples(self) -> int:
+        """快速统计所有分片的总样本数 (仅读 action 长度)."""
+        total = 0
+        for p in self.shard_files:
+            with np.load(p) as data:
+                total += len(data["action"])
+        return total
+
     def clear(self) -> None:
+        """清空所有分片."""
         for p in self.shard_files:
             if p.exists():
                 p.unlink()

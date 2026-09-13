@@ -1,16 +1,18 @@
-"""Trainer implementation with multi-task loss, AMP and atomic checkpointing."""
+"""Trainer implementation with multi-task loss, AMP, atomic checkpointing and sharded streaming."""
 
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import random
 import tempfile
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from splendor_ai.progress import Progress
+from splendor_ai.dataset import CompactBatch, FastTensorLoader
 from splendor_ai.net import SplendorNet
+from splendor_ai.progress import Progress
 
 
 @dataclass
@@ -56,7 +58,7 @@ class Trainer:
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     def train_epoch(self, dataloader: Any) -> Dict[str, float]:
-        """训练单个 Epoch."""
+        """训练单个 Epoch (单一 DataLoader/FastTensorLoader)."""
         self.net.train()
         total_loss = 0.0
         total_p_loss = 0.0
@@ -80,13 +82,8 @@ class Trainer:
                 logits, value = self.net(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
-                # 1. 策略交叉熵损失 (直接使用整数动作标量)
                 policy_loss = F.cross_entropy(masked_logits, target_action)
-
-                # 2. 价值 MSE 损失
                 value_loss = F.mse_loss(value, target_value)
-
-                # 联合损失
                 loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
             self.scaler.scale(loss).backward()
@@ -99,7 +96,6 @@ class Trainer:
             total_p_loss += policy_loss.item() * b_size
             total_v_loss += value_loss.item() * b_size
 
-            # 评估命中率
             pred_top3 = masked_logits.topk(k=3, dim=-1).indices
             correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
             correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
@@ -122,6 +118,89 @@ class Trainer:
             "top1_acc": correct_top1 / total_samples,
             "top3_acc": correct_top3 / total_samples,
             "lr": self.optimizer.param_groups[0]["lr"],
+        }
+
+    def train_epoch_sharded(
+        self,
+        shard_files: List[Path],
+        batch_size: int = 256,
+        shuffle_shards: bool = True,
+    ) -> Dict[str, float]:
+        """在多个分片文件流上训练单个完整 Epoch (内存永远恒定在单分片上限内)."""
+        self.net.train()
+        total_loss = 0.0
+        total_p_loss = 0.0
+        total_v_loss = 0.0
+        correct_top1 = 0
+        correct_top3 = 0
+        total_samples = 0
+
+        files = list(shard_files)
+        if shuffle_shards:
+            random.shuffle(files)
+
+        num_shards = len(files)
+        pbar = Progress(total=num_shards, label=f"Train Ep {self.epoch + 1} Shards")
+
+        for s_idx, shard_path in enumerate(files):
+            # 加载单分片数据
+            batch_data = CompactBatch.load_npz(shard_path)
+            loader = FastTensorLoader(batch_data, batch_size=batch_size, shuffle=True, device=self.device)
+
+            for batch in loader:
+                obs = batch["obs"]
+                mask = batch["mask"]
+                target_action = batch["action"]
+                target_value = batch["value"]
+                b_size = obs.shape[0]
+
+                self.optimizer.zero_grad()
+
+                with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
+                    logits, value = self.net(obs)
+                    masked_logits = SplendorNet.mask_logits(logits, mask)
+
+                    policy_loss = F.cross_entropy(masked_logits, target_action)
+                    value_loss = F.mse_loss(value, target_value)
+                    loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+
+                self.scaler.scale(loss).backward()
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip_norm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+                total_loss += loss.item() * b_size
+                total_p_loss += policy_loss.item() * b_size
+                total_v_loss += value_loss.item() * b_size
+
+                pred_top3 = masked_logits.topk(k=3, dim=-1).indices
+                correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
+                correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
+                total_samples += b_size
+
+            # 关键：彻底释放单分片内存并清理 GPU 临时缓存
+            del batch_data
+            del loader
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+
+            cur_top1 = (correct_top1 / max(total_samples, 1)) * 100.0
+            cur_loss = total_loss / max(total_samples, 1)
+            pbar.update(s_idx + 1, extra=f"loss: {cur_loss:.3f} | top1: {cur_top1:.1f}%")
+
+        pbar.done(f"loss: {total_loss/total_samples:.4f} | top1: {correct_top1/total_samples*100:.1f}%")
+        self.epoch += 1
+        self.scheduler.step()
+
+        return {
+            "loss": total_loss / total_samples,
+            "policy_loss": total_p_loss / total_samples,
+            "value_loss": total_v_loss / total_samples,
+            "top1_acc": correct_top1 / total_samples,
+            "top3_acc": correct_top3 / total_samples,
+            "lr": self.optimizer.param_groups[0]["lr"],
+            "total_samples": total_samples,
         }
 
     def evaluate(self, dataloader: Any) -> Dict[str, float]:
@@ -172,6 +251,17 @@ class Trainer:
             "eval_top1_acc": correct_top1 / total_samples,
             "eval_top3_acc": correct_top3 / total_samples,
         }
+
+    def evaluate_sharded(self, val_shard_path: Path, batch_size: int = 256) -> Dict[str, float]:
+        """评估单个分片文件."""
+        val_data = CompactBatch.load_npz(val_shard_path)
+        loader = FastTensorLoader(val_data, batch_size=batch_size, shuffle=False, device=self.device)
+        res = self.evaluate(loader)
+        del val_data
+        del loader
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return res
 
     def save_checkpoint(
         self, filename: str = "latest.pt", is_best: bool = False, meta: Optional[Dict[str, Any]] = None
