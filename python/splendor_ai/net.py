@@ -176,33 +176,30 @@ class SplendorNet(nn.Module):
         """将当前模型导出为 ONNX 二进制字节流 (供 Rust tract-onnx 引擎极速推理)."""
         import io
 
-        was_training = self.training
-        self.eval()
-
         orig_device = next(self.parameters()).device
-        cpu_model = self if orig_device.type == "cpu" else self.cpu()
-
-        dummy_obs = torch.zeros(1, self.OBS_SIZE, dtype=torch.float32)
+        dummy_obs = torch.zeros(1, self.OBS_SIZE, dtype=torch.float32, device=orig_device)
         buf = io.BytesIO()
 
-        torch.onnx.export(
-            cpu_model,
-            dummy_obs,
-            buf,
-            input_names=["obs"],
-            output_names=["policy_logits", "value"],
-            dynamic_axes={
-                "obs": {0: "batch_size"},
-                "policy_logits": {0: "batch_size"},
-                "value": {0: "batch_size"},
-            },
-            opset_version=17,
-            do_constant_folding=True,
-        )
-
-        if orig_device.type != "cpu":
-            self.to(orig_device)
-        if was_training:
-            self.train()
+        was_training = self.training
+        self.eval()
+        try:
+            with torch.no_grad():
+                torch.onnx.export(
+                    self,
+                    dummy_obs,
+                    buf,
+                    input_names=["obs"],
+                    output_names=["policy_logits", "value"],
+                    dynamic_axes={
+                        "obs": {0: "batch_size"},
+                        "policy_logits": {0: "batch_size"},
+                        "value": {0: "batch_size"},
+                    },
+                    opset_version=17,
+                    do_constant_folding=True,
+                )
+        finally:
+            if was_training:
+                self.train()
 
         return buf.getvalue()

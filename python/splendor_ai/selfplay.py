@@ -1,6 +1,6 @@
 """Self-play and heuristic dataset generators for Splendor Duel."""
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import numpy as np
 import torch
 
@@ -59,7 +59,8 @@ def generate_mcts_selfplay_compact_batch(
 
 
 def generate_rust_neural_mcts_compact_batch(
-    net: SplendorNet,
+    net: Optional[SplendorNet] = None,
+    onnx_bytes: Optional[bytes] = None,
     num_games: int = 100,
     num_simulations: int = 30,
     start_seed: int = 42,
@@ -68,7 +69,11 @@ def generate_rust_neural_mcts_compact_batch(
     dirichlet_eps: float = 0.25,
 ) -> CompactBatch:
     """全速调用底层 Rust 8 线程并行 ONNX 纯神经网络 MCTS，秒级产出正统 AlphaZero 自博弈样本."""
-    onnx_bytes = net.export_onnx_bytes()
+    if onnx_bytes is None:
+        if net is None:
+            raise ValueError("Either net or onnx_bytes must be provided")
+        onnx_bytes = net.export_onnx_bytes()
+
     raw_obs, raw_masks, raw_actions, raw_values, total_steps = generate_neural_mcts_samples(
         onnx_bytes,
         num_games,

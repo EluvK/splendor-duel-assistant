@@ -146,8 +146,17 @@ class Arena:
             "draw": 0,
         }
 
-        actual_workers = min(8, os.cpu_count() or 4) if workers <= 0 else workers
-        actual_workers = min(actual_workers, total_games)
+        # 检查是否包含 GPU (CUDA) 模型智能体。PyTorch CUDA 多线程并发调用同一网络极易造成驱动级死锁，CUDA 下使用单线程最稳最快
+        is_cuda = any(
+            getattr(agent, "device", None) is not None
+            and getattr(getattr(agent, "device", None), "type", "") == "cuda"
+            for agent in [self.agent0, self.agent1]
+        )
+        if is_cuda and workers <= 0:
+            actual_workers = 1
+        else:
+            actual_workers = min(8, os.cpu_count() or 4) if workers <= 0 else workers
+            actual_workers = min(actual_workers, total_games)
         pbar = Progress(total=total_games, label=f"Arena: {self.agent0_name} vs {self.agent1_name}")
 
         # 构建所有成对任务: (pair_idx, is_swap, seed, p0_agent, p1_agent)

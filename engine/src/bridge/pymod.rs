@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rand::SeedableRng;
@@ -184,33 +186,36 @@ impl PyGameState {
 /// 批量多线程并行生成启发式专家轨迹样本 (释放 GIL，全核并发)
 #[pyfunction]
 #[pyo3(signature = (num_games=1000, start_seed=42))]
-pub fn generate_heuristic_samples<'py>(
-    py: Python<'py>,
+pub fn generate_heuristic_samples(
+    py: Python<'_>,
     num_games: usize,
     start_seed: u64,
 ) -> PyResult<(
-    Bound<'py, numpy::PyArray1<f32>>,
-    Bound<'py, numpy::PyArray1<u8>>,
-    Bound<'py, numpy::PyArray1<i32>>,
-    Bound<'py, numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<u8>>,
+    pyo3::Py<numpy::PyArray1<i32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
     usize,
 )> {
-    let batch = crate::ai::sample_heuristic_games_parallel(num_games, start_seed);
+    let batch = py.detach(|| crate::ai::sample_heuristic_games_parallel(num_games, start_seed));
 
-    let total_steps = batch.total_steps;
-    let obs_arr = numpy::PyArray1::from_vec(py, batch.obs);
-    let mask_arr = numpy::PyArray1::from_vec(py, batch.masks);
-    let action_arr = numpy::PyArray1::from_vec(py, batch.actions);
-    let value_arr = numpy::PyArray1::from_vec(py, batch.values);
+    let (obs_arr, mask_arr, action_arr, value_arr) = Python::attach(|py| {
+        (
+            numpy::PyArray1::from_vec(py, batch.obs).unbind(),
+            numpy::PyArray1::from_vec(py, batch.masks).unbind(),
+            numpy::PyArray1::from_vec(py, batch.actions).unbind(),
+            numpy::PyArray1::from_vec(py, batch.values).unbind(),
+        )
+    });
 
-    Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
+    Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
 }
 
 /// 批量多线程并行生成带 MCTS 深度推演与 AlphaZero 探索机制的自博弈样本 (8 线程全速并发)
 #[pyfunction]
 #[pyo3(signature = (num_games=100, num_sims=30, start_seed=42, temp_steps=12, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
-pub fn generate_mcts_samples<'py>(
-    py: Python<'py>,
+pub fn generate_mcts_samples(
+    py: Python<'_>,
     num_games: usize,
     num_sims: usize,
     start_seed: u64,
@@ -218,34 +223,39 @@ pub fn generate_mcts_samples<'py>(
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> PyResult<(
-    Bound<'py, numpy::PyArray1<f32>>,
-    Bound<'py, numpy::PyArray1<u8>>,
-    Bound<'py, numpy::PyArray1<i32>>,
-    Bound<'py, numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<u8>>,
+    pyo3::Py<numpy::PyArray1<i32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
     usize,
 )> {
-    let batch = crate::ai::sample_mcts_games_parallel_with_config(
-        num_games,
-        num_sims,
-        start_seed,
-        temp_steps,
-        dirichlet_alpha,
-        dirichlet_eps,
-    );
+    let batch = py.detach(|| {
+        crate::ai::sample_mcts_games_parallel_with_config(
+            num_games,
+            num_sims,
+            start_seed,
+            temp_steps,
+            dirichlet_alpha,
+            dirichlet_eps,
+        )
+    });
 
-    let total_steps = batch.total_steps;
-    let obs_arr = numpy::PyArray1::from_vec(py, batch.obs);
-    let mask_arr = numpy::PyArray1::from_vec(py, batch.masks);
-    let action_arr = numpy::PyArray1::from_vec(py, batch.actions);
-    let value_arr = numpy::PyArray1::from_vec(py, batch.values);
+    let (obs_arr, mask_arr, action_arr, value_arr) = Python::attach(|py| {
+        (
+            numpy::PyArray1::from_vec(py, batch.obs).unbind(),
+            numpy::PyArray1::from_vec(py, batch.masks).unbind(),
+            numpy::PyArray1::from_vec(py, batch.actions).unbind(),
+            numpy::PyArray1::from_vec(py, batch.values).unbind(),
+        )
+    });
 
-    Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
+    Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
 }
 
 #[pyfunction]
 #[pyo3(signature = (model_bytes, num_games=100, num_sims=30, start_seed=42, temp_steps=12, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
-pub fn generate_neural_mcts_samples<'py>(
-    py: Python<'py>,
+pub fn generate_neural_mcts_samples(
+    py: Python<'_>,
     model_bytes: &[u8],
     num_games: usize,
     num_sims: usize,
@@ -254,28 +264,70 @@ pub fn generate_neural_mcts_samples<'py>(
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> PyResult<(
-    Bound<'py, numpy::PyArray1<f32>>,
-    Bound<'py, numpy::PyArray1<u8>>,
-    Bound<'py, numpy::PyArray1<i32>>,
-    Bound<'py, numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<u8>>,
+    pyo3::Py<numpy::PyArray1<i32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
     usize,
 )> {
-    let batch = crate::ai::sample_neural_mcts_games_parallel(
-        model_bytes,
-        num_games,
-        num_sims,
-        start_seed,
-        temp_steps,
-        dirichlet_alpha,
-        dirichlet_eps,
-    )
-    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+    let batch = py
+        .detach(|| {
+            crate::ai::sample_neural_mcts_games_parallel(
+                model_bytes,
+                num_games,
+                num_sims,
+                start_seed,
+                temp_steps,
+                dirichlet_alpha,
+                dirichlet_eps,
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
 
-    let total_steps = batch.total_steps;
-    let obs_arr = numpy::PyArray1::from_vec(py, batch.obs);
-    let mask_arr = numpy::PyArray1::from_vec(py, batch.masks);
-    let action_arr = numpy::PyArray1::from_vec(py, batch.actions);
-    let value_arr = numpy::PyArray1::from_vec(py, batch.values);
+    let (obs_arr, mask_arr, action_arr, value_arr) = Python::attach(|py| {
+        (
+            numpy::PyArray1::from_vec(py, batch.obs).unbind(),
+            numpy::PyArray1::from_vec(py, batch.masks).unbind(),
+            numpy::PyArray1::from_vec(py, batch.actions).unbind(),
+            numpy::PyArray1::from_vec(py, batch.values).unbind(),
+        )
+    });
 
-    Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
+    Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
+}
+
+/// 纯 Rust 多线程 8 核并发成对严格换座对抗评测 (0.05 秒极速完成 20 局门禁对抗，零 Python/CUDA 开销)
+#[pyfunction]
+#[pyo3(signature = (model_bytes_0, model_bytes_1, num_pairs=10, base_seed=1000))]
+pub fn evaluate_neural_match(
+    py: Python<'_>,
+    model_bytes_0: &[u8],
+    model_bytes_1: &[u8],
+    num_pairs: usize,
+    base_seed: u64,
+) -> PyResult<(usize, usize, usize, usize, HashMap<String, usize>)> {
+    let res = py
+        .detach(|| {
+            crate::ai::evaluate_neural_match_parallel(
+                model_bytes_0,
+                model_bytes_1,
+                num_pairs,
+                base_seed,
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+
+    let mut reasons = HashMap::new();
+    reasons.insert("20_points".to_string(), res.reasons_20_pts);
+    reasons.insert("10_crowns".to_string(), res.reasons_10_crowns);
+    reasons.insert("10_color_points".to_string(), res.reasons_10_color);
+    reasons.insert("draw".to_string(), res.draws);
+
+    Ok((
+        res.total_games,
+        res.agent0_wins,
+        res.agent1_wins,
+        res.draws,
+        reasons,
+    ))
 }

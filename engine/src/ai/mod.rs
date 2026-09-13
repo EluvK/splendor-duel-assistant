@@ -18,7 +18,7 @@ pub use replay::{
     ReplayStep, RoyalDto, ScoredActionDto, StateDto,
 };
 pub use sampling::{
-    sample_heuristic_games_parallel, sample_mcts_games_parallel,
-    sample_mcts_games_parallel_with_config, sample_neural_mcts_games_parallel,
-    CompactBatchSamples,
+    evaluate_neural_match_parallel, sample_heuristic_games_parallel,
+    sample_mcts_games_parallel, sample_mcts_games_parallel_with_config,
+    sample_neural_mcts_games_parallel, CompactBatchSamples, ParallelMatchResult,
 };

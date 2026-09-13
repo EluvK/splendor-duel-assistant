@@ -29,5 +29,6 @@ fn _engine(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bridge::pymod::generate_heuristic_samples, m)?)?;
     m.add_function(wrap_pyfunction!(bridge::pymod::generate_mcts_samples, m)?)?;
     m.add_function(wrap_pyfunction!(bridge::pymod::generate_neural_mcts_samples, m)?)?;
+    m.add_function(wrap_pyfunction!(bridge::pymod::evaluate_neural_match, m)?)?;
     Ok(())
 }

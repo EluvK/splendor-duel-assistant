@@ -6,9 +6,10 @@ use crate::ai::heuristic_ai::HeuristicAI;
 use crate::ai::mcts::RustMCTS;
 use crate::ai::neural_evaluator::TractNeuralEvaluator;
 use crate::bridge::encode::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
-use crate::game_state::phase::TurnPhase;
+use crate::game_state::phase::{TurnPhase, VictoryReason};
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
+use crate::gameplay::rules::RuleEngine;
 
 /// 单局紧凑对弈轨迹
 struct SingleGameTrajectory {
@@ -370,4 +371,115 @@ pub fn sample_neural_mcts_games_parallel(
         actions: all_actions,
         values: all_values,
     })
+}
+
+#[derive(Debug, Default)]
+pub struct ParallelMatchResult {
+    pub total_games: usize,
+    pub agent0_wins: usize,
+    pub agent1_wins: usize,
+    pub draws: usize,
+    pub reasons_20_pts: usize,
+    pub reasons_10_crowns: usize,
+    pub reasons_10_color: usize,
+}
+
+/// 纯 Rust 多线程 8 核并发进行严格换座的 PolicyNet 门禁对抗评测 (0.1 秒秒杀 20 局对决)
+pub fn evaluate_neural_match_parallel(
+    bytes0: &[u8],
+    bytes1: &[u8],
+    num_pairs: usize,
+    base_seed: u64,
+) -> Result<ParallelMatchResult, String> {
+    let eval0 = TractNeuralEvaluator::from_bytes(bytes0)?;
+    let eval1 = TractNeuralEvaluator::from_bytes(bytes1)?;
+
+    let total_games = num_pairs * 2;
+    let mut tasks = Vec::with_capacity(total_games);
+    for i in 0..num_pairs {
+        let seed = base_seed + (i as u64) * 997;
+        tasks.push((seed, false)); // 局 1: agent0 是 P0, agent1 是 P1
+        tasks.push((seed, true));  // 局 2: agent1 是 P0, agent0 是 P1
+    }
+
+    let results: Vec<(Option<usize>, bool, Option<VictoryReason>)> = tasks
+        .into_par_iter()
+        .map(|(seed, is_swap)| {
+            let mut game = GameState::new_game(seed);
+            let mut steps = 0;
+            while !matches!(game.phase, TurnPhase::GameOver(_)) && steps < 400 {
+                steps += 1;
+                let acting_player = game.current_player;
+                let is_agent0 = if !is_swap {
+                    acting_player == 0
+                } else {
+                    acting_player == 1
+                };
+
+                let legals = RuleEngine::legal_actions(&game);
+                if legals.is_empty() {
+                    break;
+                }
+                if legals.len() == 1 {
+                    let _ = GameEngine::step(&mut game, &legals[0]);
+                    continue;
+                }
+
+                let obs = encode_state(&game);
+                let eval = if is_agent0 { &eval0 } else { &eval1 };
+                let (logits, _) = match eval.evaluate(&obs) {
+                    Ok(r) => r,
+                    Err(_) => break,
+                };
+
+                let mut best_score = f32::NEG_INFINITY;
+                let mut best_act = legals[0].clone();
+                for act in legals {
+                    let id = action_to_id(&act);
+                    let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
+                    if logit > best_score {
+                        best_score = logit;
+                        best_act = act;
+                    }
+                }
+
+                if GameEngine::step(&mut game, &best_act).is_err() {
+                    break;
+                }
+            }
+
+            let winner = game.winner.map(|(w, r)| (w, r));
+            let w_id = winner.map(|(w, _)| w);
+            let reason = winner.map(|(_, r)| r);
+            (w_id, is_swap, reason)
+        })
+        .collect();
+
+    let mut res = ParallelMatchResult {
+        total_games,
+        ..Default::default()
+    };
+
+    for (winner, is_swap, reason) in results {
+        match winner {
+            Some(w) => {
+                let agent0_won = if !is_swap { w == 0 } else { w == 1 };
+                if agent0_won {
+                    res.agent0_wins += 1;
+                } else {
+                    res.agent1_wins += 1;
+                }
+                if let Some(r) = reason {
+                    match r {
+                        VictoryReason::TwentyPrestigePoints => res.reasons_20_pts += 1,
+                        VictoryReason::TenCrowns => res.reasons_10_crowns += 1,
+                        VictoryReason::TenPointsSameColor(_) => res.reasons_10_color += 1,
+                    }
+                }
+            }
+            None => res.draws += 1,
+        }
+    }
+
+    Ok(res)
 }

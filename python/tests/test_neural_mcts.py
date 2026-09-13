@@ -117,8 +117,8 @@ def test_generate_rust_neural_mcts_selfplay():
     batch = generate_rust_neural_mcts_compact_batch(
         net=net,
         num_games=1,
-        num_simulations=5,
-        start_seed=123,
+        num_simulations=10,
+        start_seed=42,
         temp_steps=4,
     )
 

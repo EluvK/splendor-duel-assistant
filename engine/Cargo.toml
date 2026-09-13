@@ -34,18 +34,3 @@ path = "src/bin/replay_web.rs"
 name = "bench"
 path = "src/bin/bench.rs"
 
-[profile.dev]
-opt-level = 0
-codegen-units = 16
-debug = true
-
-# 依赖库满血优化且永久缓存，自身代码秒级增量编译
-[profile.dev.package."*"]
-opt-level = 3
-
-[profile.release]
-opt-level = 3
-codegen-units = 16
-lto = false
-debug = false
-strip = true
