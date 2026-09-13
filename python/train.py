@@ -6,7 +6,7 @@ import time
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from splendor_ai.dataset import CompactDataset, ShardedBuffer
+from splendor_ai.dataset import CompactBatch, CompactDataset, FastTensorLoader, ShardedBuffer
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
@@ -66,17 +66,29 @@ def train_imitation(args: argparse.Namespace) -> None:
         f"(耗时: {gen_time:.2f}s, 吞吐率: {total_steps/gen_time:.0f} 步/秒 | {total_steps/gen_time/10000:.1f} 万步/秒)"
     )
 
-    # 2. 划分训练集与验证集 (9:1)
-    dataset = CompactDataset(batch)
-    val_size = max(1, int(len(dataset) * 0.1))
-    train_size = len(dataset) - val_size
-    train_set, val_set = random_split(dataset, [train_size, val_size])
+    # 2. 划分训练集与验证集 (9:1 紧凑切片)
+    val_samples = max(1, int(batch.num_samples * 0.1))
+    train_samples = batch.num_samples - val_samples
 
-    train_loader = DataLoader(
-        train_set, batch_size=args.batch_size, shuffle=True, drop_last=True, pin_memory=(device_str == "cuda")
+    train_batch = CompactBatch(
+        obs=batch.obs[:train_samples],
+        mask=batch.mask[:train_samples],
+        action=batch.action[:train_samples],
+        value=batch.value[:train_samples],
     )
-    val_loader = DataLoader(
-        val_set, batch_size=args.batch_size, shuffle=False, pin_memory=(device_str == "cuda")
+    val_batch = CompactBatch(
+        obs=batch.obs[train_samples:],
+        mask=batch.mask[train_samples:],
+        action=batch.action[train_samples:],
+        value=batch.value[train_samples:],
+    )
+
+    device_obj = torch.device(device_str)
+    train_loader = FastTensorLoader(
+        train_batch, batch_size=args.batch_size, shuffle=True, device=device_obj
+    )
+    val_loader = FastTensorLoader(
+        val_batch, batch_size=args.batch_size, shuffle=False, device=device_obj
     )
 
     # 3. 初始化模型与训练器
@@ -158,8 +170,9 @@ def train_selfplay(args: argparse.Namespace) -> None:
         gen_time = time.time() - t0
         print(f"采样完成！获得 {batch.num_samples} 紧凑样本 (耗时: {gen_time:.1f}s)")
 
-        dataset = CompactDataset(batch)
-        loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+        loader = FastTensorLoader(
+            batch, batch_size=args.batch_size, shuffle=True, device=device
+        )
 
         for ep in range(args.train_epochs):
             metrics = trainer.train_epoch(loader)

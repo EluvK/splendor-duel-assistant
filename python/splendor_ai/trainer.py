@@ -4,11 +4,12 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from splendor_ai.progress import Progress
 from splendor_ai.net import SplendorNet
 
 
@@ -54,7 +55,7 @@ class Trainer:
         self.ckpt_dir = Path(self.cfg.ckpt_dir)
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
+    def train_epoch(self, dataloader: Any) -> Dict[str, float]:
         """训练单个 Epoch."""
         self.net.train()
         total_loss = 0.0
@@ -64,7 +65,9 @@ class Trainer:
         correct_top3 = 0
         total_samples = 0
 
-        for batch in dataloader:
+        pbar = Progress(total=len(dataloader), label=f"Train Ep {self.epoch + 1}")
+
+        for step_i, batch in enumerate(dataloader):
             obs = batch["obs"].to(self.device, non_blocking=True)
             mask = batch["mask"].to(self.device, non_blocking=True)
             target_action = batch["action"].to(self.device, non_blocking=True)
@@ -102,6 +105,13 @@ class Trainer:
             correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
             total_samples += b_size
 
+            if (step_i + 1) % 10 == 0 or (step_i + 1) == len(dataloader):
+                pbar.update(
+                    step_i + 1,
+                    extra=f"loss: {loss.item():.3f} | top1: {correct_top1/total_samples*100:.1f}%",
+                )
+
+        pbar.done(f"loss: {total_loss/total_samples:.4f} | top1: {correct_top1/total_samples*100:.1f}%")
         self.epoch += 1
         self.scheduler.step()
 
@@ -114,7 +124,7 @@ class Trainer:
             "lr": self.optimizer.param_groups[0]["lr"],
         }
 
-    def evaluate(self, dataloader: DataLoader) -> Dict[str, float]:
+    def evaluate(self, dataloader: Any) -> Dict[str, float]:
         """评估当前模型在验证集上的表现."""
         self.net.eval()
         total_loss = 0.0
@@ -124,8 +134,10 @@ class Trainer:
         correct_top3 = 0
         total_samples = 0
 
+        pbar = Progress(total=len(dataloader), label="Evaluate")
+
         with torch.no_grad():
-            for batch in dataloader:
+            for step_i, batch in enumerate(dataloader):
                 obs = batch["obs"].to(self.device, non_blocking=True)
                 mask = batch["mask"].to(self.device, non_blocking=True)
                 target_action = batch["action"].to(self.device, non_blocking=True)
@@ -147,6 +159,11 @@ class Trainer:
                 correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
                 correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
                 total_samples += b_size
+
+                if (step_i + 1) % 10 == 0 or (step_i + 1) == len(dataloader):
+                    pbar.update(step_i + 1)
+
+        pbar.done()
 
         return {
             "eval_loss": total_loss / total_samples,

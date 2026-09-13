@@ -1,8 +1,8 @@
-"""Compact and sharded dataset implementations for Splendor Duel."""
+"""Compact, vectorized, and sharded dataset implementations for Splendor Duel."""
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -14,7 +14,7 @@ class CompactBatch:
 
     obs: np.ndarray  # [N, 725] float32
     mask: np.ndarray  # [N, 256] bool
-    action: np.ndarray  # [N] int64 (标量整数动作 ID，彻底废除 256 维浮点 One-Hot 浪费)
+    action: np.ndarray  # [N] int64 (标量整数动作 ID)
     value: np.ndarray  # [N, 1] float32
 
     @property
@@ -44,8 +44,82 @@ class CompactBatch:
         )
 
 
+class FastTensorLoader:
+    """零单样本切片开销的整块张量向量化批处理加载器 (吞吐提升数倍)."""
+
+    def __init__(
+        self,
+        batch: CompactBatch,
+        batch_size: int = 256,
+        shuffle: bool = True,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.num_samples = batch.num_samples
+        self.num_batches = (self.num_samples + batch_size - 1) // batch_size
+        self.device = device
+
+        # 转为 PyTorch 张量
+        self.obs = torch.from_numpy(batch.obs).float()
+        self.mask = torch.from_numpy(batch.mask).bool()
+        self.action = torch.from_numpy(batch.action).long()
+        self.value = torch.from_numpy(batch.value).float()
+
+        self.resident_on_device = False
+        if device is not None and device.type == "cuda":
+            try:
+                # 尝试整块载入显存 (零总线传输瓶颈)
+                self.obs = self.obs.to(device)
+                self.mask = self.mask.to(device)
+                self.action = self.action.to(device)
+                self.value = self.value.to(device)
+                self.resident_on_device = True
+            except RuntimeError:
+                # 显存不足时自动回退为 CPU 内存驻留
+                self.resident_on_device = False
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __iter__(self):
+        if self.shuffle:
+            if self.resident_on_device:
+                perm = torch.randperm(self.num_samples, device=self.device)
+            else:
+                perm = torch.randperm(self.num_samples)
+        else:
+            perm = None
+
+        for b in range(self.num_batches):
+            start = b * self.batch_size
+            end = min(start + self.batch_size, self.num_samples)
+            if perm is not None:
+                idx = perm[start:end]
+            else:
+                idx = slice(start, end)
+
+            b_obs = self.obs[idx]
+            b_mask = self.mask[idx]
+            b_action = self.action[idx]
+            b_value = self.value[idx]
+
+            if not self.resident_on_device and self.device is not None:
+                b_obs = b_obs.to(self.device, non_blocking=True)
+                b_mask = b_mask.to(self.device, non_blocking=True)
+                b_action = b_action.to(self.device, non_blocking=True)
+                b_value = b_value.to(self.device, non_blocking=True)
+
+            yield {
+                "obs": b_obs,
+                "mask": b_mask,
+                "action": b_action,
+                "value": b_value,
+            }
+
+
 class CompactDataset(Dataset):
-    """基于紧凑连续内存数组的 PyTorch 数据集."""
+    """基于紧凑连续内存数组的标准 PyTorch 数据集 (兼容传统 DataLoader)."""
 
     def __init__(self, batch: CompactBatch) -> None:
         self.obs = torch.from_numpy(batch.obs).float()
