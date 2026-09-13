@@ -287,8 +287,9 @@ class Trainer:
             os.replace(tmp_path, ckpt_path)
             if is_best:
                 best_path = self.ckpt_dir / "best.pt"
-                import shutil
-                shutil.copyfile(ckpt_path, best_path)
+                if ckpt_path.resolve() != best_path.resolve():
+                    import shutil
+                    shutil.copyfile(ckpt_path, best_path)
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
