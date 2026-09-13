@@ -3,6 +3,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use super::heuristic_ai::HeuristicAI;
+use super::neural_ai::NeuralAI;
 use super::random_ai::RandomAI;
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::player::PlayerState;
@@ -386,28 +387,50 @@ impl ReplaySession {
                 (act, Some(decision))
             }
             PlayerType::Neural => {
-                // 预留给未来的神经网络 Player，当前暂未接 python 进程时，回退到启发式评估
-                if let Some((best_act, score, scored_list)) =
-                    HeuristicAI::evaluate_and_select(&self.live_game, &mut self.rng)
-                {
-                    let top_candidates: Vec<ScoredActionDto> = scored_list
-                        .iter()
-                        .take(8)
-                        .map(|(act, s)| ScoredActionDto {
-                            action_desc: format_action(act),
-                            score: *s,
-                            is_chosen: act == &best_act,
-                        })
-                        .collect();
+                match NeuralAI::predict_action(&self.live_game, 1.0) {
+                    Ok(pred) => {
+                        let top_candidates: Vec<ScoredActionDto> = pred
+                            .top_candidates
+                            .into_iter()
+                            .map(|(act, prob, is_chosen)| ScoredActionDto {
+                                action_desc: format_action(&act),
+                                score: prob * 100.0,
+                                is_chosen,
+                            })
+                            .collect();
 
-                    let decision = DecisionDto {
-                        ai_type: "neural (heuristic fallback)".to_string(),
-                        chosen_score: Some(score),
-                        top_candidates,
-                    };
-                    (Some(best_act), Some(decision))
-                } else {
-                    (None, None)
+                        let decision = DecisionDto {
+                            ai_type: format!("neural (epoch {})", pred.epoch),
+                            chosen_score: Some(pred.winrate * 100.0),
+                            top_candidates,
+                        };
+                        (Some(pred.best_action), Some(decision))
+                    }
+                    Err(err_msg) => {
+                        // 推理服务未就绪时，优雅回退到启发式 AI 避免卡死
+                        if let Some((best_act, score, scored_list)) =
+                            HeuristicAI::evaluate_and_select(&self.live_game, &mut self.rng)
+                        {
+                            let top_candidates: Vec<ScoredActionDto> = scored_list
+                                .iter()
+                                .take(8)
+                                .map(|(act, s)| ScoredActionDto {
+                                    action_desc: format_action(act),
+                                    score: *s,
+                                    is_chosen: act == &best_act,
+                                })
+                                .collect();
+
+                            let decision = DecisionDto {
+                                ai_type: format!("neural (fallback: {err_msg})"),
+                                chosen_score: Some(score),
+                                top_candidates,
+                            };
+                            (Some(best_act), Some(decision))
+                        } else {
+                            (None, None)
+                        }
+                    }
                 }
             }
         };

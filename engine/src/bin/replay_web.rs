@@ -1,4 +1,4 @@
-use _engine::{PlayerType, ReplaySession};
+use _engine::{NeuralAI, PlayerType, ReplaySession};
 use serde::Serialize;
 use std::env;
 use std::fs;
@@ -22,6 +22,7 @@ struct StatusResponse {
     state: _engine::StateDto,
     player_types: [String; 2],
     step: _engine::ReplayStep,
+    neural_available: bool,
 }
 
 #[derive(Serialize)]
@@ -90,7 +91,16 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                     sess.player_types[1].as_str().to_string(),
                 ],
                 step: last_step,
+                neural_available: NeuralAI::is_available(),
             };
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // API: 检测神经网络服务健康状态
+        ("GET", "/api/neural_status") => {
+            let available = NeuralAI::is_available();
+            let res = serde_json::json!({ "available": available });
             let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
         }
@@ -225,6 +235,7 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                     sess.player_types[1].as_str().to_string(),
                 ],
                 step: last_step,
+                neural_available: NeuralAI::is_available(),
             };
             let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
@@ -321,6 +332,68 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
     }
 }
 
+fn ensure_neural_server_running() {
+    if NeuralAI::is_available() {
+        println!("🧠 神经网络推理微服务已就绪 (127.0.0.1:8088)");
+        return;
+    }
+
+    let candidates = [
+        PathBuf::from("checkpoints/best.pt"),
+        PathBuf::from("../checkpoints/best.pt"),
+    ];
+
+    let mut found_ckpt = None;
+    for c in &candidates {
+        if c.exists() {
+            found_ckpt = Some(c.clone());
+            break;
+        }
+    }
+
+    if let Some(ckpt) = found_ckpt {
+        println!("🔍 检测到模型权重 {}，正在自动唤起后台 Python 推理微服务...", ckpt.display());
+        let python_bins = [
+            ".venv/Scripts/python.exe",
+            "../.venv/Scripts/python.exe",
+            ".venv/bin/python",
+            "python",
+        ];
+
+        let mut py_exec = "python";
+        for py in &python_bins {
+            if Path::new(py).exists() {
+                py_exec = py;
+                break;
+            }
+        }
+
+        let script = if Path::new("python/splendor_ai/server.py").exists() {
+            "python/splendor_ai/server.py"
+        } else {
+            "../python/splendor_ai/server.py"
+        };
+
+        let child = std::process::Command::new(py_exec)
+            .args([script, "--port", "8088", "--checkpoint", ckpt.to_str().unwrap()])
+            .spawn();
+
+        if let Ok(_) = child {
+            // 等待 Python 进程初始化
+            for _ in 0..15 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if NeuralAI::is_available() {
+                    println!("✨ 神经网络推理微服务已成功自动启动并就绪 (127.0.0.1:8088)！");
+                    return;
+                }
+            }
+            println!("⏳ 神经网络推理微服务已发起启动，正在后台加载模型权重...");
+        } else {
+            println!("💡 提示: 未能自动拉起 Python，可通过命令行手动启动: python python/splendor_ai/server.py");
+        }
+    }
+}
+
 fn main() {
     let port = env::args()
         .nth(1)
@@ -339,6 +412,8 @@ fn main() {
     println!("🌐 本地访问地址: http://{addr}");
     println!("📁 静态网页目录: {}", web_root.display());
     println!("==================================================");
+
+    ensure_neural_server_running();
 
     let session = Arc::new(RwLock::new(ReplaySession::new(42)));
 

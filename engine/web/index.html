@@ -776,15 +776,16 @@
         <span style="font-size:0.75rem; color:#38bdf8; font-weight:700;">P0:</span>
         <select id="p0TypeSelect">
           <option value="heuristic" selected>🤖 启发式 AI</option>
+          <option value="neural">🧠 神经网络 (best.pt)</option>
           <option value="random">🎲 随机 AI</option>
-          <option value="neural" disabled>🧠 神经网络 (预留)</option>
         </select>
         <span style="font-size:0.75rem; color:#f472b6; font-weight:700;">P1:</span>
         <select id="p1TypeSelect">
           <option value="heuristic" selected>🤖 启发式 AI</option>
+          <option value="neural">🧠 神经网络 (best.pt)</option>
           <option value="random">🎲 随机 AI</option>
-          <option value="neural" disabled>🧠 神经网络 (预留)</option>
         </select>
+        <span id="neuralStatusDot" style="font-size:0.75rem; color:#22c55e;" title="神经网络服务状态">●</span>
       </div>
 
       <div class="slider-container">
@@ -983,7 +984,7 @@
               <b id="decisionAction" style="color:var(--text-main); font-size:0.72rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px;">Game Started</b>
             </div>
             <div class="summary-item">
-              <span class="summary-label">动作估值:</span>
+              <span class="summary-label" id="decisionScoreLabel">估值评估:</span>
               <b id="decisionScore" class="score-badge">+0.0</b>
             </div>
           </div>
@@ -991,8 +992,8 @@
           <!-- 候选合法动作打分排行榜 -->
           <div class="candidates-section">
             <div class="candidates-title">
-              <span>候选合法动作打分排名 (Top Candidates)</span>
-              <span style="font-size:0.68rem; color:var(--text-muted);">启发式估值越高越优先</span>
+              <span id="candidatesRankingTitle">候选合法动作打分排名 (Top Candidates)</span>
+              <span id="candidatesRankingSubtitle" style="font-size:0.68rem; color:var(--text-muted);">启发式估值越高越优先</span>
             </div>
             <div class="candidates-list" id="candidatesList">
               <!-- 动态填充打分行 -->
@@ -1035,6 +1036,17 @@
         if (data.player_types) {
           document.getElementById('p0TypeSelect').value = data.player_types[0] || 'heuristic';
           document.getElementById('p1TypeSelect').value = data.player_types[1] || 'heuristic';
+        }
+
+        const dot = document.getElementById('neuralStatusDot');
+        if (dot) {
+          if (data.neural_available) {
+            dot.style.color = '#22c55e';
+            dot.title = '神经网络推理微服务已连接 (127.0.0.1:8088)';
+          } else {
+            dot.style.color = '#94a3b8';
+            dot.title = '神经网络推理微服务未连接 (可后台自动拉起)';
+          }
         }
 
         if (data.step) {
@@ -1260,26 +1272,51 @@
       actEl.title = step.action_desc;
 
       const scoreEl = document.getElementById('decisionScore');
+      const scoreLabelEl = document.getElementById('decisionScoreLabel');
       const badgeEl = document.getElementById('decisionAiTypeBadge');
       const candidatesList = document.getElementById('candidatesList');
+      const rankTitle = document.getElementById('candidatesRankingTitle');
+      const rankSub = document.getElementById('candidatesRankingSubtitle');
       candidatesList.innerHTML = '';
 
       const decision = step.decision;
       if (decision) {
-        if (decision.ai_type === 'heuristic') {
-          badgeEl.innerText = '🤖 启发式 AI (Heuristic)';
-          badgeEl.style.borderColor = 'var(--primary)';
-        } else if (decision.ai_type === 'random') {
+        const isNeural = decision.ai_type.includes('neural');
+        const isRandom = decision.ai_type === 'random';
+
+        if (isNeural) {
+          badgeEl.innerText = `🧠 神经网络 AI (${decision.ai_type})`;
+          badgeEl.style.borderColor = '#22c55e';
+          badgeEl.style.backgroundColor = 'rgba(34, 197, 94, 0.15)';
+          scoreLabelEl.innerText = '胜率估值:';
+          rankTitle.innerText = '神经网络策略概率分布 P(a|s)';
+          rankSub.innerText = 'Policy Head 输出的高置信动作';
+        } else if (isRandom) {
           badgeEl.innerText = '🎲 随机 AI (Random)';
           badgeEl.style.borderColor = '#f59e0b';
+          badgeEl.style.backgroundColor = 'rgba(245, 158, 11, 0.15)';
+          scoreLabelEl.innerText = '动作估值:';
+          rankTitle.innerText = '候选动作列表';
+          rankSub.innerText = '随机均匀采样';
         } else {
-          badgeEl.innerText = `🧠 ${decision.ai_type}`;
-          badgeEl.style.borderColor = '#22c55e';
+          badgeEl.innerText = '🤖 启发式 AI (Heuristic)';
+          badgeEl.style.borderColor = 'var(--primary)';
+          badgeEl.style.backgroundColor = 'rgba(99, 102, 241, 0.25)';
+          scoreLabelEl.innerText = '启发式估值:';
+          rankTitle.innerText = '候选动作打分排名 (Top Candidates)';
+          rankSub.innerText = '规则特征加权评分';
         }
 
         if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
           const sc = decision.chosen_score;
-          scoreEl.innerText = sc >= 1000 ? `+${sc.toFixed(0)} (斩杀优先)` : `+${sc.toFixed(1)}`;
+          if (isNeural) {
+            const winrateProb = (sc + 100.0) / 2.0; // 将 [-100, 100] 映射为 [0%, 100%]
+            scoreEl.innerText = `${winrateProb.toFixed(1)}% 胜率`;
+            scoreEl.style.color = winrateProb >= 50 ? '#22c55e' : '#f87171';
+          } else {
+            scoreEl.innerText = sc >= 1000 ? `+${sc.toFixed(0)} (斩杀优先)` : `+${sc.toFixed(1)}`;
+            scoreEl.style.color = '#22c55e';
+          }
           scoreEl.style.display = 'inline-block';
         } else {
           scoreEl.innerText = '无打分';
@@ -1290,12 +1327,20 @@
           decision.top_candidates.forEach((cand, idx) => {
             const row = document.createElement('div');
             row.className = `candidate-row ${cand.is_chosen ? 'chosen' : ''}`;
-            const isKill = cand.score >= 1000;
-            const scoreStr = isKill ? `+${cand.score.toFixed(0)} 斩杀` : (cand.score >= 0 ? `+${cand.score.toFixed(1)}` : `${cand.score.toFixed(1)}`);
+            let scoreStr = '';
+            if (isNeural) {
+              scoreStr = `${cand.score.toFixed(1)}%`;
+            } else {
+              const isKill = cand.score >= 1000;
+              scoreStr = isKill ? `+${cand.score.toFixed(0)} 斩杀` : (cand.score >= 0 ? `+${cand.score.toFixed(1)}` : `${cand.score.toFixed(1)}`);
+            }
+
+            const chosenBadge = isNeural ? '<span class="candidate-chosen-badge">★ 采纳</span>' : '<span class="candidate-chosen-badge">★ 选定</span>';
+
             row.innerHTML = `
               <span style="color:#64748b; font-size:0.68rem; min-width:16px;">${idx + 1}.</span>
               <span class="candidate-act" title="${cand.action_desc}">${cand.action_desc}</span>
-              ${cand.is_chosen ? '<span class="candidate-chosen-badge">★ 选定</span>' : ''}
+              ${cand.is_chosen ? chosenBadge : ''}
               <span class="candidate-score" style="color:${cand.is_chosen ? '#22c55e' : '#38bdf8'};">${scoreStr}</span>
             `;
             candidatesList.appendChild(row);
