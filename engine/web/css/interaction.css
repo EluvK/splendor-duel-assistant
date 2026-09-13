@@ -80,7 +80,17 @@
 /* 卡牌交互高亮与操作按钮 */
 .card-item.affordable {
   border-color: #fbbf24 !important;
-  box-shadow: 0 0 12px rgba(251, 191, 36, 0.45);
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.7), inset 0 0 8px rgba(251, 191, 36, 0.3) !important;
+  animation: pulse-affordable 1.8s infinite ease-in-out;
+}
+
+@keyframes pulse-affordable {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.5), inset 0 0 4px rgba(251, 191, 36, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.95), inset 0 0 10px rgba(251, 191, 36, 0.45);
+  }
 }
 
 .card-action-overlay {
@@ -89,13 +99,14 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(15, 23, 42, 0.85);
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(2px);
   border-radius: 5px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;

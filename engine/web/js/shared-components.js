@@ -32,9 +32,79 @@ export const ROYAL_ABILITY_DISPLAY_NAMES = {
 };
 
 /**
- * 获取卡牌对应的底板图片相对路径
+ * 为卡牌元素配置 BGA 原版雪碧图 (Sprite Sheet) 样式
+ * cards1.jpg: 31 帧 (0..29 为 Tier1 卡牌, 30 为卡背)
+ * cards2.jpg: 25 帧 (0..23 为 Tier2 卡牌, 24 为卡背)
+ * cards3.jpg: 14 帧 (0..12 为 Tier3 卡牌, 13 为卡背)
+ * @param {HTMLElement} el
  * @param {Object} card 卡牌 DTO
- * @returns {string} 图片路径，如 'assets/cards/plates/level-1-blue.webp'
+ */
+export function applyBgaCardSprite(el, card) {
+  if (!card) return;
+  const tier = card.tier || 1;
+  let sheetUrl, colIndex, totalCols;
+
+  if (tier === 1) {
+    sheetUrl = 'assets/images/cards1.jpg';
+    colIndex = Math.max(0, Math.min(29, card.id));
+    totalCols = 31;
+  } else if (tier === 2) {
+    sheetUrl = 'assets/images/cards2.jpg';
+    colIndex = Math.max(0, Math.min(23, card.id - 30));
+    totalCols = 25;
+  } else {
+    sheetUrl = 'assets/images/cards3.jpg';
+    colIndex = Math.max(0, Math.min(12, card.id - 54));
+    totalCols = 14;
+  }
+
+  const posX = (colIndex / (totalCols - 1)) * 100;
+  el.style.backgroundImage = `url('${sheetUrl}')`;
+  el.style.backgroundSize = `${totalCols * 100}% 100%`;
+  el.style.backgroundPosition = `${posX.toFixed(4)}% 0%`;
+  el.style.backgroundRepeat = 'no-repeat';
+}
+
+/**
+ * 为牌堆元素配置 BGA 卡背原画
+ * @param {HTMLElement} el
+ * @param {number} tier 1, 2, 3
+ */
+export function applyBgaDeckBackSprite(el, tier) {
+  let sheetUrl, totalCols;
+  if (tier === 1) {
+    sheetUrl = 'assets/images/cards1.jpg';
+    totalCols = 31;
+  } else if (tier === 2) {
+    sheetUrl = 'assets/images/cards2.jpg';
+    totalCols = 25;
+  } else {
+    sheetUrl = 'assets/images/cards3.jpg';
+    totalCols = 14;
+  }
+  el.style.backgroundImage = `url('${sheetUrl}')`;
+  el.style.backgroundSize = `${totalCols * 100}% 100%`;
+  el.style.backgroundPosition = `100% 0%`;
+  el.style.backgroundRepeat = 'no-repeat';
+}
+
+/**
+ * 为王室赞助卡配置 BGA 原版雪碧图样式 (royal-cards.jpg: 4 帧)
+ * @param {HTMLElement} el
+ * @param {Object} royal 王室卡 DTO
+ */
+export function applyBgaRoyalSprite(el, royal) {
+  if (!royal) return;
+  const colIndex = Math.max(0, Math.min(3, royal.id));
+  const posX = (colIndex / 3) * 100;
+  el.style.backgroundImage = `url('assets/images/royal-cards.jpg')`;
+  el.style.backgroundSize = `400% 100%`;
+  el.style.backgroundPosition = `${posX.toFixed(4)}% 0%`;
+  el.style.backgroundRepeat = 'no-repeat';
+}
+
+/**
+ * 兼容性辅助函数
  */
 export function getCardPlatePath(card) {
   if (!card) return 'assets/cards/plates/level-1-joker.webp';
@@ -72,8 +142,9 @@ export function renderBoard(boardData, containerEl, options = {}) {
       if (gem) {
         countTokens++;
         const tok = document.createElement('div');
-        tok.className = `token ${COLOR_CLASSES[gem]}`;
-        tok.innerText = gem === 'pearl' ? '珠' : (gem === 'gold' ? '金' : gem[0].toUpperCase());
+        tok.className = `token token-${gem}`;
+        const colIdx = COLOR_KEYS.indexOf(gem);
+        tok.title = `${colIdx >= 0 ? COLOR_NAMES[colIdx] : gem}标记 (${r}, ${c})`;
         cell.appendChild(tok);
 
         if (options.clickable) {
@@ -111,31 +182,22 @@ export function renderCardsList(cards, container, options = {}) {
     if (!c) return;
     const el = document.createElement('div');
     el.className = `card-item ${isCompact ? 'compact' : ''}`;
-    el.style.backgroundImage = `url('${getCardPlatePath(c)}')`;
+    applyBgaCardSprite(el, c);
 
     const canAfford = affordableSet.has(c.id);
     if (canAfford) {
       el.classList.add('affordable');
     }
 
-    const costsHtml = Object.entries(c.cost)
+    const costsDetail = Object.entries(c.cost)
       .filter(([_, amount]) => amount > 0)
-      .map(([color, amount]) => `<span class="cost-item ${COLOR_CLASSES[color]}">${amount}</span>`)
-      .join('');
-
-    const pointsHtml = c.points > 0 ? `<span class="card-points">${c.points}⭐</span>` : '<span></span>';
-    const crownsHtml = c.crowns > 0 ? `<span class="card-crowns">${'👑'.repeat(c.crowns)}</span>` : '';
+      .map(([color, amount]) => `${color}:${amount}`)
+      .join(', ');
     const abilityLabel = c.ability ? (ABILITY_DISPLAY_NAMES[c.ability] || c.ability) : '';
-    const abilityHtml = abilityLabel ? `<div class="card-ability-badge">${abilityLabel}</div>` : '';
+    const bonusText = c.bonus > 0 && c.color !== 'joker' && c.color !== 'points' ? `${c.color}+${c.bonus}` : '';
 
-    el.innerHTML = `
-      <div class="card-top">
-        ${pointsHtml}
-        ${crownsHtml}
-      </div>
-      ${abilityHtml}
-      <div class="card-costs">${costsHtml}</div>
-    `;
+    el.title = `【卡牌 #${c.id}】L${c.tier} ${c.color}\n声望: ${c.points}⭐ | 王冠: ${c.crowns}👑\n永久加成: ${bonusText || '无'}\n能力: ${abilityLabel || '无'}\n花费: ${costsDetail || '免费'}`;
+    el.innerHTML = '';
 
     // 交互手柄层（当传入操作回调时）
     if (options.interactive) {
@@ -187,34 +249,17 @@ export function renderPurchasedCards(cards, container) {
     if (!c) return;
     const el = document.createElement('div');
     el.className = 'card-item mini';
-    el.style.backgroundImage = `url('${getCardPlatePath(c)}')`;
+    applyBgaCardSprite(el, c);
 
-    const bonusText = typeof c.bonus === 'object' && c.bonus !== null
-      ? `${c.bonus.color}+${c.bonus.amount}`
-      : (c.bonus > 0 ? `${c.color}+${c.bonus}` : '');
+    const bonusText = c.bonus > 0 && c.color !== 'joker' && c.color !== 'points' ? `${c.color}+${c.bonus}` : '';
     const costsDetail = Object.entries(c.cost)
       .filter(([_, amount]) => amount > 0)
       .map(([color, amount]) => `${color}:${amount}`)
       .join(', ');
-
     const abilityLabel = c.ability ? (ABILITY_DISPLAY_NAMES[c.ability] || c.ability) : '';
+
     el.title = `【卡牌 #${c.id}】L${c.tier} ${c.color}\n声望: ${c.points}⭐ | 王冠: ${c.crowns}👑\n永久加成: ${bonusText || '无'}\n能力: ${abilityLabel || '无'}\n花费: ${costsDetail || '免费'}`;
-
-    const pointsHtml = c.points > 0 ? `<span class="card-points">${c.points}⭐</span>` : '<span></span>';
-    const crownsHtml = c.crowns > 0 ? `<span class="card-crowns">${'👑'.repeat(c.crowns)}</span>` : '';
-    const abilityHtml = abilityLabel ? `<div class="card-ability-badge">${abilityLabel}</div>` : '';
-
-    el.innerHTML = `
-      <div class="card-top">
-        ${pointsHtml}
-        ${crownsHtml}
-      </div>
-      ${abilityHtml}
-      <div class="card-mini-bottom">
-        <span class="mini-tier">L${c.tier}</span>
-        ${bonusText ? `<span class="mini-bonus">${bonusText}</span>` : ''}
-      </div>
-    `;
+    el.innerHTML = '';
     container.appendChild(el);
   });
 }
@@ -231,13 +276,10 @@ export function renderPlayerRoyals(royals, container) {
   royals.forEach(r => {
     const el = document.createElement('div');
     el.className = 'royal-item mini';
-    el.style.backgroundImage = `url('assets/cards/royals/royal-${r.id}.webp')`;
+    applyBgaRoyalSprite(el, r);
     const abilityText = r.ability ? (ROYAL_ABILITY_DISPLAY_NAMES[r.ability] || r.ability) : '荣誉赞助';
     el.title = `【王室赞助卡 #${r.id}】\n声望: ${r.points}⭐\n能力: ${abilityText}`;
-    el.innerHTML = `
-      <div style="font-size:0.92rem; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;">${r.points}⭐</div>
-      <div style="font-size:0.58rem; background:rgba(0,0,0,0.75); padding:1px 3px; border-radius:3px; color:#fbbf24; text-align:center;">${abilityText}</div>
-    `;
+    el.innerHTML = '';
     container.appendChild(el);
   });
 }
@@ -255,16 +297,14 @@ export function renderRoyalsPool(royals, container, options = {}) {
   royals.forEach(r => {
     const el = document.createElement('div');
     el.className = 'royal-item';
-    el.style.backgroundImage = `url('assets/cards/royals/royal-${r.id}.webp')`;
+    applyBgaRoyalSprite(el, r);
     const abilityText = r.ability ? (ROYAL_ABILITY_DISPLAY_NAMES[r.ability] || r.ability) : '荣誉赞助';
-    el.innerHTML = `
-      <div style="font-size:1.05rem; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;">${r.points}⭐</div>
-      <div style="font-size:0.65rem; background:rgba(0,0,0,0.75); padding:2px 4px; border-radius:3px; color:#fbbf24; text-align:center;">${abilityText}</div>
-    `;
+    el.title = `【王室赞助卡 #${r.id}】\n声望: ${r.points}⭐\n能力: ${abilityText}`;
+    el.innerHTML = '';
 
     if (options.selectable) {
       el.style.cursor = 'pointer';
-      el.style.boxShadow = '0 0 12px #fbbf24';
+      el.style.boxShadow = '0 0 16px #fbbf24';
       el.onclick = () => {
         if (options.onSelect) options.onSelect(r);
       };
@@ -291,7 +331,7 @@ export function renderPlayerDashboard(p, cardEl, isActing, isNext, prefix, optio
   }
 
   const privEl = document.getElementById(`${prefix}Privileges`);
-  if (privEl) privEl.innerText = `📜 ${p.privileges}`;
+  if (privEl) privEl.innerHTML = `<span class="privilege-icon"></span> ${p.privileges}`;
 
   const ptsEl = document.getElementById(`${prefix}Points`);
   if (ptsEl) ptsEl.innerText = p.total_points;
@@ -323,7 +363,7 @@ export function renderPlayerDashboard(p, cardEl, isActing, isNext, prefix, optio
         const chip = document.createElement('span');
         const colKey = COLOR_KEYS[idx];
         chip.className = `chip ${COLOR_CLASSES[colKey]}`;
-        chip.innerText = `${COLOR_NAMES[idx]}: ${count}`;
+        chip.innerHTML = `<span class="chip-token-icon token-${colKey}"></span> <span>${COLOR_NAMES[idx]}: ${count}</span>`;
 
         // 交互：如果处于弃牌或偷牌模式
         if (options.tokenClickable) {
