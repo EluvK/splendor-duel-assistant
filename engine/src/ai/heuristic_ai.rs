@@ -65,7 +65,7 @@ impl HeuristicAI {
             } => {
                 let card = if *from_reserved {
                     if *slot < p.reserved_cards.len() {
-                        p.reserved_cards[*slot]
+                        p.reserved_cards[*slot].card
                     } else {
                         return -100.0;
                     }

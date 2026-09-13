@@ -459,9 +459,16 @@ export class GameController {
         });
     }
 
+    // 判断暗牌视角掩蔽规则 (若某方为对手，其暗抽预留牌显示为牌背)
+    const p0IsOpponent = (this.playerKinds[0] !== 'human' && this.playerKinds[1] === 'human') ||
+                         (this.playerKinds[0] === 'human' && this.playerKinds[1] === 'human' && this.currentPlayer !== 0);
+    const p1IsOpponent = (this.playerKinds[1] !== 'human' && this.playerKinds[0] === 'human') ||
+                         (this.playerKinds[0] === 'human' && this.playerKinds[1] === 'human' && this.currentPlayer !== 1);
+
     // Player 0 配置
     const p0IsActive = (this.currentPlayer === 0);
     const p0Options = {
+      isOpponent: p0IsOpponent,
       interactiveReserved: isHumanTurn && p0IsActive && (phase === 'MandatoryAction'),
       affordableReservedIds,
       onPurchaseReserved: (card) => {
@@ -494,6 +501,7 @@ export class GameController {
     // Player 1 配置
     const p1IsActive = (this.currentPlayer === 1);
     const p1Options = {
+      isOpponent: p1IsOpponent,
       interactiveReserved: isHumanTurn && p1IsActive && (phase === 'MandatoryAction'),
       affordableReservedIds,
       onPurchaseReserved: (card) => {

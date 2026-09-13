@@ -90,12 +90,7 @@ python -c "import splendor_ai._engine as _engine; print('Rust Engine 加载成�
 首次训练或需要全新采样时直接执行：
 ```bash
 # 采样 10,000 局启发式对局，每 2500 局落盘为一个分片，随后自动训练 5 个 Epochs
-python python/train.py --mode imitation \
-    --games 10000 \
-    --shard-games 2500 \
-    --epochs 5 \
-    --batch-size 4096 \
-    --lr 1e-3
+python python/train.py --mode imitation --games 10000 --shard-games 2500 --epochs 5 --batch-size 4096 --lr 1e-3
 ```
 
 #### 模式 B：两阶段解耦（仅用 Rust 预生成海量数据池 ➡ 多次调参复用训练）
@@ -141,16 +136,7 @@ Epoch   Train Loss    Policy Loss   Top-1 Acc     Top-3 Acc     Val Loss
 ### 4.1 启动自博弈闭环 (Rust 8 线程全速原生驱动)
 ```bash
 # 启动 10 轮 Rust 8 线程全速自博弈迭代，每轮自弈 100 局，MCTS 推演 30 次，开启开局探索与经验池
-python python/train.py --mode selfplay \
-    --iterations 10 \
-    --games-per-iter 100 \
-    --mcts-sims 30 \
-    --selfplay-backend rust \
-    --temp-steps 12 \
-    --dirichlet-eps 0.25 \
-    --buffer-size 50000 \
-    --train-epochs 3 \
-    --promote-threshold 0.55
+python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mcts-sims 30 --selfplay-backend rust --temp-steps 12 --dirichlet-eps 0.25 --buffer-size 50000 --train-epochs 3 --promote-threshold 0.55
 ```
 
 ### 4.2 核心机制运作流程

@@ -253,6 +253,16 @@ export function renderCardsList(cards, container, options = {}) {
     if (!c) return;
     const el = document.createElement('div');
     el.className = `card-item ${isCompact ? 'compact' : ''}`;
+
+    // 若是对局中对手暗抽预留的卡牌（对手不可见）
+    const isHiddenCard = options.isOpponent && (c.is_public === false);
+    if (isHiddenCard) {
+      applyBgaDeckBackSprite(el, c.tier || 1);
+      el.title = `【预留卡】暗抽等级 ${c.tier} 卡牌（对手私有暗牌）`;
+      container.appendChild(el);
+      return;
+    }
+
     applyBgaCardSprite(el, c);
 
     const canAfford = affordableSet.has(c.id);
@@ -266,9 +276,24 @@ export function renderCardsList(cards, container, options = {}) {
       .join(', ');
     const abilityLabel = c.ability ? (ABILITY_DISPLAY_NAMES[c.ability] || c.ability) : '';
     const bonusText = c.bonus > 0 && c.color !== 'joker' && c.color !== 'points' ? `${c.color}+${c.bonus}` : '';
+    const secretTag = (fromReserved && c.is_public === false) ? '\n【暗抽私有】(仅自己可见)' : '';
 
-    el.title = `【卡牌 #${c.id}】L${c.tier} ${c.color}\n声望: ${c.points}⭐ | 王冠: ${c.crowns}👑\n永久加成: ${bonusText || '无'}\n能力: ${abilityLabel || '无'}\n花费: ${costsDetail || '免费'}`;
+    el.title = `【卡牌 #${c.id}】L${c.tier} ${c.color}\n声望: ${c.points}⭐ | 王冠: ${c.crowns}👑\n永久加成: ${bonusText || '无'}\n能力: ${abilityLabel || '无'}\n花费: ${costsDetail || '免费'}${secretTag}`;
     el.innerHTML = '';
+
+    // 若为自己暗抽私有卡牌，增加小角标提示
+    if (fromReserved && c.is_public === false) {
+      const lockBadge = document.createElement('span');
+      lockBadge.style.position = 'absolute';
+      lockBadge.style.bottom = '2px';
+      lockBadge.style.right = '2px';
+      lockBadge.style.fontSize = '0.65rem';
+      lockBadge.style.backgroundColor = 'rgba(0,0,0,0.6)';
+      lockBadge.style.borderRadius = '3px';
+      lockBadge.style.padding = '1px 3px';
+      lockBadge.innerText = '🔒暗';
+      el.appendChild(lockBadge);
+    }
 
     // 交互手柄层（当传入操作回调时）
     if (options.interactive) {
@@ -487,7 +512,8 @@ export function renderPlayerDashboard(p, cardEl, isActing, isNext, prefix, optio
         fromReserved: true,
         interactive: options.interactiveReserved,
         affordableIds: options.affordableReservedIds,
-        onPurchase: options.onPurchaseReserved
+        onPurchase: options.onPurchaseReserved,
+        isOpponent: options.isOpponent || false,
       });
     }
   }

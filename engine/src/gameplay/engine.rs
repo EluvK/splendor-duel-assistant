@@ -156,7 +156,7 @@ impl GameEngine {
         }
 
         // 预留卡牌
-        let card = match slot {
+        let (card, is_public) = match slot {
             Some(s) => {
                 let tier_idx = tier.index();
                 if s >= state.pyramid[tier_idx].len() {
@@ -166,18 +166,21 @@ impl GameEngine {
                 if let Some(rep) = state.decks[tier_idx].pop() {
                     state.pyramid[tier_idx].insert(s, rep);
                 }
-                c
+                (c, true)
             }
             None => {
                 let tier_idx = tier.index();
-                state
+                let c = state
                     .decks[tier_idx]
                     .pop()
-                    .ok_or("Deck is empty for blind reserve")?
+                    .ok_or("Deck is empty for blind reserve")?;
+                (c, false)
             }
         };
 
-        state.players[current_player].reserved_cards.push(card);
+        state.players[current_player]
+            .reserved_cards
+            .push(crate::model::card::ReservedCard::new(card, is_public));
 
         // 若盘上有黄金，进入选择拿黄金阶段；若无黄金，直接走结算
         if state.board.has_gold() {
@@ -220,7 +223,7 @@ impl GameEngine {
             if slot >= state.players[current_player].reserved_cards.len() {
                 return Err("Invalid reserved slot".into());
             }
-            state.players[current_player].reserved_cards[slot]
+            state.players[current_player].reserved_cards[slot].card
         } else {
             let tier_idx = tier.index();
             if slot >= state.pyramid[tier_idx].len() {

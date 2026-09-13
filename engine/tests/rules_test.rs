@@ -124,6 +124,10 @@ fn test_reserve_card_without_gold_on_board() {
         p0_reserved_before + 1,
         "卡牌应成功进入预留手牌"
     );
+    assert!(
+        game.players[0].reserved_cards.last().unwrap().is_public,
+        "从金字塔明牌预留应标记为公开 (is_public == true)"
+    );
 }
 
 #[test]
@@ -183,6 +187,42 @@ fn test_reserve_card_with_gold_selection() {
     assert_eq!(
         game.players[0].tokens.get(GemType::Gold),
         p0_gold_before + 1
+    );
+    assert!(
+        game.players[0].reserved_cards.last().unwrap().is_public,
+        "从金字塔明牌预留应标记为公开"
+    );
+}
+
+#[test]
+fn test_blind_reserve_card_is_private() {
+    let mut game = GameState::new_game(99);
+    game.phase = TurnPhase::MandatoryAction;
+
+    // 清空棋盘黄金以便一步完成预留测试
+    for r in 0..5 {
+        for c in 0..5 {
+            if game.board.get(r, c) == Some(GemType::Gold) {
+                game.board.take(r, c);
+            }
+        }
+    }
+
+    let deck_len_before = game.decks[0].len();
+    assert!(deck_len_before > 0);
+
+    // 从 Tier1 牌堆顶盲抽预留 (slot: None)
+    let blind_reserve = Action::ReserveCard {
+        tier: CardTier::Tier1,
+        slot: None,
+    };
+    assert!(GameEngine::step(&mut game, &blind_reserve).is_ok());
+
+    assert_eq!(game.decks[0].len(), deck_len_before - 1);
+    let reserved = game.players[0].reserved_cards.last().unwrap();
+    assert!(
+        !reserved.is_public,
+        "从牌堆顶盲抽预留卡牌必须标记为非公开私有暗牌 (is_public == false)"
     );
 }
 

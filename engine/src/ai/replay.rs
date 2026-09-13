@@ -10,8 +10,14 @@ use crate::game_state::player::PlayerState;
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
 use crate::model::action::Action;
-use crate::model::card::{CardAbility, CardColor, JewelCard, RoyalAbility, RoyalCard};
+use crate::model::card::{
+    CardAbility, CardColor, JewelCard, ReservedCard, RoyalAbility, RoyalCard,
+};
 use crate::model::token::GemType;
+
+fn default_is_public() -> bool {
+    true
+}
 
 /// 供前端渲染的卡牌 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +30,8 @@ pub struct CardDto {
     pub crowns: u8,
     pub ability: Option<String>,
     pub cost: CardCostDto,
+    #[serde(default = "default_is_public")]
+    pub is_public: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +81,16 @@ impl From<&JewelCard> for CardDto {
                 black: c.cost.black,
                 pearl: c.cost.pearl,
             },
+            is_public: true,
         }
+    }
+}
+
+impl From<&ReservedCard> for CardDto {
+    fn from(rc: &ReservedCard) -> Self {
+        let mut dto = CardDto::from(&rc.card);
+        dto.is_public = rc.is_public;
+        dto
     }
 }
 

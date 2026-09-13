@@ -77,6 +77,8 @@
   - 已获王室卡数 `/ 2.0`
   - 3 冠里程碑是否已达成 (bool)
 - `[24..41]`: 预留手牌 (3 槽位 × 6 维): `[present, is_public, points/6, crowns/3, bonus_color/5, can_afford]`
+  - 我方 (Active): `is_public` 反映该牌是否对局公开（明牌预留为 1.0，暗抽为 0.0）；其余属性均如实编码，`can_afford` 判定我方是否买得起。
+  - 敌方 (Opponent): 若为明牌预留 (`is_public == true`)，各属性正常编码，`can_afford` 判定敌方是否买得起；若为盲抽暗牌 (`is_public == false`)，属性与支付能力全部掩蔽为 `0.0`（POMDP 防信息泄露）。
 
 ### 5. 全局环境与阶段 (17 维)
 - `[0..8]`: `TurnPhase` (9-way One-Hot: OptionalActions, MandatoryAction, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens, SelectReserveGold, GameOver)

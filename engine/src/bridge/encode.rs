@@ -167,21 +167,47 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
         out[p_base + 23] = if p.royals_claimed[0] { 1.0 } else { 0.0 };
 
         // 预留手牌 (3 槽位 × 6 维 = 18维)
+        // 编码规范: [present, is_public, points/6, crowns/3, bonus_color/5, can_afford]
         for slot in 0..3 {
             let slot_base = p_base + 24 + slot * 6;
-            if let Some(card) = p.reserved_cards.get(slot) {
-                out[slot_base] = 1.0;
-                out[slot_base + 1] = 1.0; // public
-                out[slot_base + 2] = card.points as f32 / 6.0;
-                out[slot_base + 3] = card.crowns as f32 / 3.0;
-                if let Some(gem) = card.color.to_gem_type() {
-                    out[slot_base + 4] = gem.index() as f32 / 5.0;
-                }
-                out[slot_base + 5] = if state.players[cp].can_afford(card) {
-                    1.0
+            if let Some(rc) = p.reserved_cards.get(slot) {
+                out[slot_base] = 1.0; // present
+
+                let is_self = p_idx == cp;
+                if is_self {
+                    // 我方手牌：自己完全知晓具体信息，但需如实编码该手牌是否对局公开
+                    out[slot_base + 1] = if rc.is_public { 1.0 } else { 0.0 };
+                    out[slot_base + 2] = rc.card.points as f32 / 6.0;
+                    out[slot_base + 3] = rc.card.crowns as f32 / 3.0;
+                    if let Some(gem) = rc.card.color.to_gem_type() {
+                        out[slot_base + 4] = gem.index() as f32 / 5.0;
+                    }
+                    out[slot_base + 5] = if state.players[cp].can_afford(&rc.card) {
+                        1.0
+                    } else {
+                        0.0
+                    };
                 } else {
-                    0.0
-                };
+                    // 对手手牌：
+                    if rc.is_public {
+                        // 来自金字塔明牌预留（公开信息）：双方均可见卡牌明细及对手能否买得起
+                        out[slot_base + 1] = 1.0;
+                        out[slot_base + 2] = rc.card.points as f32 / 6.0;
+                        out[slot_base + 3] = rc.card.crowns as f32 / 3.0;
+                        if let Some(gem) = rc.card.color.to_gem_type() {
+                            out[slot_base + 4] = gem.index() as f32 / 5.0;
+                        }
+                        out[slot_base + 5] = if state.players[op].can_afford(&rc.card) {
+                            1.0
+                        } else {
+                            0.0
+                        };
+                    } else {
+                        // 来自牌堆顶盲抽（私有暗牌）：对我方不可见，属性完全掩蔽为 0，杜绝信息泄露
+                        out[slot_base + 1] = 0.0;
+                        // slot_base + 2..=5 保持 0.0
+                    }
+                }
             }
         }
     }

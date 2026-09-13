@@ -156,3 +156,26 @@ pub struct RoyalCard {
     pub points: u8,
     pub ability: Option<RoyalAbility>,
 }
+
+/// 预留卡牌包装结构，记录卡牌本身以及是否为公开可见信息
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReservedCard {
+    pub card: JewelCard,
+    pub is_public: bool, // true: 来自金字塔明牌（公开）；false: 来自牌堆顶盲抽（暗抽私有）
+}
+
+impl ReservedCard {
+    #[inline]
+    pub const fn new(card: JewelCard, is_public: bool) -> Self {
+        Self { card, is_public }
+    }
+}
+
+impl std::ops::Deref for ReservedCard {
+    type Target = JewelCard;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.card
+    }
+}

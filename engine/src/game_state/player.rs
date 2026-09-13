@@ -1,4 +1,4 @@
-use crate::model::card::{CardColor, JewelCard, RoyalCard};
+use crate::model::card::{CardColor, JewelCard, ReservedCard, RoyalCard};
 use crate::model::token::{GemType, TokenCollection};
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ pub struct PlayerState {
     pub id: usize, // 0 或 1
     pub tokens: TokenCollection,
     pub cards: Vec<JewelCard>,
-    pub reserved_cards: Vec<JewelCard>, // 上限 3 张
+    pub reserved_cards: Vec<ReservedCard>, // 上限 3 张
     pub royal_cards: Vec<RoyalCard>,
     pub privileges: u8, // 上限 3 个
 
