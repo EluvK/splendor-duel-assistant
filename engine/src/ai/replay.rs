@@ -157,6 +157,7 @@ impl From<&PlayerState> for PlayerDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateDto {
     pub turn_number: u32,
+    pub round_number: u32,
     pub current_player: usize,
     pub phase: String,
     pub board: [[Option<String>; 5]; 5],
@@ -209,6 +210,7 @@ impl From<&GameState> for StateDto {
 
         Self {
             turn_number: s.turn_number,
+            round_number: s.turn_number,
             current_player: s.current_player,
             phase: phase_str,
             board: board_dto,
@@ -278,6 +280,7 @@ pub struct DecisionDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayStep {
     pub step_index: usize,
+    pub round_number: u32,
     pub player: usize,
     pub action_desc: String,
     pub phase: String,
@@ -305,6 +308,7 @@ impl ReplaySession {
 
         let initial_step = ReplayStep {
             step_index: 0,
+            round_number: game.turn_number,
             player: game.current_player,
             action_desc: "Game Started".to_string(),
             phase: initial_dto.phase.clone(),
@@ -454,12 +458,14 @@ impl ReplaySession {
         };
 
         if let Some(action) = action {
+            let round_number = self.live_game.turn_number;
             let action_desc = format_action(&action);
             GameEngine::step(&mut self.live_game, &action)?;
 
             let state_dto = StateDto::from(&self.live_game);
             let next_step = ReplayStep {
                 step_index: self.history.len(),
+                round_number,
                 player,
                 action_desc,
                 phase: phase_desc,

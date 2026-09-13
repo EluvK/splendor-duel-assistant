@@ -542,7 +542,8 @@ export class GameController {
     if (this.state.winner) {
       if (winnerBanner) {
         winnerBanner.style.display = 'flex';
-        winnerBanner.innerHTML = `<span>🏆 <b>对局结束</b> — 获胜者: <span style="color:#fbbf24; font-size:1.06rem; margin-left:4px;">${this.state.winner}</span></span>`;
+        const curRound = this.state.round_number || this.state.turn_number;
+        winnerBanner.innerHTML = `<span>🏆 <b>对局结束</b> — 获胜者: <span style="color:#fbbf24; font-size:1.06rem; margin-left:4px;">${this.state.winner}</span> <span style="font-size:0.8rem; color:#94a3b8; margin-left:14px;">(耗时: 共 ${curRound} 轮)</span></span>`;
       }
       this.guideBadge.innerText = '🏆 胜负已分';
       this.guideBadge.style.backgroundColor = '#dc2626';
@@ -554,9 +555,10 @@ export class GameController {
       winnerBanner.style.display = 'none';
     }
 
+    const curRound = this.state.round_number || this.state.turn_number;
     if (!this.isHuman) {
       const aiKindName = this.playerKinds[this.currentPlayer];
-      this.guideBadge.innerText = '🤖 AI 思考中';
+      this.guideBadge.innerText = `🤖 AI 思考中 (第 ${curRound} 轮)`;
       this.guideBadge.style.backgroundColor = '#6366f1';
       this.guideText.innerText = `当前轮到 Player ${this.currentPlayer} (${aiKindName}) 决策...`;
 
@@ -572,7 +574,7 @@ export class GameController {
 
     // 人类行动阶段
     const phase = this.state.phase;
-    this.guideBadge.innerText = `👤 玩家 P${this.currentPlayer} 回合`;
+    this.guideBadge.innerText = `👤 玩家 P${this.currentPlayer} (第 ${curRound} 轮)`;
     this.guideBadge.style.backgroundColor = '#059669';
 
     if (phase === 'OptionalActions') {

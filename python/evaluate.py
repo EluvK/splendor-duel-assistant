@@ -107,11 +107,11 @@ def main() -> None:
     dur = time.time() - t0
 
     print("\n================== 比赛结果战报 ==================")
-    print(f"耗时: {dur:.1f} 秒 | 总局数: {res.total_games} 局 | 平均步数: {res.avg_steps:.1f} 步 (约 {res.avg_turns:.1f} 回合)")
+    print(f"耗时: {dur:.1f} 秒 | 总局数: {res.total_games} 局 | 平均长度: {res.avg_rounds:.1f} 轮 (共 {res.avg_steps:.1f} 步)")
     if res.agent0_wins > 0:
-        print(f"✨ {res.agent0_name} 获胜时平均耗费: {res.avg_win_steps:.1f} 步")
+        print(f"✨ {res.agent0_name} 获胜时平均耗费: {res.avg_win_rounds:.1f} 轮 ({res.avg_win_steps:.1f} 步)")
     if res.agent1_wins > 0:
-        print(f"🛡️  {res.agent0_name} 战败时平均坚持: {res.avg_lose_steps:.1f} 步")
+        print(f"🛡️  {res.agent0_name} 战败时平均坚持: {res.avg_lose_rounds:.1f} 轮 ({res.avg_lose_steps:.1f} 步)")
     print("-" * 50)
     print(f"🥇 {res.agent0_name:<25} 胜场: {res.agent0_wins:>3} 局 ({res.agent0_win_rate*100:5.1f}%)")
     print(f"🥈 {res.agent1_name:<25} 胜场: {res.agent1_wins:>3} 局 ({(1.0 - res.agent0_win_rate)*100:5.1f}%)")

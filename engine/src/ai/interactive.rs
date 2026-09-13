@@ -76,6 +76,7 @@ impl InteractiveSession {
 
         let initial_step = ReplayStep {
             step_index: 0,
+            round_number: game.turn_number,
             player: game.current_player,
             action_desc: "Game Started".to_string(),
             phase: initial_dto.phase.clone(),
@@ -99,10 +100,12 @@ impl InteractiveSession {
         while self.game.phase == TurnPhase::OptionalActions {
             let legals = RuleEngine::legal_actions(&self.game);
             if legals.len() == 1 && legals[0] == Action::SkipOptional {
+                let round_number = self.game.turn_number;
                 let player = self.game.current_player;
                 if GameEngine::step(&mut self.game, &Action::SkipOptional).is_ok() {
                     let next_step = ReplayStep {
                         step_index: self.history.len(),
+                        round_number,
                         player,
                         action_desc: "Skip Optional (Auto)".to_string(),
                         phase: "OptionalActions".to_string(),
@@ -168,6 +171,7 @@ impl InteractiveSession {
         }
 
         let player = self.game.current_player;
+        let round_number = self.game.turn_number;
         let action_desc = format_action(&action);
         let phase_desc = format!("{:?}", self.game.phase);
 
@@ -175,6 +179,7 @@ impl InteractiveSession {
 
         let next_step = ReplayStep {
             step_index: self.history.len(),
+            round_number,
             player,
             action_desc,
             phase: phase_desc,
@@ -285,6 +290,7 @@ impl InteractiveSession {
         };
 
         if let Some(action) = action {
+            let round_number = self.game.turn_number;
             let action_desc = format_action(&action);
             let phase_desc = format!("{:?}", self.game.phase);
 
@@ -292,6 +298,7 @@ impl InteractiveSession {
 
             let next_step = ReplayStep {
                 step_index: self.history.len(),
+                round_number,
                 player,
                 action_desc,
                 phase: phase_desc,

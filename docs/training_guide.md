@@ -90,7 +90,7 @@ python -c "import splendor_ai._engine as _engine; print('Rust Engine 加载成�
 首次训练或需要全新采样时直接执行：
 ```bash
 # 采样 10,000 局启发式对局，每 2500 局落盘为一个分片，随后自动训练 5 个 Epochs
-python python/train.py --mode imitation --games 10000 --shard-games 2500 --epochs 5 --batch-size 4096 --lr 1e-3
+python python/train.py --mode imitation --games 20000 --shard-games 2000 --epochs 6 --batch-size 8192 --lr 1e-3
 ```
 
 #### 模式 B：两阶段解耦（仅用 Rust 预生成海量数据池 ➡ 多次调参复用训练）
@@ -105,7 +105,7 @@ python python/train.py --mode imitation --games 10000 --shard-games 2500 --epoch
 2. **第二步：纯训练模式（添加 `--reuse-data`，跳过数据生成，直接复用磁盘分片）**：
    ```bash
    # 直接复用已有分片，尝试不同的学习率和轮次训练
-   python python/train.py --mode imitation --reuse-data --epochs 10 --lr 5e-4 --batch-size 4096
+   python python/train.py --mode imitation --reuse-data --epochs 10 --lr 1e-3 --batch-size 8192
    ```
 
 ### 3.3 常用控制参数说明

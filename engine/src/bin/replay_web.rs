@@ -16,6 +16,7 @@ static NEURAL_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 #[derive(Serialize)]
 struct StepSummary {
     index: usize,
+    round: u32,
     player: usize,
     action: String,
     phase: String,
@@ -35,6 +36,7 @@ struct StatusResponse {
 struct HistoryResponse {
     seed: u64,
     total_steps: usize,
+    total_rounds: u32,
     player_types: [String; 2],
     steps: Vec<StepSummary>,
 }
@@ -341,6 +343,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                         .iter()
                         .map(|s| StepSummary {
                             index: s.step_index,
+                            round: s.round_number,
                             player: s.player,
                             action: s.action_desc.clone(),
                             phase: s.phase.clone(),
@@ -354,6 +357,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                         advanced: bool,
                         advanced_count: usize,
                         total_steps: usize,
+                        total_rounds: u32,
                         step: _engine::ReplayStep,
                         new_steps: Vec<StepSummary>,
                     }
@@ -361,6 +365,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                         advanced: advanced_count > 0,
                         advanced_count,
                         total_steps: sess.history.len(),
+                        total_rounds: sess.history.last().map(|s| s.round_number).unwrap_or(1),
                         step: last_step,
                         new_steps,
                     };
@@ -381,10 +386,12 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
             #[derive(Serialize)]
             struct EndResult {
                 total_steps: usize,
+                total_rounds: u32,
                 step: _engine::ReplayStep,
             }
             let res = EndResult {
                 total_steps: sess.history.len(),
+                total_rounds: sess.history.last().map(|s| s.round_number).unwrap_or(1),
                 step: last_step,
             };
             let json = serde_json::to_vec(&res).unwrap();
@@ -480,6 +487,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 .iter()
                 .map(|s| StepSummary {
                     index: s.step_index,
+                    round: s.round_number,
                     player: s.player,
                     action: s.action_desc.clone(),
                     phase: s.phase.clone(),
@@ -490,6 +498,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
             let res = HistoryResponse {
                 seed: sess.seed,
                 total_steps: sess.history.len(),
+                total_rounds: sess.history.last().map(|s| s.round_number).unwrap_or(1),
                 player_types: [
                     sess.player_types[0].as_str().to_string(),
                     sess.player_types[1].as_str().to_string(),

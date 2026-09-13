@@ -41,7 +41,7 @@
       </div>
 
       <div class="slider-container">
-        <span style="font-size:0.8rem; min-width: 90px;">步数: <b id="currentStepText" style="color:var(--accent-gold);">0</b> / <b id="totalStepsText">0</b></span>
+        <span style="font-size:0.8rem; min-width: 170px;">轮数: <b id="currentRoundText" style="color:#38bdf8;">1</b>/<b id="totalRoundsText">1</b> 轮 | 步数: <b id="currentStepText" style="color:var(--accent-gold);">0</b>/<b id="totalStepsText">0</b> 步</span>
         <input type="range" id="stepSlider" min="0" max="0" value="0">
       </div>
       <button class="btn-secondary" id="btnPrev">◀ 上一步</button>
@@ -276,6 +276,7 @@
 
     let currentStep = 0;
     let totalSteps = 0;
+    let totalRounds = 1;
     let isPlaying = false;
     let playTimer = null;
     let isFetching = false;
@@ -327,6 +328,7 @@
         if (res.ok) {
           const data = await res.json();
           totalSteps = data.total_steps;
+          totalRounds = data.total_rounds || 1;
           historySteps = data.steps;
           rebuildLogDom(historySteps);
           updateControlUI();
@@ -379,6 +381,7 @@
           const data = await res.json();
           const prevTotal = totalSteps;
           totalSteps = data.total_steps;
+          if (data.total_rounds) totalRounds = data.total_rounds;
           currentStep = totalSteps - 1;
 
           stepCache.set(currentStep, data.step);
@@ -418,6 +421,7 @@
         if (res.ok) {
           const data = await res.json();
           totalSteps = data.total_steps;
+          if (data.total_rounds) totalRounds = data.total_rounds;
           currentStep = totalSteps - 1;
           stepCache.set(currentStep, data.step);
           renderState(data.step.state, data.step);
@@ -460,6 +464,15 @@
     }
 
     function updateControlUI() {
+      let curRound = 1;
+      if (stepCache.has(currentStep)) {
+        const s = stepCache.get(currentStep);
+        curRound = s.round_number || s.state?.round_number || s.state?.turn_number || 1;
+      } else if (historySteps[currentStep] && historySteps[currentStep].round) {
+        curRound = historySteps[currentStep].round;
+      }
+      document.getElementById('currentRoundText').innerText = curRound;
+      document.getElementById('totalRoundsText').innerText = totalRounds;
       document.getElementById('currentStepText').innerText = currentStep;
       document.getElementById('totalStepsText').innerText = Math.max(0, totalSteps - 1);
       const slider = document.getElementById('stepSlider');
@@ -470,9 +483,11 @@
     }
 
     /* 日志 DOM 构建与增量追加 */
+    let lastRenderedRound = 0;
     function rebuildLogDom(steps) {
       const container = document.getElementById('logContainer');
       container.innerHTML = '';
+      lastRenderedRound = 0;
       steps.forEach(s => appendLogItem(s));
       updateActiveLogInView(currentStep);
     }
@@ -481,11 +496,20 @@
       const container = document.getElementById('logContainer');
       if (container.querySelector(`[data-index="${s.index}"]`)) return;
 
+      const round = s.round || 1;
+      if (round > lastRenderedRound) {
+        lastRenderedRound = round;
+        const divider = document.createElement('div');
+        divider.className = 'log-round-divider';
+        divider.innerHTML = `<span>⏳ 第 ${round} 轮 (Round ${round})</span>`;
+        container.appendChild(divider);
+      }
+
       const item = document.createElement('div');
       item.className = 'log-item';
       item.setAttribute('data-index', s.index);
       const scoreHint = (s.score !== undefined && s.score !== null) ? ` [估值: ${s.score.toFixed(1)}]` : '';
-      item.title = `#${s.index} [P${s.player}] ${s.action} (${s.phase})${scoreHint}`;
+      item.title = `第${round}轮 #${s.index} [P${s.player}] ${s.action} (${s.phase})${scoreHint}`;
 
       item.innerHTML = `
         <span class="log-idx">#${s.index}</span>
@@ -623,11 +647,14 @@
       const phaseBarText = document.getElementById('phaseBarText');
       const phaseBarSub = document.getElementById('phaseBarSub');
 
+      const curRound = state.round_number || state.turn_number;
       if (state.winner) {
         phaseEl.innerText = `🏆 获胜者: ${state.winner}`;
         if (winnerBanner) {
           winnerBanner.style.display = 'flex';
-          winnerBanner.innerHTML = `<span>🏆 <b>对局结束</b> — 获胜者: <span style="color:#fbbf24; font-size:1.06rem; margin-left:4px;">${state.winner}</span></span>`;
+          const finalRound = curRound;
+          const finalStep = step ? step.step_index : Math.max(0, totalSteps - 1);
+          winnerBanner.innerHTML = `<span>🏆 <b>对局结束</b> — 获胜者: <span style="color:#fbbf24; font-size:1.06rem; margin-left:4px;">${state.winner}</span> <span style="font-size:0.8rem; color:#94a3b8; margin-left:14px;">(耗时: 共 ${finalRound} 轮 / ${finalStep} 步)</span></span>`;
         }
         if (phaseBar) phaseBar.style.display = 'none';
       } else {
@@ -636,12 +663,12 @@
 
         if (step && step.step_index > 0) {
           const turnTip = (actor !== nextPlayer) ? `(下次回合由 P${nextPlayer} 接手)` : `(持续行动)`;
-          phaseEl.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase}`;
-          if (phaseBarText) phaseBarText.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase}`;
+          phaseEl.innerText = `第 ${curRound} 轮 | P${actor} 执行动作 | 阶段: ${state.phase}`;
+          if (phaseBarText) phaseBarText.innerText = `第 ${curRound} 轮 | P${actor} 执行动作 | 阶段: ${state.phase}`;
           if (phaseBarSub) phaseBarSub.innerText = turnTip;
         } else {
-          phaseEl.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
-          if (phaseBarText) phaseBarText.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
+          phaseEl.innerText = `第 ${curRound} 轮 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
+          if (phaseBarText) phaseBarText.innerText = `第 ${curRound} 轮 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
           if (phaseBarSub) phaseBarSub.innerText = '初始准备就绪';
         }
       }

@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
         help="Training mode: 'imitation' (bootstrap from heuristic AI) or 'selfplay' (AlphaZero loop)",
     )
     # 模仿学习参数
-    parser.add_argument("--games", type=int, default=10000, help="Total games to generate/train for imitation")
-    parser.add_argument("--shard-games", type=int, default=2500, help="Games per shard (keeps memory bounded < 1GB)")
+    parser.add_argument("--games", type=int, default=20000, help="Total games to generate/train for imitation")
+    parser.add_argument("--shard-games", type=int, default=2000, help="Games per shard (keeps memory bounded < 1GB)")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--data-dir", type=str, default="data/shards", help="Directory to store sharded data")
     parser.add_argument("--reuse-data", action="store_true", help="Reuse existing shards in data-dir without re-generating")
@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--promote-threshold", type=float, default=0.55, help="Win-rate threshold to promote candidate to best")
 
     # 训练超参数
-    parser.add_argument("--batch-size", type=int, default=4096, help="Batch size for training")
+    parser.add_argument("--batch-size", type=int, default=8192, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="L2 weight decay")
     parser.add_argument("--device", type=str, default="auto", help="Compute device ('auto', 'cuda', 'cpu')")

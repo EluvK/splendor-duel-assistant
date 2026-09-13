@@ -16,6 +16,7 @@ class SingleGameResult:
     winner: Optional[int]
     steps: int
     turns: int
+    rounds: int
     p0_score: int
     p1_score: int
     p0_crowns: int
@@ -40,6 +41,9 @@ class ArenaResult:
     avg_win_steps: float = 0.0
     avg_lose_steps: float = 0.0
     avg_turns: float = 0.0
+    avg_rounds: float = 0.0
+    avg_win_rounds: float = 0.0
+    avg_lose_rounds: float = 0.0
     p0_seat_win_rate: float = 0.0
     p1_seat_win_rate: float = 0.0
     reasons: Optional[Dict[str, int]] = None
@@ -79,6 +83,7 @@ class Arena:
         p0_score, p1_score = env.scores
         p0_crowns, p1_crowns = env.crowns
         turns = env.game.turn_number()
+        rounds = env.round_number
 
         # 胜负判定原因推断
         reason = "draw"
@@ -96,6 +101,7 @@ class Arena:
             winner=winner,
             steps=steps,
             turns=turns,
+            rounds=rounds,
             p0_score=p0_score,
             p1_score=p1_score,
             p0_crowns=p0_crowns,
@@ -119,10 +125,13 @@ class Arena:
         agent0_as_p1_wins = 0
         total_steps = 0
         total_turns = 0
+        total_rounds = 0
 
         p0_seat_total_wins = 0
         agent0_win_steps: List[int] = []
         agent0_lose_steps: List[int] = []
+        agent0_win_rounds: List[int] = []
+        agent0_lose_rounds: List[int] = []
         reasons_count: Dict[str, int] = {
             "20_points": 0,
             "10_crowns": 0,
@@ -139,6 +148,7 @@ class Arena:
             res1 = self.play_game(seed, self.agent0, self.agent1)
             total_steps += res1.steps
             total_turns += res1.turns
+            total_rounds += res1.rounds
             reasons_count[res1.reason] = reasons_count.get(res1.reason, 0) + 1
 
             if res1.winner == 0:
@@ -146,9 +156,11 @@ class Arena:
                 agent0_as_p0_wins += 1
                 p0_seat_total_wins += 1
                 agent0_win_steps.append(res1.steps)
+                agent0_win_rounds.append(res1.rounds)
             elif res1.winner == 1:
                 agent1_wins += 1
                 agent0_lose_steps.append(res1.steps)
+                agent0_lose_rounds.append(res1.rounds)
             else:
                 draws += 1
             pbar.update(i * 2 + 1, extra=f"{self.agent0_name} 胜率: {agent0_wins/(i*2+1)*100:.1f}%")
@@ -157,16 +169,19 @@ class Arena:
             res2 = self.play_game(seed, self.agent1, self.agent0)
             total_steps += res2.steps
             total_turns += res2.turns
+            total_rounds += res2.rounds
             reasons_count[res2.reason] = reasons_count.get(res2.reason, 0) + 1
 
             if res2.winner == 1:
                 agent0_wins += 1
                 agent0_as_p1_wins += 1
                 agent0_win_steps.append(res2.steps)
+                agent0_win_rounds.append(res2.rounds)
             elif res2.winner == 0:
                 agent1_wins += 1
                 p0_seat_total_wins += 1
                 agent0_lose_steps.append(res2.steps)
+                agent0_lose_rounds.append(res2.rounds)
             else:
                 draws += 1
             pbar.update(i * 2 + 2, extra=f"{self.agent0_name} 胜率: {agent0_wins/(i*2+2)*100:.1f}%")
@@ -176,8 +191,11 @@ class Arena:
         win_rate = agent0_wins / max(total_games, 1)
         avg_steps = total_steps / max(total_games, 1)
         avg_turns = total_turns / max(total_games, 1)
+        avg_rounds = total_rounds / max(total_games, 1)
         avg_win_steps = float(sum(agent0_win_steps) / len(agent0_win_steps)) if agent0_win_steps else 0.0
         avg_lose_steps = float(sum(agent0_lose_steps) / len(agent0_lose_steps)) if agent0_lose_steps else 0.0
+        avg_win_rounds = float(sum(agent0_win_rounds) / len(agent0_win_rounds)) if agent0_win_rounds else 0.0
+        avg_lose_rounds = float(sum(agent0_lose_rounds) / len(agent0_lose_rounds)) if agent0_lose_rounds else 0.0
         p0_seat_win_rate = p0_seat_total_wins / max(total_games, 1)
         p1_seat_win_rate = (total_games - p0_seat_total_wins - draws) / max(total_games, 1)
 
@@ -195,6 +213,9 @@ class Arena:
             avg_win_steps=avg_win_steps,
             avg_lose_steps=avg_lose_steps,
             avg_turns=avg_turns,
+            avg_rounds=avg_rounds,
+            avg_win_rounds=avg_win_rounds,
+            avg_lose_rounds=avg_lose_rounds,
             p0_seat_win_rate=p0_seat_win_rate,
             p1_seat_win_rate=p1_seat_win_rate,
             reasons=reasons_count,

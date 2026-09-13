@@ -78,6 +78,7 @@ class SplendorDuelEnv:
             "legal_actions": legals,
             "current_player": self.game.current_player(),
             "turn_number": self.game.turn_number(),
+            "round_number": self.game.round_number(),
             "phase": self.game.phase(),
             "scores": scores,
             "crowns": crowns,
@@ -95,6 +96,14 @@ class SplendorDuelEnv:
     @property
     def current_player(self) -> int:
         return self.game.current_player()
+
+    @property
+    def turn_number(self) -> int:
+        return self.game.turn_number()
+
+    @property
+    def round_number(self) -> int:
+        return self.game.round_number()
 
     @property
     def is_done(self) -> bool:

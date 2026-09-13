@@ -136,4 +136,10 @@ impl GameState {
     pub fn opponent_idx(&self) -> usize {
         1 - self.current_player
     }
+
+    /// 当前轮数 (Round，单玩家完整行动轮次，与 turn_number 等价)
+    #[inline]
+    pub fn round_number(&self) -> u32 {
+        self.turn_number
+    }
 }

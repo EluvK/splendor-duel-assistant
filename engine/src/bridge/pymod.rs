@@ -103,6 +103,11 @@ impl PyGameState {
         self.state.turn_number
     }
 
+    /// 当前轮数 (Round)
+    pub fn round_number(&self) -> u32 {
+        self.state.round_number()
+    }
+
     /// 当前阶段名称字符串
     pub fn phase(&self) -> String {
         format!("{:?}", self.state.phase)

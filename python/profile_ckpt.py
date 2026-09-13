@@ -132,7 +132,7 @@ def run_benchmark(
     dur_self = time.time() - t0
 
     print(f"   ⏱️  对战耗时: {dur_self:.2f}s (平均每局 {dur_self/actual_games:.2f}s)")
-    print(f"   📊 平均对局步数: {res_self.avg_steps:.1f} 步 (平均约 {res_self.avg_turns:.1f} 个回合)")
+    print(f"   📊 平均对局长度: {res_self.avg_rounds:.1f} 轮 (共 {res_self.avg_steps:.1f} 动作步)")
     print(
         f"   ⚖️  先后手平衡性: 先手(P0) 胜率 {res_self.p0_seat_win_rate*100:.1f}% | 后手(P1) 胜率 {res_self.p1_seat_win_rate*100:.1f}%"
     )
@@ -163,12 +163,20 @@ def run_benchmark(
     )
     print(f"   📈 对抗胜率: {res_heu.agent0_win_rate*100:.1f}%")
 
-    # 核心步数统计：赢下来花多少步 vs 输掉时坚持多少步
-    win_steps_str = f"{res_heu.avg_win_steps:.1f} 步" if res_heu.agent0_wins > 0 else "无胜场"
-    lose_steps_str = f"{res_heu.avg_lose_steps:.1f} 步" if res_heu.agent1_wins > 0 else "全胜未尝一败"
-    print(f"   ✨ 赢下来平均花费: {win_steps_str}")
-    print(f"   🛡️  输掉时平均坚持: {lose_steps_str}")
-    print(f"   📊 全场平均步数: {res_heu.avg_steps:.1f} 步 (平均约 {res_heu.avg_turns:.1f} 个回合)")
+    # 核心轮数与步数统计：赢下来花多少轮/步 vs 输掉时坚持多少轮/步
+    win_rounds_str = (
+        f"{res_heu.avg_win_rounds:.1f} 轮 ({res_heu.avg_win_steps:.1f} 步)"
+        if res_heu.agent0_wins > 0
+        else "无胜场"
+    )
+    lose_rounds_str = (
+        f"{res_heu.avg_lose_rounds:.1f} 轮 ({res_heu.avg_lose_steps:.1f} 步)"
+        if res_heu.agent1_wins > 0
+        else "全胜未尝一败"
+    )
+    print(f"   ✨ 赢下来平均花费: {win_rounds_str}")
+    print(f"   🛡️  输掉时平均坚持: {lose_rounds_str}")
+    print(f"   📊 全场平均长度: {res_heu.avg_rounds:.1f} 轮 (共 {res_heu.avg_steps:.1f} 动作步)")
     if res_heu.reasons:
         print(
             f"   🎯 终局胜因统计: 20声望胜 {res_heu.reasons.get('20_points', 0)} 局 | "
