@@ -1,38 +1,48 @@
-"""Main training launcher with sharded disk streaming for Splendor Duel AI."""
+"""Main training launcher with sharded disk streaming and AlphaZero self-play."""
 
 import argparse
 from pathlib import Path
 import time
 import torch
 
-from splendor_ai.dataset import ShardedBuffer
+from splendor_ai.arena import Arena
+from splendor_ai.dataset import FastTensorLoader, ShardedBuffer
+from splendor_ai.mcts import MCTS, MCTSAgent, PolicyNetAgent
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
-    generate_selfplay_compact_batch,
+    generate_mcts_selfplay_compact_batch,
 )
 from splendor_ai.trainer import Trainer, TrainerConfig
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Splendor Duel AI Training Launcher (Sharded Streaming)")
+    parser = argparse.ArgumentParser(description="Splendor Duel AI Training Launcher (Sharded & Self-Play)")
     parser.add_argument(
         "--mode",
         type=str,
         choices=["imitation", "selfplay"],
         default="imitation",
-        help="Training mode: 'imitation' or 'selfplay'",
+        help="Training mode: 'imitation' (bootstrap from heuristic AI) or 'selfplay' (AlphaZero loop)",
     )
-    # 模仿学习与分片参数
-    parser.add_argument("--games", type=int, default=40000, help="Total games to generate/train")
+    # 模仿学习参数
+    parser.add_argument("--games", type=int, default=10000, help="Total games to generate/train for imitation")
     parser.add_argument("--shard-games", type=int, default=2500, help="Games per shard (keeps memory bounded < 1GB)")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--data-dir", type=str, default="data/shards", help="Directory to store sharded data")
     parser.add_argument("--reuse-data", action="store_true", help="Reuse existing shards in data-dir without re-generating")
     parser.add_argument("--clear-data", action="store_true", help="Clear data-dir before generating new shards")
 
+    # 自博弈参数
+    parser.add_argument("--iterations", type=int, default=10, help="Number of self-play iterations")
+    parser.add_argument("--games-per-iter", type=int, default=100, help="Games to generate per self-play iteration")
+    parser.add_argument("--mcts-sims", type=int, default=30, help="MCTS simulation count per move in self-play")
+    parser.add_argument("--train-epochs", type=int, default=3, help="Training epochs per iteration in self-play")
+    parser.add_argument("--eval-pairs", type=int, default=5, help="Paired match count in arena evaluation (2 * pairs games)")
+    parser.add_argument("--promote-threshold", type=float, default=0.55, help="Win-rate threshold to promote candidate to best")
+
     # 训练超参数
-    parser.add_argument("--batch-size", type=int, default=8192, help="Batch size for training")
+    parser.add_argument("--batch-size", type=int, default=512, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="L2 weight decay")
     parser.add_argument("--device", type=str, default="auto", help="Compute device ('auto', 'cuda', 'cpu')")
@@ -60,7 +70,6 @@ def train_imitation(args: argparse.Namespace) -> None:
         print(f"🧹 清理历史分片目录: {args.data_dir}")
         buffer.clear()
 
-    # 1. 检查是否需要生成分片
     buffer.refresh()
     if args.reuse_data and len(buffer.shard_files) > 0:
         print(f"📦 发现现有分片 {len(buffer.shard_files)} 个，直接复用磁盘数据！")
@@ -86,7 +95,7 @@ def train_imitation(args: argparse.Namespace) -> None:
                 f"  [{i+1}/{num_shards}] 写入 {shard_path.name} | 样本: {batch.num_samples} 步 "
                 f"(耗时: {gen_time:.2f}s | 吞吐: {batch.num_samples/gen_time:.0f} 步/秒)"
             )
-            del batch  # 立即释放单分片内存
+            del batch
 
         total_gen_time = time.time() - t_start
         print(f"✅ 全部分片落盘完成！总耗时: {total_gen_time:.2f}s | 目录: {args.data_dir}")
@@ -97,7 +106,6 @@ def train_imitation(args: argparse.Namespace) -> None:
         print("❌ 未发现任何有效分片文件，训练终止。")
         return
 
-    # 划分训练分片与验证分片 (最后一个分片作为专用验证分片)
     if len(all_shards) > 1:
         val_shard = all_shards[-1]
         train_shards = all_shards[:-1]
@@ -107,7 +115,6 @@ def train_imitation(args: argparse.Namespace) -> None:
 
     print(f"📊 分片划分: 训练分片 = {len(train_shards)} 个 | 验证分片 = {val_shard.name}")
 
-    # 2. 初始化模型与训练器
     net = SplendorNet()
     cfg = TrainerConfig(
         lr=args.lr,
@@ -124,7 +131,6 @@ def train_imitation(args: argparse.Namespace) -> None:
         trainer.load_checkpoint(Path(args.resume))
         print(f"🔄 从检查点 {args.resume} 恢复")
 
-    # 3. 流式分片训练循环
     print("\n" + "=" * 80)
     print(f"{'Epoch':<8}{'Train Loss':<14}{'Policy Loss':<14}{'Top-1 Acc':<14}{'Top-3 Acc':<14}{'Val Loss':<12}")
     print("=" * 80)
@@ -151,13 +157,116 @@ def train_imitation(args: argparse.Namespace) -> None:
         )
 
     print("=" * 80)
-    print(f"🎉 大规模分片训练完成！最优模型已保存至 {Path(args.ckpt_dir) / 'best.pt'}\n")
+    print(f"🎉 模仿学习完成！最优模型已保存至 {Path(args.ckpt_dir) / 'best.pt'}\n")
+
+
+def train_selfplay(args: argparse.Namespace) -> None:
+    print(f"\n🚀 启动 AlphaZero 自博弈强化学习飞轮 (MCTS Self-Play Loop)...")
+    device_str = (
+        "cuda" if (args.device == "auto" and torch.cuda.is_available()) or args.device == "cuda" else "cpu"
+    )
+    device = torch.device(device_str)
+    print(
+        f"⚙️  硬件: {device_str.upper()} | 迭代: {args.iterations} 轮 | 每轮自对弈: {args.games_per_iter} 局 "
+        f"| MCTS 推演: {args.mcts_sims} 次/步 | 晋升门禁: {args.promote_threshold*100:.0f}%"
+    )
+
+    ckpt_dir = Path(args.ckpt_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    best_path = ckpt_dir / "best.pt"
+
+    # 1. 初始化基准模型 (若有 best.pt 则热启)
+    baseline_net = SplendorNet().to(device)
+    if best_path.exists():
+        checkpoint = torch.load(best_path, map_location=device)
+        baseline_net.load_state_dict(checkpoint["model_state"])
+        print(f"🏆 成功加载现有基准冠军模型: {best_path} (Epoch {checkpoint.get('epoch', 0)})")
+    else:
+        print("🌱 未发现已存模型，从随机初始网络开始自对弈...")
+
+    # 候选训练模型
+    candidate_net = SplendorNet().to(device)
+    candidate_net.load_state_dict(baseline_net.state_dict())
+
+    cfg = TrainerConfig(
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        batch_size=args.batch_size,
+        device=device_str,
+        amp=not args.no_amp,
+        ckpt_dir=args.ckpt_dir,
+        t_max_epochs=args.iterations * args.train_epochs,
+    )
+    trainer = Trainer(candidate_net, cfg)
+
+    # 2. 迭代飞轮
+    for it in range(1, args.iterations + 1):
+        print(f"\n" + "=" * 80)
+        print(f"🔄 [AlphaZero 迭代轮次 {it}/{args.iterations}]")
+        print("=" * 80)
+
+        # (A) MCTS 深度推演自对弈采样
+        t0 = time.time()
+        mcts = MCTS(baseline_net, device)
+        print(f"1. 正在由基准模型驱动 MCTS 深度推演自对弈 {args.games_per_iter} 局 (每次决策 {args.mcts_sims} 次搜索)...")
+        batch = generate_mcts_selfplay_compact_batch(
+            mcts=mcts,
+            num_games=args.games_per_iter,
+            num_simulations=args.mcts_sims,
+            start_seed=int(time.time()) + it * 1009,
+        )
+        gen_time = time.time() - t0
+        print(f"   ✅ 自博弈采样完成！共生成 {batch.num_samples} 紧凑搜索样本 (耗时: {gen_time:.1f}s)")
+
+        if batch.num_samples == 0:
+            print("   ⚠️ 样本采集为空，跳过本轮训练。")
+            continue
+
+        # (B) 候选模型拟合更新
+        print(f"2. 训练候选模型 ({args.train_epochs} Epochs)...")
+        loader = FastTensorLoader(batch, batch_size=args.batch_size, shuffle=True, device=device)
+        for ep in range(args.train_epochs):
+            metrics = trainer.train_epoch(loader)
+
+        # (C) 竞技场门禁对抗 (Candidate vs Baseline)
+        print(f"3. 竞技场门禁对抗评测 ({args.eval_pairs * 2} 局成对对抗)...")
+        candidate_agent = PolicyNetAgent(candidate_net, device)
+        baseline_agent = PolicyNetAgent(baseline_net, device)
+
+        arena = Arena(
+            candidate_agent,
+            baseline_agent,
+            agent0_name=f"Candidate-Iter{it}",
+            agent1_name="Baseline-Best",
+        )
+        match_result = arena.play_match(num_pairs=args.eval_pairs, base_seed=int(time.time()) + it * 503)
+
+        win_rate = match_result.agent0_win_rate
+        print(
+            f"   ⚔️ 对决结果: 候选胜 {match_result.agent0_wins} 局 | 基准胜 {match_result.agent1_wins} 局 "
+            f"| 平局 {match_result.draws} 局 | 候选胜率: {win_rate*100:.1f}%"
+        )
+
+        # 晋升判定
+        if win_rate >= args.promote_threshold:
+            print(f"   🎉 胜率达到 {win_rate*100:.1f}% (>= {args.promote_threshold*100:.0f}%) -> 晋升为新主力！🌟")
+            baseline_net.load_state_dict(candidate_net.state_dict())
+            trainer.save_checkpoint("best.pt", is_best=True, meta={"iteration": it, "win_rate": win_rate})
+        else:
+            print(f"   ⚠️ 胜率 {win_rate*100:.1f}% 未达门禁要求 ({args.promote_threshold*100:.0f}%) -> 淘汰放弃，保留原基准重新探索。")
+            candidate_net.load_state_dict(baseline_net.state_dict())
+
+        trainer.save_checkpoint("latest.pt", is_best=False, meta={"iteration": it, "win_rate": win_rate})
+
+    print(f"\n🏁 全部自博弈迭代完成！终局最强模型位于 {best_path}")
 
 
 def main() -> None:
     args = parse_args()
     if args.mode == "imitation":
         train_imitation(args)
+    elif args.mode == "selfplay":
+        train_selfplay(args)
 
 
 if __name__ == "__main__":

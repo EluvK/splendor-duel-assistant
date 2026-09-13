@@ -132,6 +132,18 @@ impl PyGameState {
             .map(|a| action_to_id(&a))
     }
 
+    /// 调用底层 Rust 原生高性能 MCTS 进行推演并返回最佳动作 ID (微秒级响应)
+    #[pyo3(signature = (num_sims=50, seed=None))]
+    pub fn mcts_action_id(&self, num_sims: usize, seed: Option<u64>) -> Option<usize> {
+        let mut rng = match seed {
+            Some(s) => rand_chacha::ChaCha8Rng::seed_from_u64(s),
+            None => rand_chacha::ChaCha8Rng::from_rng(&mut rand::rng()),
+        };
+        let mcts = crate::ai::RustMCTS::default();
+        mcts.search(&self.state, num_sims, &mut rng)
+            .map(|a| action_to_id(&a))
+    }
+
     #[staticmethod]
     pub fn observation_space_size() -> usize {
         OBS_SIZE

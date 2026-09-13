@@ -7,6 +7,7 @@ import torch
 from splendor_ai._engine import generate_heuristic_samples
 from splendor_ai.dataset import CompactBatch
 from splendor_ai.env import SplendorDuelEnv
+from splendor_ai.mcts import MCTS
 from splendor_ai.net import SplendorNet
 
 
@@ -26,6 +27,61 @@ def generate_heuristic_compact_batch(
     return CompactBatch(obs=obs, mask=masks, action=actions, value=values)
 
 
+def generate_mcts_selfplay_compact_batch(
+    mcts: MCTS,
+    num_games: int,
+    num_simulations: int = 30,
+    start_seed: int = 42,
+    temperature_moves: int = 15,
+) -> CompactBatch:
+    """使用真实的 MCTS 树搜索生成超越纯网络直觉的高质量自对弈样本."""
+    all_obs: List[np.ndarray] = []
+    all_masks: List[np.ndarray] = []
+    all_actions: List[int] = []
+    all_values: List[float] = []
+
+    for g in range(num_games):
+        env = SplendorDuelEnv(seed=start_seed + g * 37)
+        obs, info = env.reset()
+
+        raw_trajectory = []
+        step = 0
+
+        while not env.is_done:
+            step += 1
+            acting_player = env.current_player
+            mask = info["action_mask"]
+
+            # 前若干步开启探索噪声与温度采样，中后期贪心
+            add_noise = (step <= temperature_moves)
+            temp = 1.0 if step <= temperature_moves else 0.0
+
+            pi, action = mcts.search(
+                env, num_simulations=num_simulations, add_noise=add_noise, temperature=temp
+            )
+
+            raw_trajectory.append((obs, mask, action, acting_player))
+            obs, reward, terminated, truncated, info = env.step(action)
+            if truncated:
+                break
+
+        winner = info.get("winner")
+        if winner is not None:
+            for obs_s, mask_s, act_s, ply_s in raw_trajectory:
+                all_obs.append(obs_s)
+                all_masks.append(mask_s)
+                all_actions.append(act_s)
+                all_values.append(1.0 if ply_s == winner else -1.0)
+
+    total_steps = len(all_actions)
+    obs_arr = np.array(all_obs, dtype=np.float32) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32)
+    masks_arr = np.array(all_masks, dtype=bool) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool)
+    actions_arr = np.array(all_actions, dtype=np.int64)
+    values_arr = np.array(all_values, dtype=np.float32).reshape(-1, 1)
+
+    return CompactBatch(obs=obs_arr, mask=masks_arr, action=actions_arr, value=values_arr)
+
+
 def generate_selfplay_compact_batch(
     net: SplendorNet,
     device: torch.device,
@@ -33,7 +89,9 @@ def generate_selfplay_compact_batch(
     start_seed: int = 42,
     temperature: float = 1.0,
 ) -> CompactBatch:
-    """使用当前神经网络策略模型进行自博弈对弈，并提取紧凑张量样本."""
+    """使用当前神经网络直觉概率进行快速自博弈 (不跑 MCTS，用于超快速粗糙探索)."""
+    mcts = MCTS(net, device)
+    # 当 num_simulations=0 时退化为纯网络前向
     all_obs: List[np.ndarray] = []
     all_masks: List[np.ndarray] = []
     all_actions: List[int] = []
@@ -55,8 +113,6 @@ def generate_selfplay_compact_batch(
 
                 probs, _ = net.predict_action_probs(obs_t, mask_t, temperature=temperature)
                 probs_np = probs.cpu().numpy()[0]
-
-                # 依据策略概率分布采样动作
                 action = int(np.random.choice(len(probs_np), p=probs_np))
 
                 raw_trajectory.append((obs, mask, action, acting_player))
