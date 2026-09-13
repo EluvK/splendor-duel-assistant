@@ -69,7 +69,7 @@
     .status-badge {
       font-size: 0.78rem;
       font-weight: 600;
-      padding: 3px 9px;
+      padding: 3px 10px;
       border-radius: 9999px;
       background-color: var(--bg-card);
       border: 1px solid var(--border-color);
@@ -443,10 +443,34 @@
       gap: 8px;
       transition: all 0.2s;
     }
-    .player-card.active {
+    .player-card.acting {
       border-color: var(--primary);
-      box-shadow: 0 0 14px rgba(99, 102, 241, 0.45);
+      box-shadow: 0 0 16px rgba(99, 102, 241, 0.45);
       background: #1f273b;
+    }
+    .acting-indicator {
+      font-size: 0.68rem;
+      background: var(--primary);
+      color: #fff;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      font-weight: 700;
+      display: none;
+    }
+    .player-card.acting .acting-indicator {
+      display: inline-block;
+    }
+    .next-indicator {
+      font-size: 0.65rem;
+      background: rgba(148, 163, 184, 0.15);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      color: #94a3b8;
+      padding: 1px 5px;
+      border-radius: 9999px;
+      display: none;
+    }
+    .player-card.next-turn .next-indicator {
+      display: inline-block;
     }
 
     .player-header {
@@ -462,17 +486,6 @@
       display: flex;
       align-items: center;
       gap: 6px;
-    }
-    .turn-indicator {
-      font-size: 0.7rem;
-      background: var(--primary);
-      color: #fff;
-      padding: 2px 6px;
-      border-radius: 9999px;
-      display: none;
-    }
-    .player-card.active .turn-indicator {
-      display: inline-block;
     }
 
     .victory-progress {
@@ -683,6 +696,7 @@
     .candidates-title {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       font-size: 0.72rem;
       font-weight: 700;
       color: var(--accent-gold);
@@ -809,7 +823,7 @@
         <span>🎒 布袋剩余: <b id="bagCount">0</b></span>
       </div>
 
-      <!-- 对局日志：集成在左侧下方，空间利用更紧凑高效 -->
+      <!-- 对局日志：集成在左侧下方 -->
       <div class="panel-title" style="margin-top: 2px;">
         <span>对局操作日志</span>
         <span style="font-size:0.7rem; color:var(--text-muted);">点击步骤快速跳转</span>
@@ -865,7 +879,8 @@
           <div class="player-header">
             <span class="player-name">
               <span style="color:#38bdf8;">👤 Player 0</span>
-              <span class="turn-indicator">行动中</span>
+              <span class="acting-indicator">⚡ 本步行动</span>
+              <span class="next-indicator">⏱ 下步待命</span>
             </span>
             <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
           </div>
@@ -907,7 +922,8 @@
           <div class="player-header">
             <span class="player-name">
               <span style="color:#f472b6;">👤 Player 1</span>
-              <span class="turn-indicator">行动中</span>
+              <span class="acting-indicator">⚡ 本步行动</span>
+              <span class="next-indicator">⏱ 下步待命</span>
             </span>
             <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
           </div>
@@ -949,7 +965,7 @@
       <div class="ai-decision-panel" id="aiDecisionSection">
         <div class="panel-title" style="margin-top: 2px;">
           <span style="color:var(--accent-gold); display:flex; align-items:center; gap:6px;">
-            🧠 AI 决策与评分分析
+            🧠 AI 决策与动作估值分析
             <span id="decisionStepIndex" style="font-size:0.75rem; color:var(--text-muted);">#0</span>
           </span>
           <span id="decisionAiTypeBadge" class="ai-type-badge">启发式 AI</span>
@@ -960,7 +976,7 @@
           <div class="decision-summary">
             <div class="summary-item">
               <span class="summary-label">决策玩家:</span>
-              <b id="decisionPlayer" style="color:#38bdf8;">P0</b>
+              <b id="decisionPlayer" style="color:#38bdf8;">Player 0</b>
             </div>
             <div class="summary-item">
               <span class="summary-label">采纳动作:</span>
@@ -1014,7 +1030,6 @@
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        renderState(data.state);
 
         // 同步双方 AI 类型下拉选择器
         if (data.player_types) {
@@ -1024,7 +1039,11 @@
 
         if (data.step) {
           stepCache.set(data.step.step_index, data.step);
+          currentStep = data.step.step_index;
+          renderState(data.state, data.step);
           renderDecision(data.step);
+        } else {
+          renderState(data.state, null);
         }
 
         await reloadFullHistory();
@@ -1054,7 +1073,7 @@
 
       if (stepCache.has(index)) {
         const step = stepCache.get(index);
-        renderState(step.state);
+        renderState(step.state, step);
         renderDecision(step);
         updateControlUI();
         updateActiveLogInView(index);
@@ -1066,7 +1085,7 @@
         if (res.ok) {
           const step = await res.json();
           stepCache.set(index, step);
-          renderState(step.state);
+          renderState(step.state, step);
           renderDecision(step);
           updateControlUI();
           updateActiveLogInView(index);
@@ -1094,7 +1113,7 @@
           currentStep = totalSteps - 1;
 
           stepCache.set(currentStep, data.step);
-          renderState(data.step.state);
+          renderState(data.step.state, data.step);
           renderDecision(data.step);
 
           if (data.new_steps && data.new_steps.length > 0) {
@@ -1132,7 +1151,7 @@
           totalSteps = data.total_steps;
           currentStep = totalSteps - 1;
           stepCache.set(currentStep, data.step);
-          renderState(data.step.state);
+          renderState(data.step.state, data.step);
           renderDecision(data.step);
           await reloadFullHistory();
           updateControlUI();
@@ -1233,7 +1252,7 @@
       if (!step) return;
       document.getElementById('decisionStepIndex').innerText = `#${step.step_index}`;
       const pEl = document.getElementById('decisionPlayer');
-      pEl.innerText = `P${step.player}`;
+      pEl.innerText = `Player ${step.player}`;
       pEl.style.color = (step.player === 0 ? '#38bdf8' : '#f472b6');
 
       const actEl = document.getElementById('decisionAction');
@@ -1287,18 +1306,29 @@
       } else {
         badgeEl.innerText = '对局初始化';
         scoreEl.innerText = '-';
-        candidatesList.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:4px;">初始棋盘状态，尚未执行 AI 动作决策</span>';
+        candidatesList.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:4px;">初始棋盘就绪，先手玩家准备行动</span>';
       }
     }
 
-    function renderState(state) {
+    /* 渲染完整盘面，严格对齐本步决策行动方与下步待命方 */
+    function renderState(state, step) {
+      // 严格识别：做出本步决策的行动方永远是 step.player
+      const actor = (step && step.step_index > 0) ? step.player : state.current_player;
+      const nextPlayer = state.current_player;
+
+      // 头部阶段与胜负判定
       const phaseEl = document.getElementById('gamePhase');
       if (state.winner) {
         phaseEl.innerText = `🏆 获胜者: ${state.winner}`;
         phaseEl.style.backgroundColor = '#dc2626';
         phaseEl.style.color = '#fff';
+      } else if (step && step.step_index > 0) {
+        const turnTip = (actor !== nextPlayer) ? `(下次回合由 P${nextPlayer} 接手)` : `(持续行动)`;
+        phaseEl.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase} ${turnTip}`;
+        phaseEl.style.backgroundColor = 'var(--bg-card)';
+        phaseEl.style.color = 'var(--text-main)';
       } else {
-        phaseEl.innerText = `第 ${state.turn_number} 回合 | 阶段: ${state.phase}`;
+        phaseEl.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
         phaseEl.style.backgroundColor = 'var(--bg-card)';
         phaseEl.style.color = 'var(--text-main)';
       }
@@ -1349,9 +1379,14 @@
       document.getElementById('deck2Count').innerText = state.decks_count[1];
       document.getElementById('deck1Count').innerText = state.decks_count[0];
 
-      // 玩家平铺展示
-      renderPlayer(state.players[0], document.getElementById('player0Card'), state.current_player === 0, 'p0');
-      renderPlayer(state.players[1], document.getElementById('player1Card'), state.current_player === 1, 'p1');
+      // 玩家平铺展示：本步行动者高亮发光，若交接则对方提示待命
+      const p0Acting = (actor === 0);
+      const p1Acting = (actor === 1);
+      const p0Next = (step && step.step_index > 0 && actor !== nextPlayer && nextPlayer === 0);
+      const p1Next = (step && step.step_index > 0 && actor !== nextPlayer && nextPlayer === 1);
+
+      renderPlayer(state.players[0], document.getElementById('player0Card'), p0Acting, p0Next, 'p0');
+      renderPlayer(state.players[1], document.getElementById('player1Card'), p1Acting, p1Next, 'p1');
     }
 
     function renderCardsList(cards, container, isCompact = false) {
@@ -1446,9 +1481,18 @@
       });
     }
 
-    function renderPlayer(p, cardEl, isActive, prefix) {
-      if (isActive) cardEl.classList.add('active');
-      else cardEl.classList.remove('active');
+    function renderPlayer(p, cardEl, isActing, isNext, prefix) {
+      if (isActing) {
+        cardEl.classList.add('acting');
+      } else {
+        cardEl.classList.remove('acting');
+      }
+
+      if (isNext) {
+        cardEl.classList.add('next-turn');
+      } else {
+        cardEl.classList.remove('next-turn');
+      }
 
       document.getElementById(`${prefix}Privileges`).innerText = `📜 ${p.privileges}`;
       document.getElementById(`${prefix}Points`).innerText = p.total_points;
