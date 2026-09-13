@@ -141,10 +141,10 @@ class SplendorNet(nn.Module):
 
     @staticmethod
     def mask_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """应用合法动作掩码，将非法动作 logits 赋为极小值 (-1e9)."""
+        """应用合法动作掩码，将非法动作 logits 赋为极小值 (-1e4，适配 AMP float16 范围)."""
         if mask.dim() == 1:
             mask = mask.unsqueeze(0)
-        return torch.where(mask, logits, torch.tensor(-1e9, device=logits.device, dtype=logits.dtype))
+        return torch.where(mask, logits, torch.tensor(-1e4, device=logits.device, dtype=logits.dtype))
 
     def predict_action_probs(
         self, obs: torch.Tensor, mask: Optional[torch.Tensor] = None, temperature: float = 1.0
