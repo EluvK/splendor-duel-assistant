@@ -133,15 +133,31 @@ impl PyGameState {
     }
 
     /// 调用底层 Rust 原生高性能 MCTS 进行推演并返回最佳动作 ID (微秒级响应)
-    #[pyo3(signature = (num_sims=50, seed=None))]
-    pub fn mcts_action_id(&self, num_sims: usize, seed: Option<u64>) -> Option<usize> {
+    #[pyo3(signature = (num_sims=50, seed=None, add_dirichlet=false, dirichlet_alpha=0.3, dirichlet_eps=0.25, temperature=0.0))]
+    pub fn mcts_action_id(
+        &self,
+        num_sims: usize,
+        seed: Option<u64>,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+    ) -> Option<usize> {
         let mut rng = match seed {
             Some(s) => rand_chacha::ChaCha8Rng::seed_from_u64(s),
             None => rand_chacha::ChaCha8Rng::from_rng(&mut rand::rng()),
         };
         let mcts = crate::ai::RustMCTS::default();
-        mcts.search(&self.state, num_sims, &mut rng)
-            .map(|a| action_to_id(&a))
+        mcts.search_with_exploration(
+            &self.state,
+            num_sims,
+            add_dirichlet,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temperature,
+            &mut rng,
+        )
+        .map(|a| action_to_id(&a))
     }
 
     #[staticmethod]
@@ -180,14 +196,17 @@ pub fn generate_heuristic_samples<'py>(
     Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
 }
 
-/// 批量多线程并行生成带 MCTS 深度推演的自博弈样本 (8 线程全速并发)
+/// 批量多线程并行生成带 MCTS 深度推演与 AlphaZero 探索机制的自博弈样本 (8 线程全速并发)
 #[pyfunction]
-#[pyo3(signature = (num_games=100, num_sims=30, start_seed=42))]
+#[pyo3(signature = (num_games=100, num_sims=30, start_seed=42, temp_steps=12, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
 pub fn generate_mcts_samples<'py>(
     py: Python<'py>,
     num_games: usize,
     num_sims: usize,
     start_seed: u64,
+    temp_steps: usize,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
 ) -> PyResult<(
     Bound<'py, numpy::PyArray1<f32>>,
     Bound<'py, numpy::PyArray1<u8>>,
@@ -195,7 +214,14 @@ pub fn generate_mcts_samples<'py>(
     Bound<'py, numpy::PyArray1<f32>>,
     usize,
 )> {
-    let batch = crate::ai::sample_mcts_games_parallel(num_games, num_sims, start_seed);
+    let batch = crate::ai::sample_mcts_games_parallel_with_config(
+        num_games,
+        num_sims,
+        start_seed,
+        temp_steps,
+        dirichlet_alpha,
+        dirichlet_eps,
+    );
 
     let total_steps = batch.total_steps;
     let obs_arr = numpy::PyArray1::from_vec(py, batch.obs);

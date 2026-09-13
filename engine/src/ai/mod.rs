@@ -16,5 +16,6 @@ pub use replay::{
     ReplayStep, RoyalDto, ScoredActionDto, StateDto,
 };
 pub use sampling::{
-    sample_heuristic_games_parallel, sample_mcts_games_parallel, CompactBatchSamples,
+    sample_heuristic_games_parallel, sample_mcts_games_parallel,
+    sample_mcts_games_parallel_with_config, CompactBatchSamples,
 };

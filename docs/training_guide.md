@@ -136,30 +136,46 @@ Epoch   Train Loss    Policy Loss   Top-1 Acc     Top-3 Acc     Val Loss
 
 ## 4. 第二阶段：AlphaZero 自博弈强化学习 (Self-Play Loop)
 
-当模型具备基础走子能力后，切换到 `selfplay` 模式，开启策略迭代自进化飞轮。
+当模型具备基础走子能力（且在 MCTS 指导下已能压制规则 AI）后，切换到 `selfplay` 模式，开启策略自进化飞轮。
 
-### 4.1 启动自博弈闭环
+### 4.1 启动自博弈闭环 (Rust 8 线程全速原生驱动)
 ```bash
-# 启动 10 轮自博弈迭代，每轮自弈 100 局，MCTS 推演 30 次，晋升门槛 55% 胜率
-python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mcts-sims 30 --train-epochs 3 --promote-threshold 0.55
+# 启动 10 轮 Rust 8 线程全速自博弈迭代，每轮自弈 100 局，MCTS 推演 30 次，开启开局探索与经验池
+python python/train.py --mode selfplay \
+    --iterations 10 \
+    --games-per-iter 100 \
+    --mcts-sims 30 \
+    --selfplay-backend rust \
+    --temp-steps 12 \
+    --dirichlet-eps 0.25 \
+    --buffer-size 50000 \
+    --train-epochs 3 \
+    --promote-threshold 0.55
 ```
 
 ### 4.2 核心机制运作流程
-每轮迭代自动执行以下三步：
-1. **采样阶段 (Self-Play Sampling)**：
-   底层 Rust 多线程运行 MCTS 模拟，生成高信息量的局面-策略对 `(s, π, z)`。
-2. **拟合阶段 (Candidate Fitting)**：
-   候选网络（Candidate）通过 Policy-Value 联合损失在最新生成的优质对局样本上拟合更新。
-3. **竞技场门禁对抗 (Arena Promotion)**：
-   候选模型与现役冠军模型（Baseline）进行双向成对换座对抗（例如 10 局对抗消除先后手发牌偏差）。
-   - 若胜率 $\ge 55\%$：**晋升成功**，保存 `iter_xxx.pt` 并同步覆盖更新主力 `best.pt`。
-   - 若胜率 $< 55\%$：**晋升失败**，丢弃本次更新，候选模型回滚至 Baseline 状态重新下一轮探索。
+每轮迭代自动执行以下四步闭环：
+1. **Rust 原生多线程高速采样 (Rust 8-Thread MCTS Sampling)**：
+   - 彻底摆脱 Python 单步调度与 GIL 瓶颈，底层 Rust 调用 `rayon` 线程池全核并发推演，**100 局 30 次推演仅需约 2 秒**（吞吐量达 7,500 ~ 10,000 步/秒）。
+   - **Rust 原生探索机制注入（破除开局盲区）**：在 Rust MCTS 根节点直接注入狄利克雷噪声（$\alpha=0.3, \epsilon=0.25$），前 `--temp-steps 12` 步在 Rust 内部直接以温度 $\tau=1.0$ 进行轮盘赌采样，打破“开局必锁三金”的模式坍塌；12 步之后退火至确定性推演。
+2. **经验回放池滑动窗口管理 (ReplayBuffer)**：
+   - 每轮采集的新样本存入 `ReplayBuffer`（默认容量 50,000 步）。
+   - 训练样本由最新经验与最近几轮高质量历史对局混合组成，防止策略震荡与灾难性遗忘。
+3. **候选模型拟合更新 (Candidate Fitting)**：
+   - 候选网络在整个 ReplayBuffer 混合池上进行 Policy-Value 联合损失拟合更新。
+4. **严格换座门禁对抗 (Arena Promotion)**：
+   - 候选模型与现役冠军模型进行双向成对严格换座对抗（消除先后手发牌随机偏差）。
+   - 若胜率 $\ge 55\%$：**晋升为主力**，自动归档 `iter_xxx.pt` 并同步覆盖更新 `best.pt`。
+   - 若胜率 $< 55\%$：**晋升失败**，丢弃本次权重，候选网络回滚至 Baseline 状态重新下一轮探索。
 
-### 4.3 进阶调优参数
-- `--iterations`：自博弈迭代轮数（如 20 或 50）。
-- `--games-per-iter`：每轮自弈局数（推荐 100 ~ 200）。
-- `--mcts-sims`：每步 MCTS 模拟次数（推演越深样本质量越高，建议 30 ~ 100）。
-- `--eval-pairs`：成对门禁评测局数对（例如 5 对 = 10 局）。
+### 4.3 进阶调优参数说明
+- `--selfplay-backend`：自博弈引擎，`rust`（**推荐**，Rust 8 线程原生 MCTS，速度极快）或 `neural`（Python Neural-MCTS）。
+- `--temp-steps`：开局探索步数（默认 12 步），此阶段采用 Softmax 概率轮盘赌，打破固定套路。
+- `--dirichlet-alpha` 与 `--dirichlet-eps`：根节点狄利克雷探索噪声参数（默认 0.3 和 0.25）。
+- `--buffer-size`：经验回放池最大样本容量（默认 50,000 步）。
+- `--mcts-sims`：每步 MCTS 推演次数（推演越深样本质量越高，建议 30 ~ 80）。
+- `--eval-agent`：门禁测试智能体类型（`policy_net` 快速评估，`neural_mcts` 深度推演评测）。
+- `--eval-pairs`：成对门禁评测局数对（默认 5 对 = 10 局）。
 
 ---
 

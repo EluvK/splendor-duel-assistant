@@ -115,6 +115,9 @@ fn simulate_single_mcts_game(
     mcts: &RustMCTS,
     num_sims: usize,
     seed: u64,
+    temp_steps: usize,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
 ) -> Option<SingleGameTrajectory> {
     let mut game = GameState::new_game(seed);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -135,7 +138,22 @@ fn simulate_single_mcts_game(
         let obs = encode_state(&game);
         let mask = action_mask(&game);
 
-        let action = mcts.search(&game, num_sims, &mut rng)?;
+        // 前 temp_steps 步 (如前 12 步) 启用温度 1.0 轮盘赌与根节点 Dirichlet 噪声，破除开局盲区
+        let (add_noise, temp) = if steps <= temp_steps {
+            (true, 1.0)
+        } else {
+            (false, 0.0)
+        };
+
+        let action = mcts.search_with_exploration(
+            &game,
+            num_sims,
+            add_noise,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temp,
+            &mut rng,
+        )?;
         let action_id = action_to_id(&action);
         if action_id >= ACTION_SIZE {
             return None;
@@ -169,16 +187,28 @@ fn simulate_single_mcts_game(
     })
 }
 
-/// 并行采样 N 局带 MCTS 深度推演的自博弈对局 (8 线程全速并发)
-pub fn sample_mcts_games_parallel(
+/// 并行采样 N 局带 MCTS 深度推演与 AlphaZero 探索机制的自博弈对局 (8 线程全速并发)
+pub fn sample_mcts_games_parallel_with_config(
     num_games: usize,
     num_sims: usize,
     start_seed: u64,
+    temp_steps: usize,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
 ) -> CompactBatchSamples {
     let mcts = RustMCTS::default();
     let trajectories: Vec<SingleGameTrajectory> = (0..num_games)
         .into_par_iter()
-        .filter_map(|idx| simulate_single_mcts_game(&mcts, num_sims, start_seed + idx as u64))
+        .filter_map(|idx| {
+            simulate_single_mcts_game(
+                &mcts,
+                num_sims,
+                start_seed + idx as u64,
+                temp_steps,
+                dirichlet_alpha,
+                dirichlet_eps,
+            )
+        })
         .collect();
 
     let total_steps: usize = trajectories.iter().map(|t| t.steps).sum();
@@ -202,4 +232,13 @@ pub fn sample_mcts_games_parallel(
         actions: all_actions,
         values: all_values,
     }
+}
+
+/// 兼容老旧签名的并行 MCTS 采样
+pub fn sample_mcts_games_parallel(
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+) -> CompactBatchSamples {
+    sample_mcts_games_parallel_with_config(num_games, num_sims, start_seed, 12, 0.3, 0.25)
 }

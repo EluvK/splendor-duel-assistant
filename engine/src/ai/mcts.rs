@@ -1,4 +1,5 @@
 use rand::prelude::*;
+use rand_distr::multi::{Dirichlet, MultiDistribution};
 
 use crate::ai::heuristic_ai::HeuristicAI;
 use crate::game_state::phase::TurnPhase;
@@ -58,11 +59,25 @@ impl RustMCTS {
         }
     }
 
-    /// 执行 MCTS 搜索并返回推荐的最佳动作
+    /// 执行 MCTS 搜索并返回推荐的最佳动作 (确定性贪婪模式)
     pub fn search<R: Rng + ?Sized>(
         &self,
         state: &GameState,
         num_simulations: usize,
+        rng: &mut R,
+    ) -> Option<Action> {
+        self.search_with_exploration(state, num_simulations, false, 0.3, 0.25, 0.0, rng)
+    }
+
+    /// 执行带 AlphaZero 探索机制的 MCTS 搜索 (支持根节点 Dirichlet 噪声与温度轮盘赌采样)
+    pub fn search_with_exploration<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
         rng: &mut R,
     ) -> Option<Action> {
         let legals = RuleEngine::legal_actions(state);
@@ -79,7 +94,27 @@ impl RustMCTS {
         let is_term = matches!(state.phase, TurnPhase::GameOver(_));
 
         // 根节点利用启发式先验展开所有合法分支
-        let root_edges = Self::create_edges_with_priors(state, legals);
+        let mut root_edges = Self::create_edges_with_priors(state, legals);
+
+        // 注入 Dirichlet 探索噪声 (强行给次优分支分配搜索预算，打破开局盲区)
+        if add_dirichlet && root_edges.len() >= 2 {
+            let alphas = vec![dirichlet_alpha; root_edges.len()];
+            if let Ok(dir) = Dirichlet::new(&alphas) {
+                let mut noise = vec![0.0f32; root_edges.len()];
+                dir.sample_to_slice(rng, &mut noise);
+                let mut sum = 0.0f32;
+                for (i, edge) in root_edges.iter_mut().enumerate() {
+                    edge.prior = (1.0 - dirichlet_eps) * edge.prior + dirichlet_eps * noise[i];
+                    sum += edge.prior;
+                }
+                if sum > 1e-6 {
+                    for edge in root_edges.iter_mut() {
+                        edge.prior /= sum;
+                    }
+                }
+            }
+        }
+
         nodes.push(Node {
             player: state.current_player,
             visits: 1,
@@ -140,13 +175,37 @@ impl RustMCTS {
             }
         }
 
-        // 最终选择根节点下访问次数最多 (最稳健) 的动作
-        let best_edge = nodes[root_idx]
-            .edges
-            .iter()
-            .max_by_key(|e| e.visits);
-
-        best_edge.map(|e| e.action.clone())
+        // 根据温度参数进行动作选取
+        if temperature <= 0.01 {
+            // 贪婪选择根节点下访问次数最多 (最稳健) 的动作
+            let best_edge = nodes[root_idx]
+                .edges
+                .iter()
+                .max_by_key(|e| e.visits);
+            best_edge.map(|e| e.action.clone())
+        } else {
+            // 温度轮盘赌采样 (前 10~15 步破除死板套路)
+            let root_edges = &nodes[root_idx].edges;
+            let inv_temp = 1.0 / temperature;
+            let mut exp_visits = Vec::with_capacity(root_edges.len());
+            let mut sum_v = 0.0f32;
+            for edge in root_edges.iter() {
+                let v = (edge.visits as f32).powf(inv_temp);
+                exp_visits.push(v);
+                sum_v += v;
+            }
+            if sum_v <= 1e-6 {
+                return nodes[root_idx].edges.first().map(|e| e.action.clone());
+            }
+            let mut pick = rng.random_range(0.0..sum_v);
+            for (i, &v) in exp_visits.iter().enumerate() {
+                if pick <= v {
+                    return Some(root_edges[i].action.clone());
+                }
+                pick -= v;
+            }
+            root_edges.last().map(|e| e.action.clone())
+        }
     }
 
     /// 使用先验打分并做平滑 Softmax 归一化初始化分支

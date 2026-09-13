@@ -182,3 +182,59 @@ class ShardedBuffer:
             if p.exists():
                 p.unlink()
         self.shard_files.clear()
+
+
+class ReplayBuffer:
+    """AlphaZero 自博弈经验回放池 (滑动窗口管理最近的高质量对局轨迹)."""
+
+    def __init__(self, max_samples: int = 50000) -> None:
+        self.max_samples = max_samples
+        self.obs_list: List[np.ndarray] = []
+        self.mask_list: List[np.ndarray] = []
+        self.action_list: List[np.ndarray] = []
+        self.value_list: List[np.ndarray] = []
+        self.total_samples = 0
+
+    def add_batch(self, batch: CompactBatch) -> None:
+        """存入一批新的自博弈数据，若超出容量则滑动淘汰最老的数据."""
+        if batch.num_samples == 0:
+            return
+        self.obs_list.append(batch.obs)
+        self.mask_list.append(batch.mask)
+        self.action_list.append(batch.action)
+        self.value_list.append(batch.value)
+        self.total_samples += batch.num_samples
+
+        # 滑动窗口淘汰最老的一批
+        while len(self.action_list) > 1 and self.total_samples > self.max_samples:
+            removed_count = len(self.action_list[0])
+            self.obs_list.pop(0)
+            self.mask_list.pop(0)
+            self.action_list.pop(0)
+            self.value_list.pop(0)
+            self.total_samples -= removed_count
+
+    def get_compact_batch(self) -> CompactBatch:
+        """汇聚当前 Buffer 内全部有效样本为一个连续的 CompactBatch."""
+        if not self.action_list:
+            return CompactBatch(
+                obs=np.zeros((0, 725), dtype=np.float32),
+                mask=np.zeros((0, 256), dtype=bool),
+                action=np.zeros((0,), dtype=np.int64),
+                value=np.zeros((0, 1), dtype=np.float32),
+            )
+        obs_all = np.concatenate(self.obs_list, axis=0)
+        mask_all = np.concatenate(self.mask_list, axis=0)
+        action_all = np.concatenate(self.action_list, axis=0)
+        value_all = np.concatenate(self.value_list, axis=0)
+        return CompactBatch(obs=obs_all, mask=mask_all, action=action_all, value=value_all)
+
+    def clear(self) -> None:
+        self.obs_list.clear()
+        self.mask_list.clear()
+        self.action_list.clear()
+        self.value_list.clear()
+        self.total_samples = 0
+
+    def __len__(self) -> int:
+        return self.total_samples

@@ -6,6 +6,7 @@ from splendor_ai.dataset import (
     CompactBatch,
     CompactDataset,
     FastTensorLoader,
+    ReplayBuffer,
     ShardedBuffer,
 )
 from splendor_ai.env import SplendorDuelEnv
@@ -13,6 +14,8 @@ from splendor_ai.mcts import (
     Agent,
     HeuristicAgent,
     MCTSAgent,
+    NeuralMCTS,
+    NeuralMCTSAgent,
     PolicyNetAgent,
     RandomAgent,
     RustMCTSAgent,
@@ -22,6 +25,7 @@ from splendor_ai.progress import Progress
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
     generate_mcts_selfplay_compact_batch,
+    generate_neural_mcts_selfplay_compact_batch,
     generate_selfplay_compact_batch,
 )
 from splendor_ai.trainer import Trainer, TrainerConfig
@@ -37,12 +41,15 @@ __all__ = [
     "CompactBatch",
     "CompactDataset",
     "FastTensorLoader",
+    "ReplayBuffer",
     "ShardedBuffer",
     "Progress",
     "Trainer",
     "TrainerConfig",
     "Agent",
     "MCTSAgent",
+    "NeuralMCTS",
+    "NeuralMCTSAgent",
     "PolicyNetAgent",
     "HeuristicAgent",
     "RandomAgent",
@@ -51,5 +58,6 @@ __all__ = [
     "ArenaResult",
     "generate_heuristic_compact_batch",
     "generate_mcts_selfplay_compact_batch",
+    "generate_neural_mcts_selfplay_compact_batch",
     "generate_selfplay_compact_batch",
 ]

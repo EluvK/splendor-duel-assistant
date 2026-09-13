@@ -6,12 +6,13 @@ import time
 import torch
 
 from splendor_ai.arena import Arena
-from splendor_ai.dataset import FastTensorLoader, ShardedBuffer
-from splendor_ai.mcts import MCTSAgent, PolicyNetAgent
+from splendor_ai.dataset import FastTensorLoader, ReplayBuffer, ShardedBuffer
+from splendor_ai.mcts import MCTSAgent, NeuralMCTSAgent, PolicyNetAgent
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
     generate_mcts_selfplay_compact_batch,
+    generate_neural_mcts_selfplay_compact_batch,
 )
 from splendor_ai.trainer import Trainer, TrainerConfig
 
@@ -35,8 +36,27 @@ def parse_args() -> argparse.Namespace:
 
     # 自博弈参数
     parser.add_argument("--iterations", type=int, default=10, help="Number of self-play iterations")
-    parser.add_argument("--games-per-iter", type=int, default=100, help="Games to generate per self-play iteration")
+    parser.add_argument("--games-per-iter", type=int, default=50, help="Games to generate per self-play iteration")
     parser.add_argument("--mcts-sims", type=int, default=30, help="MCTS simulation count per move in self-play")
+    parser.add_argument(
+        "--selfplay-backend",
+        type=str,
+        choices=["rust", "neural"],
+        default="rust",
+        help="Self-play backend: 'rust' (Rust 8-thread full-speed MCTS with Dirichlet noise & temperature, recommended) or 'neural' (Python Neural-MCTS)",
+    )
+    parser.add_argument("--buffer-size", type=int, default=50000, help="Max sample capacity for replay buffer")
+    parser.add_argument("--temp-steps", type=int, default=12, help="Opening steps with temperature=1.0 + Dirichlet noise")
+    parser.add_argument("--dirichlet-alpha", type=float, default=0.3, help="Dirichlet noise alpha parameter")
+    parser.add_argument("--dirichlet-eps", type=float, default=0.25, help="Dirichlet noise weight")
+    parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration constant")
+    parser.add_argument(
+        "--eval-agent",
+        type=str,
+        choices=["neural_mcts", "policy_net"],
+        default="policy_net",
+        help="Evaluation agent type for promotion arena ('policy_net' for fast eval, 'neural_mcts' for deep eval)",
+    )
     parser.add_argument("--train-epochs", type=int, default=3, help="Training epochs per iteration in self-play")
     parser.add_argument("--eval-pairs", type=int, default=5, help="Paired match count in arena evaluation (2 * pairs games)")
     parser.add_argument("--promote-threshold", type=float, default=0.55, help="Win-rate threshold to promote candidate to best")
@@ -217,6 +237,9 @@ def train_selfplay(args: argparse.Namespace) -> None:
     candidate_net = SplendorNet().to(device)
     candidate_net.load_state_dict(baseline_net.state_dict())
 
+    # 经验回放池 (滑动窗口防过拟合与遗忘)
+    replay_buffer = ReplayBuffer(max_samples=args.buffer_size)
+
     cfg = TrainerConfig(
         lr=args.lr,
         weight_decay=args.weight_decay,
@@ -236,40 +259,76 @@ def train_selfplay(args: argparse.Namespace) -> None:
         print(f"🔄 [AlphaZero 迭代轮次 {it}/{end_iter}]")
         print("=" * 80)
 
-        # (A) MCTS 深度推演自对弈采样 (Rust 8 线程并发)
+        # (A) 自对弈数据采样
         t0 = time.time()
-        print(f"1. 正在由 Rust 8 线程并行驱动 MCTS 深度推演自对弈 {args.games_per_iter} 局 (每次决策 {args.mcts_sims} 次推演)...")
-        batch = generate_mcts_selfplay_compact_batch(
-            num_games=args.games_per_iter,
-            num_simulations=args.mcts_sims,
-            start_seed=int(time.time()) + it * 1009,
-        )
+        if args.selfplay_backend == "rust":
+            print(
+                f"1. 启动 Rust 8 线程并行驱动 MCTS 深度推演自对弈 {args.games_per_iter} 局 "
+                f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
+            )
+            batch = generate_mcts_selfplay_compact_batch(
+                num_games=args.games_per_iter,
+                num_simulations=args.mcts_sims,
+                start_seed=int(time.time()) + it * 1009,
+                temp_steps=args.temp_steps,
+                dirichlet_alpha=args.dirichlet_alpha,
+                dirichlet_eps=args.dirichlet_eps,
+            )
+        else:
+            print(
+                f"1. 启动 Python Neural-MCTS 自博弈采样 {args.games_per_iter} 局 "
+                f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 噪声与温度采样)..."
+            )
+            batch = generate_neural_mcts_selfplay_compact_batch(
+                net=baseline_net,
+                device=device,
+                num_games=args.games_per_iter,
+                num_simulations=args.mcts_sims,
+                start_seed=int(time.time()) + it * 1009,
+                temp_threshold_steps=args.temp_steps,
+                dirichlet_alpha=args.dirichlet_alpha,
+                dirichlet_eps=args.dirichlet_eps,
+                c_puct=args.c_puct,
+            )
+
         gen_time = time.time() - t0
-        print(f"   ✅ 自博弈采样完成！共生成 {batch.num_samples} 紧凑搜索样本 (耗时: {gen_time:.2f}s | 吞吐: {batch.num_samples/max(gen_time, 1e-6):.0f} 步/秒)")
+        print(
+            f"   ✅ 本轮自博弈采样完成！新增 {batch.num_samples} 紧凑搜索样本 "
+            f"(耗时: {gen_time:.2f}s | 吞吐: {batch.num_samples/max(gen_time, 1e-6):.0f} 步/秒)"
+        )
 
         if batch.num_samples == 0:
             print("   ⚠️ 样本采集为空，跳过本轮训练。")
             continue
 
+        replay_buffer.add_batch(batch)
         total_games += args.games_per_iter
         total_samples += batch.num_samples
+        print(f"   📦 ReplayBuffer 经验池当前维护: {len(replay_buffer):,} 步有效样本")
 
-        # (B) 候选模型拟合更新
-        print(f"2. 训练候选模型 ({args.train_epochs} Epochs)...")
-        loader = FastTensorLoader(batch, batch_size=args.batch_size, shuffle=True, device=device)
+        # (B) 候选模型拟合更新 (在滑动窗口缓冲池上训练)
+        train_batch = replay_buffer.get_compact_batch()
+        print(f"2. 训练候选模型 ({args.train_epochs} Epochs, 训练池规模: {train_batch.num_samples:,} 步)...")
+        loader = FastTensorLoader(train_batch, batch_size=args.batch_size, shuffle=True, device=device)
         for ep in range(args.train_epochs):
             metrics = trainer.train_epoch(loader)
 
         # (C) 竞技场门禁对抗 (Candidate vs Baseline)
-        print(f"3. 竞技场门禁对抗评测 ({args.eval_pairs * 2} 局成对对抗)...")
-        candidate_agent = PolicyNetAgent(candidate_net, device)
-        baseline_agent = PolicyNetAgent(baseline_net, device)
+        print(f"3. 竞技场门禁对抗评测 ({args.eval_pairs * 2} 局成对严格换座对抗)...")
+        if args.eval_agent == "neural_mcts":
+            candidate_agent = NeuralMCTSAgent(candidate_net, device, num_sims=args.mcts_sims)
+            baseline_agent = NeuralMCTSAgent(baseline_net, device, num_sims=args.mcts_sims)
+            eval_name = f"NeuralMCTS-{args.mcts_sims}"
+        else:
+            candidate_agent = PolicyNetAgent(candidate_net, device)
+            baseline_agent = PolicyNetAgent(baseline_net, device)
+            eval_name = "PolicyNet"
 
         arena = Arena(
             candidate_agent,
             baseline_agent,
-            agent0_name=f"Candidate-Iter{it}",
-            agent1_name="Baseline-Best",
+            agent0_name=f"Candidate-{eval_name}",
+            agent1_name=f"Baseline-{eval_name}",
         )
         match_result = arena.play_match(num_pairs=args.eval_pairs, base_seed=int(time.time()) + it * 503)
 
@@ -278,6 +337,12 @@ def train_selfplay(args: argparse.Namespace) -> None:
             f"   ⚔️ 对决结果: 候选胜 {match_result.agent0_wins} 局 | 基准胜 {match_result.agent1_wins} 局 "
             f"| 平局 {match_result.draws} 局 | 候选胜率: {win_rate*100:.1f}%"
         )
+        if match_result.reasons:
+            print(
+                f"   🎯 终局胜因: 20声望胜 {match_result.reasons.get('20_points', 0)} 局 | "
+                f"10皇冠胜 {match_result.reasons.get('10_crowns', 0)} 局 | "
+                f"10单色胜 {match_result.reasons.get('10_color_points', 0)} 局"
+            )
 
         # 晋升判定
         promoted = win_rate >= args.promote_threshold
