@@ -1,16 +1,14 @@
 """Trainer implementation with multi-task loss, AMP and atomic checkpointing."""
 
-from dataclasses import dataclass, field
-import json
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from splendor_ai.dataset import SplendorDataset
 from splendor_ai.net import SplendorNet
 
 
@@ -21,7 +19,7 @@ class TrainerConfig:
     weight_decay: float = 1e-4
     value_loss_coeff: float = 1.0
     grad_clip_norm: float = 5.0
-    batch_size: int = 128
+    batch_size: int = 256
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     amp: bool = True
     ckpt_dir: str = "checkpoints"
@@ -67,10 +65,10 @@ class Trainer:
         total_samples = 0
 
         for batch in dataloader:
-            obs = batch["obs"].to(self.device)
-            mask = batch["mask"].to(self.device)
-            target_policy = batch["target_policy"].to(self.device)
-            target_value = batch["target_value"].to(self.device)
+            obs = batch["obs"].to(self.device, non_blocking=True)
+            mask = batch["mask"].to(self.device, non_blocking=True)
+            target_action = batch["action"].to(self.device, non_blocking=True)
+            target_value = batch["value"].to(self.device, non_blocking=True)
             b_size = obs.shape[0]
 
             self.optimizer.zero_grad()
@@ -79,10 +77,8 @@ class Trainer:
                 logits, value = self.net(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
-                # 1. 策略交叉熵损失
-                log_probs = F.log_softmax(masked_logits, dim=-1)
-                # target_policy 可能是 One-Hot 或连续概率分布
-                policy_loss = -(target_policy * log_probs).sum(dim=-1).mean()
+                # 1. 策略交叉熵损失 (直接使用整数动作标量)
+                policy_loss = F.cross_entropy(masked_logits, target_action)
 
                 # 2. 价值 MSE 损失
                 value_loss = F.mse_loss(value, target_value)
@@ -101,10 +97,9 @@ class Trainer:
             total_v_loss += value_loss.item() * b_size
 
             # 评估命中率
-            pred_top3 = masked_logits.topk(k=min(3, masked_logits.shape[-1]), dim=-1).indices
-            target_idx = target_policy.argmax(dim=-1, keepdim=True)
-            correct_top1 += (pred_top3[:, :1] == target_idx).sum().item()
-            correct_top3 += (pred_top3 == target_idx).any(dim=-1).sum().item()
+            pred_top3 = masked_logits.topk(k=3, dim=-1).indices
+            correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
+            correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
             total_samples += b_size
 
         self.epoch += 1
@@ -131,17 +126,16 @@ class Trainer:
 
         with torch.no_grad():
             for batch in dataloader:
-                obs = batch["obs"].to(self.device)
-                mask = batch["mask"].to(self.device)
-                target_policy = batch["target_policy"].to(self.device)
-                target_value = batch["target_value"].to(self.device)
+                obs = batch["obs"].to(self.device, non_blocking=True)
+                mask = batch["mask"].to(self.device, non_blocking=True)
+                target_action = batch["action"].to(self.device, non_blocking=True)
+                target_value = batch["value"].to(self.device, non_blocking=True)
                 b_size = obs.shape[0]
 
                 logits, value = self.net(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
-                log_probs = F.log_softmax(masked_logits, dim=-1)
-                policy_loss = -(target_policy * log_probs).sum(dim=-1).mean()
+                policy_loss = F.cross_entropy(masked_logits, target_action)
                 value_loss = F.mse_loss(value, target_value)
                 loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
@@ -149,10 +143,9 @@ class Trainer:
                 total_p_loss += policy_loss.item() * b_size
                 total_v_loss += value_loss.item() * b_size
 
-                pred_top3 = masked_logits.topk(k=min(3, masked_logits.shape[-1]), dim=-1).indices
-                target_idx = target_policy.argmax(dim=-1, keepdim=True)
-                correct_top1 += (pred_top3[:, :1] == target_idx).sum().item()
-                correct_top3 += (pred_top3 == target_idx).any(dim=-1).sum().item()
+                pred_top3 = masked_logits.topk(k=3, dim=-1).indices
+                correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
+                correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
                 total_samples += b_size
 
         return {
@@ -177,7 +170,6 @@ class Trainer:
             "meta": meta or {},
         }
 
-        # 写入临时文件后执行原子替换
         with tempfile.NamedTemporaryFile(
             mode="wb", prefix=f".{filename}.", suffix=".tmp", dir=self.ckpt_dir, delete=False
         ) as f:

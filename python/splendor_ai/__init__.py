@@ -1,23 +1,27 @@
 """Splendor Duel AI package."""
 
-from splendor_ai._engine import PyGameState
-from splendor_ai.dataset import ReplayBuffer, Sample, SplendorDataset
+from splendor_ai._engine import PyGameState, generate_heuristic_samples
+from splendor_ai.dataset import CompactBatch, CompactDataset, ShardedBuffer
 from splendor_ai.env import SplendorDuelEnv
 from splendor_ai.net import SplendorNet
-from splendor_ai.selfplay import generate_heuristic_dataset, generate_selfplay_dataset
+from splendor_ai.selfplay import (
+    generate_heuristic_compact_batch,
+    generate_selfplay_compact_batch,
+)
 from splendor_ai.trainer import Trainer, TrainerConfig
 
 __version__ = "0.1.0"
 
 __all__ = [
     "PyGameState",
+    "generate_heuristic_samples",
     "SplendorDuelEnv",
     "SplendorNet",
-    "Sample",
-    "SplendorDataset",
-    "ReplayBuffer",
+    "CompactBatch",
+    "CompactDataset",
+    "ShardedBuffer",
     "Trainer",
     "TrainerConfig",
-    "generate_heuristic_dataset",
-    "generate_selfplay_dataset",
+    "generate_heuristic_compact_batch",
+    "generate_selfplay_compact_batch",
 ]

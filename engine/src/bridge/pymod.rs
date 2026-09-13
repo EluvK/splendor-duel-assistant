@@ -142,3 +142,28 @@ impl PyGameState {
         ACTION_SIZE
     }
 }
+
+/// 批量多线程并行生成启发式专家轨迹样本 (释放 GIL，全核并发)
+#[pyfunction]
+#[pyo3(signature = (num_games=1000, start_seed=42))]
+pub fn generate_heuristic_samples<'py>(
+    py: Python<'py>,
+    num_games: usize,
+    start_seed: u64,
+) -> PyResult<(
+    Bound<'py, numpy::PyArray1<f32>>,
+    Bound<'py, numpy::PyArray1<u8>>,
+    Bound<'py, numpy::PyArray1<u8>>,
+    Bound<'py, numpy::PyArray1<f32>>,
+    usize,
+)> {
+    let batch = crate::ai::sample_heuristic_games_parallel(num_games, start_seed);
+
+    let total_steps = batch.total_steps;
+    let obs_arr = numpy::PyArray1::from_vec(py, batch.obs);
+    let mask_arr = numpy::PyArray1::from_vec(py, batch.masks);
+    let action_arr = numpy::PyArray1::from_vec(py, batch.actions);
+    let value_arr = numpy::PyArray1::from_vec(py, batch.values);
+
+    Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
+}

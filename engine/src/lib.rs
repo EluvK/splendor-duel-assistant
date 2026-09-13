@@ -5,8 +5,8 @@ pub mod gameplay;
 pub mod model;
 
 pub use ai::{
-    CardDto, DecisionDto, HeuristicAI, PlayerDto, PlayerType, RandomAI, ReplaySession, ReplayStep,
-    RoyalDto, ScoredActionDto, StateDto,
+    CardDto, HeuristicAI, PlayerDto, RandomAI, ReplaySession, ReplayStep,
+    RoyalDto, StateDto,
 };
 pub use bridge::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 #[cfg(feature = "python")]
@@ -25,5 +25,6 @@ use pyo3::prelude::*;
 #[pymodule]
 fn _engine(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bridge::PyGameState>()?;
+    m.add_function(wrap_pyfunction!(bridge::pymod::generate_heuristic_samples, m)?)?;
     Ok(())
 }
