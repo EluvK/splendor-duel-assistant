@@ -1,3 +1,16 @@
+pub mod ai;
+pub mod game_state;
+pub mod gameplay;
+pub mod model;
+
+pub use ai::RandomAI;
+pub use game_state::{Board, GameState, PlayerState, TurnPhase, VictoryReason};
+pub use gameplay::{check_victory, compute_card_payment, GameEngine, RuleEngine};
+pub use model::{
+    Action, ALL_JEWEL_CARDS, ALL_ROYAL_CARDS, CardAbility, CardColor, CardTier, GemType, JewelCard,
+    RoyalCard, TokenCollection,
+};
+
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
