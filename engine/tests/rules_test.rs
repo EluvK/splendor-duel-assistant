@@ -127,6 +127,66 @@ fn test_reserve_card_without_gold_on_board() {
 }
 
 #[test]
+fn test_reserve_card_with_gold_selection() {
+    let mut game = GameState::new_game(42);
+    game.phase = TurnPhase::MandatoryAction;
+
+    // 确保盘上有黄金
+    assert!(game.board.has_gold());
+    let mut gold_coords = Vec::new();
+    for r in 0..5 {
+        for c in 0..5 {
+            if game.board.get(r, c) == Some(GemType::Gold) {
+                gold_coords.push((r, c));
+            }
+        }
+    }
+    assert!(!gold_coords.is_empty(), "标准开局应存在黄金");
+
+    let p0_gold_before = game.players[0].tokens.get(GemType::Gold);
+    let p0_reserved_before = game.players[0].reserved_cards.len();
+
+    // 执行预留
+    let reserve_action = Action::ReserveCard {
+        tier: CardTier::Tier1,
+        slot: Some(0),
+    };
+    assert!(GameEngine::step(&mut game, &reserve_action).is_ok());
+
+    // 状态应转移到 SelectReserveGold，且尚未增加黄金
+    assert_eq!(game.phase, TurnPhase::SelectReserveGold);
+    assert_eq!(game.players[0].reserved_cards.len(), p0_reserved_before + 1);
+    assert_eq!(game.players[0].tokens.get(GemType::Gold), p0_gold_before);
+
+    // 验证合法动作：必须全部为 TakeGoldToken 且与盘上黄金坐标一一对应
+    let legals = RuleEngine::legal_actions(&game);
+    assert_eq!(legals.len(), gold_coords.len());
+    for act in &legals {
+        match act {
+            Action::TakeGoldToken { r, c } => {
+                assert!(gold_coords.contains(&(*r, *c)));
+            }
+            _ => panic!("SelectReserveGold 阶段不应出现非 TakeGoldToken 动作: {:?}", act),
+        }
+    }
+
+    // 玩家自主挑选第一个黄金执行
+    let chosen_coord = gold_coords[0];
+    let take_gold_action = Action::TakeGoldToken {
+        r: chosen_coord.0,
+        c: chosen_coord.1,
+    };
+    assert!(GameEngine::step(&mut game, &take_gold_action).is_ok());
+
+    // 验证所选黄金被取走，玩家黄金 +1，且回合完成推进
+    assert_eq!(game.board.get(chosen_coord.0, chosen_coord.1), None);
+    assert_eq!(
+        game.players[0].tokens.get(GemType::Gold),
+        p0_gold_before + 1
+    );
+}
+
+#[test]
 fn test_hand_limit_discard() {
     let mut game = GameState::new_game(400);
     game.phase = TurnPhase::MandatoryAction;

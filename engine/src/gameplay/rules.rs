@@ -19,6 +19,7 @@ impl RuleEngine {
             TurnPhase::CardAbilitySteal => Self::legal_steal_actions(state),
             TurnPhase::SelectRoyalCard => Self::legal_royal_actions(state),
             TurnPhase::DiscardTokens => Self::legal_discard_actions(state),
+            TurnPhase::SelectReserveGold => Self::legal_reserve_gold_actions(state),
             TurnPhase::GameOver(_) => Vec::new(),
         }
     }
@@ -179,6 +180,18 @@ impl RuleEngine {
         for gem in GemType::ALL {
             if player.tokens.get(gem) > 0 {
                 actions.push(Action::DiscardToken { gem });
+            }
+        }
+        actions
+    }
+
+    fn legal_reserve_gold_actions(state: &GameState) -> Vec<Action> {
+        let mut actions = Vec::with_capacity(3);
+        for r in 0..5 {
+            for c in 0..5 {
+                if state.board.get(r, c) == Some(GemType::Gold) {
+                    actions.push(Action::TakeGoldToken { r, c });
+                }
             }
         }
         actions

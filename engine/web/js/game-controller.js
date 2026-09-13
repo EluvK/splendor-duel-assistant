@@ -214,6 +214,27 @@ export class GameController {
       };
     }
 
+    // 预留卡牌连锁：从棋盘选择拿取 1 枚黄金
+    if (phase === 'SelectReserveGold') {
+      const highlightPositions = [];
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 5; c++) {
+          if (this.state.board[r][c] === 'gold') {
+            highlightPositions.push([r, c]);
+          }
+        }
+      }
+      return {
+        clickable: true,
+        highlightPositions,
+        onCellClick: (r, c, gem) => {
+          if (gem === 'gold') {
+            this.submitAction({ TakeGoldToken: { r, c } });
+          }
+        }
+      };
+    }
+
     // 可选行动：使用特权卷轴拿取非黄金宝石
     if (phase === 'OptionalActions' && this.state.players[this.currentPlayer].privileges > 0) {
       const highlightPositions = [];
@@ -335,10 +356,24 @@ export class GameController {
         });
     }
 
-    const makePyramidOptions = (tierIdx, tierName) => ({
+    const makePyramidOptions = (tierIdx, tierName, tierNum) => ({
       interactive: isHumanTurn,
       affordableIds,
       canReserve,
+      deckInfo: {
+        tier: tierNum,
+        count: this.state.decks_count[tierIdx],
+      },
+      onReserveDeck: () => {
+        if (isHumanTurn && canReserve && this.state.decks_count[tierIdx] > 0) {
+          this.submitAction({
+            ReserveCard: {
+              tier: tierName,
+              slot: null
+            }
+          });
+        }
+      },
       onPurchase: (card) => {
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
@@ -364,9 +399,9 @@ export class GameController {
       }
     });
 
-    renderCardsList(this.state.pyramid[2], document.getElementById('tier3Cards'), makePyramidOptions(2, 'Tier3'));
-    renderCardsList(this.state.pyramid[1], document.getElementById('tier2Cards'), makePyramidOptions(1, 'Tier2'));
-    renderCardsList(this.state.pyramid[0], document.getElementById('tier1Cards'), makePyramidOptions(0, 'Tier1'));
+    renderCardsList(this.state.pyramid[2], document.getElementById('tier3Cards'), makePyramidOptions(2, 'Tier3', 3));
+    renderCardsList(this.state.pyramid[1], document.getElementById('tier2Cards'), makePyramidOptions(1, 'Tier2', 2));
+    renderCardsList(this.state.pyramid[0], document.getElementById('tier1Cards'), makePyramidOptions(0, 'Tier1', 1));
 
     document.getElementById('deck3Count').innerText = this.state.decks_count[2];
     document.getElementById('deck2Count').innerText = this.state.decks_count[1];
@@ -576,6 +611,11 @@ export class GameController {
 
     if (phase.startsWith('CardAbilitySameColor')) {
       this.guideText.innerText = '【拿取同色宝石】请在左侧 5x5 棋盘中点击一颗发光的同色宝石完成拿取。';
+      return;
+    }
+
+    if (phase === 'SelectReserveGold') {
+      this.guideText.innerText = '【选择黄金】预留卡牌成功！请在左侧 5x5 棋盘中点击选择你要拿取的 1 枚黄金。';
       return;
     }
 

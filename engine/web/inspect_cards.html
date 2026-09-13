@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>BGA Sprite Sheet Inspector</title>
+  <style>
+    body { background: #111; color: #fff; font-family: monospace; padding: 20px; }
+    h2 { margin-top: 30px; color: #fbbf24; }
+    .grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .item { display: flex; flex-direction: column; align-items: center; background: #222; padding: 5px; border-radius: 4px; }
+    .card-preview {
+      width: 120px;
+      height: 182px;
+      background-repeat: no-repeat;
+      border: 1px solid #555;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>BGA Sprite Sheet 精灵图逐帧检查器</h1>
+
+  <h2>Level 1 (cards1.jpg, 31 tiles, 0..30)</h2>
+  <div class="grid" id="grid1"></div>
+
+  <h2>Level 2 (cards2.jpg, 25 tiles, 0..24)</h2>
+  <div class="grid" id="grid2"></div>
+
+  <h2>Level 3 (cards3.jpg, 14 tiles, 0..13)</h2>
+  <div class="grid" id="grid3"></div>
+
+  <h2>Royals (royal-cards.jpg, 4 tiles, 0..3)</h2>
+  <div class="grid" id="gridRoyal"></div>
+
+  <script>
+    function renderSheet(containerId, imgUrl, totalCols) {
+      const c = document.getElementById(containerId);
+      for (let i = 0; i < totalCols; i++) {
+        const wrap = document.createElement('div');
+        wrap.className = 'item';
+        
+        const preview = document.createElement('div');
+        preview.className = 'card-preview';
+        preview.style.backgroundImage = `url('${imgUrl}')`;
+        preview.style.backgroundSize = `${totalCols * 100}% 100%`;
+        const posX = totalCols > 1 ? (i / (totalCols - 1)) * 100 : 0;
+        preview.style.backgroundPosition = `${posX}% 0%`;
+
+        const label = document.createElement('span');
+        label.innerText = `Index: ${i}`;
+        label.style.marginTop = '4px';
+
+        wrap.appendChild(preview);
+        wrap.appendChild(label);
+        c.appendChild(wrap);
+      }
+    }
+
+    renderSheet('grid1', 'assets/images/cards1.jpg', 31);
+    renderSheet('grid2', 'assets/images/cards2.jpg', 25);
+    renderSheet('grid3', 'assets/images/cards3.jpg', 14);
+    renderSheet('gridRoyal', 'assets/images/royal-cards.jpg', 4);
+  </script>
+</body>
+</html>

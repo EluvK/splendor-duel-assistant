@@ -32,10 +32,23 @@ export const ROYAL_ABILITY_DISPLAY_NAMES = {
 };
 
 /**
- * 为卡牌元素配置 BGA 原版雪碧图 (Sprite Sheet) 样式
- * cards1.jpg: 31 帧 (0..29 为 Tier1 卡牌, 30 为卡背)
- * cards2.jpg: 25 帧 (0..23 为 Tier2 卡牌, 24 为卡背)
- * cards3.jpg: 14 帧 (0..12 为 Tier3 卡牌, 13 为卡背)
+ * 全套 67 张珠宝卡对应 BGA 雪碧图的精确 1-based 帧索引
+ * 0 号帧为各等级牌堆卡背 (Face-down card back)!
+ * Tier 1: id 0..29 (cards1.jpg, 31 帧, 卡背在 index 0, 正面在 index 1..30)
+ * Tier 2: id 30..53 (cards2.jpg, 25 帧, 卡背在 index 0, 正面在 index 1..24)
+ * Tier 3: id 54..66 (cards3.jpg, 14 帧, 卡背在 index 0, 正面在 index 1..13)
+ */
+export const BGA_CARD_SPRITE_MAP = [
+  // Level 1: id 0..29 (30 cards)
+  16, 18, 19, 20, 17, 21, 23, 24, 25, 22, 11, 13, 14, 15, 12, 6, 8, 9, 10, 7, 1, 3, 4, 5, 2, 28, 26, 27, 30, 29,
+  // Level 2: id 30..53 (24 cards)
+  14, 16, 13, 15, 18, 20, 17, 19, 10, 12, 9, 11, 6, 8, 5, 7, 2, 4, 1, 3, 24, 21, 22, 23,
+  // Level 3: id 54..66 (13 cards)
+  7, 8, 9, 10, 5, 6, 3, 4, 1, 2, 13, 12, 11
+];
+
+/**
+ * 为卡牌元素配置 BGA 原版雪碧图 (Sprite Sheet) 正面样式
  * @param {HTMLElement} el
  * @param {Object} card 卡牌 DTO
  */
@@ -46,16 +59,16 @@ export function applyBgaCardSprite(el, card) {
 
   if (tier === 1) {
     sheetUrl = 'assets/images/cards1.jpg';
-    colIndex = Math.max(0, Math.min(29, card.id));
     totalCols = 31;
+    colIndex = BGA_CARD_SPRITE_MAP[card.id] ?? (card.id + 1);
   } else if (tier === 2) {
     sheetUrl = 'assets/images/cards2.jpg';
-    colIndex = Math.max(0, Math.min(23, card.id - 30));
     totalCols = 25;
+    colIndex = BGA_CARD_SPRITE_MAP[card.id] ?? (card.id - 30 + 1);
   } else {
     sheetUrl = 'assets/images/cards3.jpg';
-    colIndex = Math.max(0, Math.min(12, card.id - 54));
     totalCols = 14;
+    colIndex = BGA_CARD_SPRITE_MAP[card.id] ?? (card.id - 54 + 1);
   }
 
   const posX = (colIndex / (totalCols - 1)) * 100;
@@ -66,7 +79,7 @@ export function applyBgaCardSprite(el, card) {
 }
 
 /**
- * 为牌堆元素配置 BGA 卡背原画
+ * 为牌堆元素配置 BGA 卡背原画 (0 号帧)
  * @param {HTMLElement} el
  * @param {number} tier 1, 2, 3
  */
@@ -82,10 +95,57 @@ export function applyBgaDeckBackSprite(el, tier) {
     sheetUrl = 'assets/images/cards3.jpg';
     totalCols = 14;
   }
+  // 0 号帧就是该等级对应的卡背 (Face-down card back)，位于最左侧 0%
   el.style.backgroundImage = `url('${sheetUrl}')`;
   el.style.backgroundSize = `${totalCols * 100}% 100%`;
-  el.style.backgroundPosition = `100% 0%`;
+  el.style.backgroundPosition = `0% 0%`;
   el.style.backgroundRepeat = 'no-repeat';
+}
+
+/**
+ * 创建实体牌库卡背元素 (带剩余数量徽章与交互)
+ * @param {number} tier 1, 2, 3
+ * @param {number} count 牌堆剩余张数
+ * @param {Object} options 配置项 (interactive, canReserve, onReserveDeck)
+ */
+export function createDeckPileElement(tier, count, options = {}) {
+  const el = document.createElement('div');
+  el.className = 'card-item deck-pile';
+  applyBgaDeckBackSprite(el, tier);
+
+  const hasCards = count > 0;
+  if (!hasCards) {
+    el.classList.add('deck-empty');
+  }
+
+  const tierNames = { 1: '初阶 (L1)', 2: '中阶 (L2)', 3: '高阶 (L3)' };
+  el.title = `【${tierNames[tier] || '等级' + tier} 牌库】剩余 ${count} 张${options.canReserve ? ' (点击可盲抽预留)' : ''}`;
+
+  const countBadge = document.createElement('div');
+  countBadge.className = 'deck-count-badge';
+  countBadge.innerText = `${count} 张`;
+  el.appendChild(countBadge);
+
+  if (options.interactive && hasCards && options.canReserve) {
+    el.classList.add('deck-clickable');
+    const overlay = document.createElement('div');
+    overlay.className = 'card-action-overlay';
+    const resBtn = document.createElement('button');
+    resBtn.className = 'btn-secondary card-action-btn';
+    resBtn.innerText = '🎴 盲抽预留';
+    resBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (options.onReserveDeck) options.onReserveDeck(tier);
+    };
+    overlay.appendChild(resBtn);
+    el.appendChild(overlay);
+
+    el.onclick = () => {
+      if (options.onReserveDeck) options.onReserveDeck(tier);
+    };
+  }
+
+  return el;
 }
 
 /**
@@ -167,8 +227,19 @@ export function renderBoard(boardData, containerEl, options = {}) {
  */
 export function renderCardsList(cards, container, options = {}) {
   container.innerHTML = '';
+
+  // 如果提供了牌堆信息，首位放置对应的等级牌库卡背元素
+  if (options.deckInfo) {
+    const deckEl = createDeckPileElement(options.deckInfo.tier, options.deckInfo.count, {
+      interactive: options.interactive,
+      canReserve: options.canReserve,
+      onReserveDeck: options.onReserveDeck,
+    });
+    container.appendChild(deckEl);
+  }
+
   if (!cards || cards.length === 0) {
-    if (options.emptyText) {
+    if (options.emptyText && !options.deckInfo) {
       container.innerHTML = `<span style="font-size:0.7rem; color:var(--text-muted);">${options.emptyText}</span>`;
     }
     return;

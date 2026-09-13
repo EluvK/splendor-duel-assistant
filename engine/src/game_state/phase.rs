@@ -34,6 +34,9 @@ pub enum TurnPhase {
     /// 手牌超限弃牌阶段：玩家标记总数超过 10 枚，等待逐枚选择弃置标记回布袋
     DiscardTokens,
 
+    /// 预留卡牌黄金选择阶段：预留卡牌后，若盘上有黄金，等待玩家从棋盘选择 1 枚黄金
+    SelectReserveGold,
+
     /// 游戏已结束，获胜者与胜利类型已确定
     GameOver(VictoryReason),
 }

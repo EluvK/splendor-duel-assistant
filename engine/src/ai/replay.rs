@@ -182,6 +182,7 @@ impl From<&GameState> for StateDto {
             TurnPhase::CardAbilitySteal => "CardAbilitySteal".to_string(),
             TurnPhase::SelectRoyalCard => "SelectRoyalCard".to_string(),
             TurnPhase::DiscardTokens => "DiscardTokens".to_string(),
+            TurnPhase::SelectReserveGold => "SelectReserveGold".to_string(),
             TurnPhase::GameOver(reason) => format!("GameOver({reason:?})"),
         };
 
@@ -479,6 +480,7 @@ pub fn action_category(action: &Action) -> &'static str {
         Action::StealToken { .. } => "steal",
         Action::SelectRoyal { .. } => "royal",
         Action::DiscardToken { .. } => "discard",
+        Action::TakeGoldToken { .. } => "take_gold",
     }
 }
 
@@ -514,5 +516,6 @@ pub fn format_action(action: &Action) -> String {
         Action::StealToken { gem } => format!("Steal {gem:?} from Opponent"),
         Action::SelectRoyal { royal_id } => format!("Claim Royal Card #{royal_id}"),
         Action::DiscardToken { gem } => format!("Discard {gem:?}"),
+        Action::TakeGoldToken { r, c } => format!("Take Gold token at ({r}, {c})"),
     }
 }

@@ -23,6 +23,7 @@ impl GameEngine {
                 Self::step_take_tokens(state, *count, *positions)
             }
             Action::ReserveCard { tier, slot } => Self::step_reserve_card(state, *tier, *slot),
+            Action::TakeGoldToken { r, c } => Self::step_take_gold_token(state, *r, *c),
             Action::PurchaseCard {
                 from_reserved,
                 tier,
@@ -154,19 +155,6 @@ impl GameEngine {
             return Err("Reserve limit reached (max 3)".into());
         }
 
-        // 盘上有黄金则拿 1 黄金
-        if state.board.has_gold() {
-            'outer: for r in 0..5 {
-                for c in 0..5 {
-                    if state.board.get(r, c) == Some(GemType::Gold) {
-                        state.board.take(r, c);
-                        state.players[current_player].tokens.add(GemType::Gold, 1);
-                        break 'outer;
-                    }
-                }
-            }
-        }
-
         // 预留卡牌
         let card = match slot {
             Some(s) => {
@@ -190,6 +178,28 @@ impl GameEngine {
         };
 
         state.players[current_player].reserved_cards.push(card);
+
+        // 若盘上有黄金，进入选择拿黄金阶段；若无黄金，直接走结算
+        if state.board.has_gold() {
+            state.phase = TurnPhase::SelectReserveGold;
+        } else {
+            Self::after_action_check(state);
+        }
+        Ok(())
+    }
+
+    fn step_take_gold_token(state: &mut GameState, r: usize, c: usize) -> Result<(), String> {
+        if state.phase != TurnPhase::SelectReserveGold {
+            return Err("Not in SelectReserveGold phase".into());
+        }
+        let gem = state.board.get(r, c).ok_or("No token at position")?;
+        if !gem.is_gold() {
+            return Err("Selected token is not gold".into());
+        }
+
+        let current_player = state.current_player;
+        state.board.take(r, c);
+        state.players[current_player].tokens.add(GemType::Gold, 1);
 
         Self::after_action_check(state);
         Ok(())

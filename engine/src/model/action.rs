@@ -37,6 +37,9 @@ pub enum Action {
         slot: usize,
     },
 
+    /// 预留卡牌连锁动作：从棋盘指定坐标 (r, c) 拿取 1 枚黄金
+    TakeGoldToken { r: usize, c: usize },
+
     /// 卡牌连锁能力：变色复制卡（Joker）选择附着的宝石颜色（必须是已有 bonus 颜色）
     AssignJokerColor { color: GemType },
 

@@ -632,10 +632,16 @@
       // 王室卡
       renderRoyalsPool(state.royal_cards, document.getElementById('royalsContainer'));
 
-      // 金字塔卡牌
-      renderCardsList(state.pyramid[2], document.getElementById('tier3Cards'));
-      renderCardsList(state.pyramid[1], document.getElementById('tier2Cards'));
-      renderCardsList(state.pyramid[0], document.getElementById('tier1Cards'));
+      // 金字塔卡牌 (含牌库卡背)
+      renderCardsList(state.pyramid[2], document.getElementById('tier3Cards'), {
+        deckInfo: { tier: 3, count: state.decks_count[2] }
+      });
+      renderCardsList(state.pyramid[1], document.getElementById('tier2Cards'), {
+        deckInfo: { tier: 2, count: state.decks_count[1] }
+      });
+      renderCardsList(state.pyramid[0], document.getElementById('tier1Cards'), {
+        deckInfo: { tier: 1, count: state.decks_count[0] }
+      });
 
       document.getElementById('deck3Count').innerText = state.decks_count[2];
       document.getElementById('deck2Count').innerText = state.decks_count[1];
