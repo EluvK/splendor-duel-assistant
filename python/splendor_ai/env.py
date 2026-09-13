@@ -100,6 +100,16 @@ class SplendorDuelEnv:
     def is_done(self) -> bool:
         return self.game.is_done()
 
+    @property
+    def scores(self) -> Tuple[int, int]:
+        """双方当前声望总分 (p0_points, p1_points)."""
+        return self.game.scores()
+
+    @property
+    def crowns(self) -> Tuple[int, int]:
+        """双方当前王冠总数 (p0_crowns, p1_crowns)."""
+        return self.game.crowns()
+
     def heuristic_action(self, seed: int = 42) -> Optional[int]:
         """获取启发式 AI 推荐的动作 ID."""
         return self.game.heuristic_action_id(seed)

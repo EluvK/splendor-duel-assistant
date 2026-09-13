@@ -21,6 +21,14 @@ from splendor_ai.net import SplendorNet
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Splendor Duel Arena Match Evaluator")
     parser.add_argument(
+        "--profile",
+        type=str,
+        nargs="?",
+        const="checkpoints/best.pt",
+        default=None,
+        help="Quickly profile and diagnose a checkpoint (e.g. --profile checkpoints/best.pt)",
+    )
+    parser.add_argument(
         "--agent1",
         type=str,
         choices=["rust_mcts", "mcts", "net", "heuristic", "random"],
@@ -69,6 +77,17 @@ def load_agent(agent_type: str, model_path: Optional[str], sims: int, device: to
 def main() -> None:
     args = parse_args()
 
+    if args.profile:
+        from profile_ckpt import run_benchmark
+        run_benchmark(
+            ckpt_path=args.profile,
+            games=args.pairs * 2,
+            device_str=args.device,
+            use_mcts=(args.agent1 in ["mcts", "rust_mcts"]),
+            mcts_sims=args.sims,
+        )
+        return
+
     device_str = (
         "cuda" if (args.device == "auto" and torch.cuda.is_available()) or args.device == "cuda" else "cpu"
     )
@@ -88,7 +107,11 @@ def main() -> None:
     dur = time.time() - t0
 
     print("\n================== 比赛结果战报 ==================")
-    print(f"耗时: {dur:.1f} 秒 | 总局数: {res.total_games} 局 | 平均步数: {res.avg_steps:.1f}")
+    print(f"耗时: {dur:.1f} 秒 | 总局数: {res.total_games} 局 | 平均步数: {res.avg_steps:.1f} 步 (约 {res.avg_turns:.1f} 回合)")
+    if res.agent0_wins > 0:
+        print(f"✨ {res.agent0_name} 获胜时平均耗费: {res.avg_win_steps:.1f} 步")
+    if res.agent1_wins > 0:
+        print(f"🛡️  {res.agent0_name} 战败时平均坚持: {res.avg_lose_steps:.1f} 步")
     print("-" * 50)
     print(f"🥇 {res.agent0_name:<25} 胜场: {res.agent0_wins:>3} 局 ({res.agent0_win_rate*100:5.1f}%)")
     print(f"🥈 {res.agent1_name:<25} 胜场: {res.agent1_wins:>3} 局 ({(1.0 - res.agent0_win_rate)*100:5.1f}%)")
@@ -97,6 +120,12 @@ def main() -> None:
     print("-" * 50)
     print(f"{res.agent0_name} 作为先手 (P0) 胜场: {res.agent0_as_p0_wins} / {args.pairs}")
     print(f"{res.agent0_name} 作为后手 (P1) 胜场: {res.agent0_as_p1_wins} / {args.pairs}")
+    if res.reasons:
+        print(
+            f"🎯 终局胜因: 20声望胜 {res.reasons.get('20_points', 0)} 局 | "
+            f"10皇冠胜 {res.reasons.get('10_crowns', 0)} 局 | "
+            f"10单色胜 {res.reasons.get('10_color_points', 0)} 局"
+        )
     print("==================================================")
 
 
