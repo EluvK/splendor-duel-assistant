@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 
     # 自博弈参数
     parser.add_argument("--iterations", type=int, default=10, help="Number of self-play iterations")
-    parser.add_argument("--games-per-iter", type=int, default=50, help="Games to generate per self-play iteration")
+    parser.add_argument("--games-per-iter", type=int, default=100, help="Games to generate per self-play iteration")
     parser.add_argument("--mcts-sims", type=int, default=30, help="MCTS simulation count per move in self-play")
     parser.add_argument(
         "--selfplay-backend",
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         default="rust",
         help="Self-play backend: 'rust' (Rust 8-thread full-speed MCTS with Dirichlet noise & temperature, recommended) or 'neural' (Python Neural-MCTS)",
     )
-    parser.add_argument("--buffer-size", type=int, default=50000, help="Max sample capacity for replay buffer")
+    parser.add_argument("--buffer-size", type=int, default=100000, help="Max sample capacity for replay buffer")
     parser.add_argument("--temp-steps", type=int, default=12, help="Opening steps with temperature=1.0 + Dirichlet noise")
     parser.add_argument("--dirichlet-alpha", type=float, default=0.3, help="Dirichlet noise alpha parameter")
     parser.add_argument("--dirichlet-eps", type=float, default=0.25, help="Dirichlet noise weight")
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
         help="Evaluation agent type for promotion arena ('policy_net' for fast eval, 'neural_mcts' for deep eval)",
     )
     parser.add_argument("--train-epochs", type=int, default=3, help="Training epochs per iteration in self-play")
-    parser.add_argument("--eval-pairs", type=int, default=5, help="Paired match count in arena evaluation (2 * pairs games)")
+    parser.add_argument("--eval-pairs", type=int, default=10, help="Paired match count in arena evaluation (2 * pairs games)")
     parser.add_argument("--promote-threshold", type=float, default=0.55, help="Win-rate threshold to promote candidate to best")
 
     # 训练超参数

@@ -136,7 +136,7 @@ Epoch   Train Loss    Policy Loss   Top-1 Acc     Top-3 Acc     Val Loss
 ### 4.1 启动自博弈闭环 (Rust 8 线程全速原生驱动)
 ```bash
 # 启动 10 轮 Rust 8 线程全速自博弈迭代，每轮自弈 100 局，MCTS 推演 30 次，开启开局探索与经验池
-python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mcts-sims 30 --selfplay-backend rust --temp-steps 12 --dirichlet-eps 0.25 --buffer-size 50000 --train-epochs 3 --promote-threshold 0.55
+python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mcts-sims 30 --selfplay-backend rust --temp-steps 12 --dirichlet-eps 0.25 --train-epochs 3 --promote-threshold 0.55
 ```
 
 ### 4.2 核心机制运作流程
