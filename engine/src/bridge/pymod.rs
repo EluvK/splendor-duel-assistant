@@ -131,38 +131,43 @@ impl PyGameState {
 
     /// 获取启发式 AI 在当前盘面下选择的动作 ID
     #[pyo3(signature = (seed=42))]
-    pub fn heuristic_action_id(&self, seed: u64) -> Option<usize> {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
-        crate::ai::HeuristicAI::select_action(&self.state, &mut rng)
-            .map(|a| action_to_id(&a))
+    pub fn heuristic_action_id(&self, py: Python<'_>, seed: u64) -> Option<usize> {
+        py.detach(|| {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+            crate::ai::HeuristicAI::select_action(&self.state, &mut rng).map(|a| action_to_id(&a))
+        })
     }
 
-    /// 调用底层 Rust 原生高性能 MCTS 进行推演并返回最佳动作 ID (微秒级响应)
-    #[pyo3(signature = (num_sims=50, seed=None, add_dirichlet=false, dirichlet_alpha=0.3, dirichlet_eps=0.25, temperature=0.0))]
+    /// 调用底层 Rust 原生高性能 MCTS 进行推演并返回最佳动作 ID (微秒级响应，释放 GIL 允许 Python 全核并发)
+    #[pyo3(signature = (num_sims=50, seed=None, add_dirichlet=false, dirichlet_alpha=0.3, dirichlet_eps=0.25, temperature=0.0, max_rollout_steps=15))]
     pub fn mcts_action_id(
         &self,
+        py: Python<'_>,
         num_sims: usize,
         seed: Option<u64>,
         add_dirichlet: bool,
         dirichlet_alpha: f32,
         dirichlet_eps: f32,
         temperature: f32,
+        max_rollout_steps: usize,
     ) -> Option<usize> {
-        let mut rng = match seed {
-            Some(s) => rand_chacha::ChaCha8Rng::seed_from_u64(s),
-            None => rand_chacha::ChaCha8Rng::from_rng(&mut rand::rng()),
-        };
-        let mcts = crate::ai::RustMCTS::default();
-        mcts.search_with_exploration(
-            &self.state,
-            num_sims,
-            add_dirichlet,
-            dirichlet_alpha,
-            dirichlet_eps,
-            temperature,
-            &mut rng,
-        )
-        .map(|a| action_to_id(&a))
+        py.detach(|| {
+            let mut rng = match seed {
+                Some(s) => rand_chacha::ChaCha8Rng::seed_from_u64(s),
+                None => rand_chacha::ChaCha8Rng::from_rng(&mut rand::rng()),
+            };
+            let mcts = crate::ai::RustMCTS::new(1.5, max_rollout_steps);
+            mcts.search_with_exploration(
+                &self.state,
+                num_sims,
+                add_dirichlet,
+                dirichlet_alpha,
+                dirichlet_eps,
+                temperature,
+                &mut rng,
+            )
+            .map(|a| action_to_id(&a))
+        })
     }
 
     #[staticmethod]

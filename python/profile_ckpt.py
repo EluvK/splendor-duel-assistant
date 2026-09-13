@@ -64,6 +64,7 @@ def run_benchmark(
     device_str: str = "auto",
     use_mcts: bool = False,
     mcts_sims: int = 30,
+    workers: int = 0,
 ) -> None:
     """运行 Checkpoint 全景评估诊断套件."""
     path = Path(ckpt_path)
@@ -111,7 +112,7 @@ def run_benchmark(
         print(f"   • 模仿学习最后指标: loss={info['meta']['train'].get('loss', 0):.4f}")
 
     # 构造评测 Agent
-    agent_desc = f"MCTS-{mcts_sims}(Net)" if use_mcts else "PolicyNet"
+    agent_desc = f"MCTS-{mcts_sims}" if use_mcts else "PolicyNet"
     agent_eval1 = (
         MCTSAgent(num_sims=mcts_sims) if use_mcts else PolicyNetAgent(net, device)
     )
@@ -128,7 +129,7 @@ def run_benchmark(
         agent1_name=f"{agent_desc}-Mirror",
     )
     t0 = time.time()
-    res_self = arena_self.play_match(num_pairs=num_pairs, base_seed=42)
+    res_self = arena_self.play_match(num_pairs=num_pairs, base_seed=42, workers=workers)
     dur_self = time.time() - t0
 
     print(f"   ⏱️  对战耗时: {dur_self:.2f}s (平均每局 {dur_self/actual_games:.2f}s)")
@@ -154,7 +155,7 @@ def run_benchmark(
         agent1_name="HeuristicAI",
     )
     t1 = time.time()
-    res_heu = arena_heu.play_match(num_pairs=num_pairs, base_seed=2024)
+    res_heu = arena_heu.play_match(num_pairs=num_pairs, base_seed=2024, workers=workers)
     dur_heu = time.time() - t1
 
     print(f"   ⏱️  对战耗时: {dur_heu:.2f}s (平均每局 {dur_heu/actual_games:.2f}s)")
@@ -200,6 +201,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="auto", help="Compute device ('auto', 'cuda', 'cpu')")
     parser.add_argument("--mcts", action="store_true", help="Evaluate with MCTS search instead of pure PolicyNet")
     parser.add_argument("--sims", type=int, default=30, help="MCTS simulation count if --mcts is enabled")
+    parser.add_argument("--workers", type=int, default=0, help="Parallel worker threads for arena evaluation (default: 0 for auto)")
     return parser.parse_args()
 
 
@@ -211,4 +213,5 @@ if __name__ == "__main__":
         device_str=args.device,
         use_mcts=args.mcts,
         mcts_sims=args.sims,
+        workers=args.workers,
     )

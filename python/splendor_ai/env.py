@@ -123,9 +123,14 @@ class SplendorDuelEnv:
         """获取启发式 AI 推荐的动作 ID."""
         return self.game.heuristic_action_id(seed)
 
-    def rust_mcts_action(self, num_sims: int = 50, seed: Optional[int] = None) -> Optional[int]:
+    def rust_mcts_action(
+        self,
+        num_sims: int = 50,
+        seed: Optional[int] = None,
+        max_rollout_steps: int = 15,
+    ) -> Optional[int]:
         """获取底层 Rust 原生高性能 MCTS 推荐的动作 ID."""
-        return self.game.mcts_action_id(num_sims, seed)
+        return self.game.mcts_action_id(num_sims, seed, max_rollout_steps=max_rollout_steps)
 
     def clone(self) -> "SplendorDuelEnv":
         """深拷贝环境，用于 MCTS 搜索分支模拟."""

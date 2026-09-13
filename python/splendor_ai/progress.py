@@ -24,7 +24,8 @@ class Progress:
         rate = done / max(elapsed, 1e-6)
         eta = (self.total - done) / max(rate, 1e-9)
 
-        line = f"[{self.label}] {pct:5.1f}% ({done}/{self.total}) elapsed:{elapsed:4.0f}s | ETA:{eta:4.0f}s"
+        done_disp = int(done) if isinstance(done, float) else done
+        line = f"[{self.label}] {pct:5.1f}% ({done_disp}/{self.total}) elapsed:{elapsed:4.0f}s | ETA:{eta:4.0f}s"
         if extra:
             line += f" | {extra}"
 

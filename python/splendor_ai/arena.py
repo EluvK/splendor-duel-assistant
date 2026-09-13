@@ -1,6 +1,8 @@
 """Arena for head-to-head evaluation with paired seeds and seat swapping."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import os
 from typing import Dict, List, Optional, Tuple
 import time
 
@@ -109,8 +111,13 @@ class Arena:
             reason=reason,
         )
 
-    def play_match(self, num_pairs: int = 10, base_seed: int = 1000) -> ArenaResult:
-        """执行成对种子双向对决.
+    def play_match(
+        self,
+        num_pairs: int = 10,
+        base_seed: int = 1000,
+        workers: int = 0,
+    ) -> ArenaResult:
+        """执行成对种子双向对决 (支持全核高并发评估).
 
         每个种子 S 均执行两局:
           - 局 1: Agent 0 (P0) vs Agent 1 (P1)
@@ -139,52 +146,73 @@ class Arena:
             "draw": 0,
         }
 
+        actual_workers = min(8, os.cpu_count() or 4) if workers <= 0 else workers
+        actual_workers = min(actual_workers, total_games)
         pbar = Progress(total=total_games, label=f"Arena: {self.agent0_name} vs {self.agent1_name}")
 
+        # 构建所有成对任务: (pair_idx, is_swap, seed, p0_agent, p1_agent)
+        tasks = []
         for i in range(num_pairs):
             seed = base_seed + i * 997
+            tasks.append((i, False, seed, self.agent0, self.agent1))
+            tasks.append((i, True, seed, self.agent1, self.agent0))
 
-            # 局 1: Agent 0 先手 (P0)
-            res1 = self.play_game(seed, self.agent0, self.agent1)
-            total_steps += res1.steps
-            total_turns += res1.turns
-            total_rounds += res1.rounds
-            reasons_count[res1.reason] = reasons_count.get(res1.reason, 0) + 1
+        def _record_result(res: SingleGameResult, is_swap: bool, current_done: int):
+            nonlocal agent0_wins, agent1_wins, draws, agent0_as_p0_wins, agent0_as_p1_wins
+            nonlocal total_steps, total_turns, total_rounds, p0_seat_total_wins
 
-            if res1.winner == 0:
-                agent0_wins += 1
-                agent0_as_p0_wins += 1
-                p0_seat_total_wins += 1
-                agent0_win_steps.append(res1.steps)
-                agent0_win_rounds.append(res1.rounds)
-            elif res1.winner == 1:
-                agent1_wins += 1
-                agent0_lose_steps.append(res1.steps)
-                agent0_lose_rounds.append(res1.rounds)
+            total_steps += res.steps
+            total_turns += res.turns
+            total_rounds += res.rounds
+            reasons_count[res.reason] = reasons_count.get(res.reason, 0) + 1
+
+            if not is_swap:
+                # 局 1: Agent 0 是 P0
+                if res.winner == 0:
+                    agent0_wins += 1
+                    agent0_as_p0_wins += 1
+                    p0_seat_total_wins += 1
+                    agent0_win_steps.append(res.steps)
+                    agent0_win_rounds.append(res.rounds)
+                elif res.winner == 1:
+                    agent1_wins += 1
+                    agent0_lose_steps.append(res.steps)
+                    agent0_lose_rounds.append(res.rounds)
+                else:
+                    draws += 1
             else:
-                draws += 1
-            pbar.update(i * 2 + 1, extra=f"{self.agent0_name} 胜率: {agent0_wins/(i*2+1)*100:.1f}%")
+                # 局 2: Agent 1 是 P0, Agent 0 是 P1
+                if res.winner == 1:
+                    agent0_wins += 1
+                    agent0_as_p1_wins += 1
+                    agent0_win_steps.append(res.steps)
+                    agent0_win_rounds.append(res.rounds)
+                elif res.winner == 0:
+                    agent1_wins += 1
+                    p0_seat_total_wins += 1
+                    agent0_lose_steps.append(res.steps)
+                    agent0_lose_rounds.append(res.rounds)
+                else:
+                    draws += 1
 
-            # 局 2: Agent 1 先手 (P0), Agent 0 后手 (P1)
-            res2 = self.play_game(seed, self.agent1, self.agent0)
-            total_steps += res2.steps
-            total_turns += res2.turns
-            total_rounds += res2.rounds
-            reasons_count[res2.reason] = reasons_count.get(res2.reason, 0) + 1
+            pbar.update(current_done, extra=f"{self.agent0_name} 胜率: {agent0_wins/current_done*100:.1f}%")
 
-            if res2.winner == 1:
-                agent0_wins += 1
-                agent0_as_p1_wins += 1
-                agent0_win_steps.append(res2.steps)
-                agent0_win_rounds.append(res2.rounds)
-            elif res2.winner == 0:
-                agent1_wins += 1
-                p0_seat_total_wins += 1
-                agent0_lose_steps.append(res2.steps)
-                agent0_lose_rounds.append(res2.rounds)
-            else:
-                draws += 1
-            pbar.update(i * 2 + 2, extra=f"{self.agent0_name} 胜率: {agent0_wins/(i*2+2)*100:.1f}%")
+        if actual_workers > 1:
+            with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+                future_to_meta = {
+                    executor.submit(self.play_game, seed, p0, p1): is_swap
+                    for (_, is_swap, seed, p0, p1) in tasks
+                }
+                done_count = 0
+                for future in as_completed(future_to_meta):
+                    is_swap = future_to_meta[future]
+                    res = future.result()
+                    done_count += 1
+                    _record_result(res, is_swap, done_count)
+        else:
+            for idx, (_, is_swap, seed, p0, p1) in enumerate(tasks):
+                res = self.play_game(seed, p0, p1)
+                _record_result(res, is_swap, idx + 1)
 
         pbar.done()
 

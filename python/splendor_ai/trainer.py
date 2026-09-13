@@ -1,5 +1,6 @@
 """Trainer implementation with multi-task loss, AMP, atomic checkpointing and sharded streaming."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -142,52 +143,64 @@ class Trainer:
         num_shards = len(files)
         pbar = Progress(total=num_shards, label=f"Train Ep {self.epoch + 1} Shards")
 
-        for s_idx, shard_path in enumerate(files):
-            # 加载单分片数据
-            batch_data = CompactBatch.load_npz(shard_path)
-            loader = FastTensorLoader(batch_data, batch_size=batch_size, shuffle=True, device=self.device)
+        def _load_loader(shard_p: Path) -> FastTensorLoader:
+            batch_d = CompactBatch.load_npz(shard_p)
+            return FastTensorLoader(batch_d, batch_size=batch_size, shuffle=True, device=self.device)
 
-            for batch in loader:
-                obs = batch["obs"]
-                mask = batch["mask"]
-                target_action = batch["action"]
-                target_value = batch["value"]
-                b_size = obs.shape[0]
+        # 异步预加载流水线 (双缓冲)：后台线程在 GPU 计算当前分片时提前加载下一分片，消除 GPU 等待横跳
+        with ThreadPoolExecutor(max_workers=1) as prefetcher:
+            next_future = prefetcher.submit(_load_loader, files[0]) if num_shards > 0 else None
 
-                self.optimizer.zero_grad()
+            for s_idx, shard_path in enumerate(files):
+                # 瞬间获取已就绪的分片加载器
+                loader = next_future.result()
 
-                with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
-                    logits, value = self.net(obs)
-                    masked_logits = SplendorNet.mask_logits(logits, mask)
+                # 立即向后台调度下一个分片的 I/O 与反序列化
+                if s_idx + 1 < num_shards:
+                    next_future = prefetcher.submit(_load_loader, files[s_idx + 1])
+                else:
+                    next_future = None
 
-                    policy_loss = F.cross_entropy(masked_logits, target_action)
-                    value_loss = F.mse_loss(value, target_value)
-                    loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                n_batches = len(loader)
+                for b_idx, batch in enumerate(loader):
+                    obs = batch["obs"]
+                    mask = batch["mask"]
+                    target_action = batch["action"]
+                    target_value = batch["value"]
+                    b_size = obs.shape[0]
 
-                self.scaler.scale(loss).backward()
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                    self.optimizer.zero_grad()
 
-                total_loss += loss.item() * b_size
-                total_p_loss += policy_loss.item() * b_size
-                total_v_loss += value_loss.item() * b_size
+                    with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
+                        logits, value = self.net(obs)
+                        masked_logits = SplendorNet.mask_logits(logits, mask)
 
-                pred_top3 = masked_logits.topk(k=3, dim=-1).indices
-                correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
-                correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
-                total_samples += b_size
+                        policy_loss = F.cross_entropy(masked_logits, target_action)
+                        value_loss = F.mse_loss(value, target_value)
+                        loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
-            # 关键：彻底释放单分片内存并清理 GPU 临时缓存
-            del batch_data
-            del loader
-            if self.device.type == "cuda":
-                torch.cuda.empty_cache()
+                    self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.grad_clip_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
 
-            cur_top1 = (correct_top1 / max(total_samples, 1)) * 100.0
-            cur_loss = total_loss / max(total_samples, 1)
-            pbar.update(s_idx + 1, extra=f"loss: {cur_loss:.3f} | top1: {cur_top1:.1f}%")
+                    total_loss += loss.item() * b_size
+                    total_p_loss += policy_loss.item() * b_size
+                    total_v_loss += value_loss.item() * b_size
+
+                    pred_top3 = masked_logits.topk(k=3, dim=-1).indices
+                    correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
+                    correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
+                    total_samples += b_size
+
+                    # 分片内平滑进度推进 (内置 0.15s 节流，零性能损耗)
+                    frac_done = s_idx + (b_idx + 1) / max(n_batches, 1)
+                    cur_top1 = (correct_top1 / max(total_samples, 1)) * 100.0
+                    cur_loss = total_loss / max(total_samples, 1)
+                    pbar.update(frac_done, extra=f"loss: {cur_loss:.3f} | top1: {cur_top1:.1f}%")
+
+                del loader
 
         pbar.done(f"loss: {total_loss/total_samples:.4f} | top1: {correct_top1/total_samples*100:.1f}%")
         self.epoch += 1
