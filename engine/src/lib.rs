@@ -5,8 +5,8 @@ pub mod gameplay;
 pub mod model;
 
 pub use ai::{
-    CardDto, DecisionDto, HeuristicAI, NeuralAI, PlayerDto, PlayerType, RandomAI, ReplaySession,
-    ReplayStep, RoyalDto, ScoredActionDto, StateDto,
+    action_category, format_action, CardDto, DecisionDto, HeuristicAI, InteractiveSession,
+    LegalActionDto, NeuralAI, PlayerDto, PlayerKind, PlayerType, RandomAI, ReplaySession,
 };
 pub use bridge::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 #[cfg(feature = "python")]

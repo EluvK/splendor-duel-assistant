@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 璀璨宝石对决中的 7 种标记类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum GemType {
     White,  // 珍珠贝 / 钻石
     Blue,   // 蓝宝石
@@ -10,6 +10,25 @@ pub enum GemType {
     Black,  // 黑曜石
     Pearl,  // 珍珠 (稀缺，无卡牌奖励)
     Gold,   // 黄金 (万能，仅能通过预留获得)
+}
+
+impl<'de> Deserialize<'de> for GemType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "white" => Ok(GemType::White),
+            "blue" => Ok(GemType::Blue),
+            "green" => Ok(GemType::Green),
+            "red" => Ok(GemType::Red),
+            "black" => Ok(GemType::Black),
+            "pearl" => Ok(GemType::Pearl),
+            "gold" => Ok(GemType::Gold),
+            _ => Err(serde::de::Error::custom(format!("unknown gem type: {s}"))),
+        }
+    }
 }
 
 impl GemType {

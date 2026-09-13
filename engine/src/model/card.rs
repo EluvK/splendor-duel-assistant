@@ -2,11 +2,26 @@ use super::token::GemType;
 use serde::{Deserialize, Serialize};
 
 /// 珠宝卡等级（1 级、2 级、3 级）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum CardTier {
     Tier1 = 0,
     Tier2 = 1,
     Tier3 = 2,
+}
+
+impl<'de> Deserialize<'de> for CardTier {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "tier1" | "1" => Ok(CardTier::Tier1),
+            "tier2" | "2" => Ok(CardTier::Tier2),
+            "tier3" | "3" => Ok(CardTier::Tier3),
+            _ => Err(serde::de::Error::custom(format!("unknown card tier: {s}"))),
+        }
+    }
 }
 
 impl CardTier {

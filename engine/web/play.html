@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>璀璨宝石：对决 (Splendor Duel) - 实时人机/双人交互对战</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/interaction.css">
+</head>
+<body>
+
+  <!-- 顶部导航与控制栏 -->
+  <header>
+    <div class="title-group">
+      <h1>💎 璀璨宝石：对决</h1>
+      <div class="nav-tabs">
+        <a href="play.html" class="nav-tab active">🎮 实时对战</a>
+        <a href="replay.html" class="nav-tab">🎬 复盘分析</a>
+      </div>
+      <span class="status-badge" id="gameTurnBadge">对局准备中</span>
+    </div>
+
+    <div class="controls">
+      <!-- 双方角色类型下拉框 -->
+      <div class="ai-config-group" title="设置双方座位的控制身份">
+        <span style="font-size:0.75rem; color:#38bdf8; font-weight:700;">P0:</span>
+        <select id="p0KindSelect">
+          <option value="human" selected>👤 人类玩家</option>
+          <option value="neural">🧠 神经网络 (best.pt)</option>
+          <option value="heuristic">🤖 启发式 AI</option>
+          <option value="random">🎲 随机 AI</option>
+        </select>
+        <span style="font-size:0.75rem; color:#f472b6; font-weight:700;">P1:</span>
+        <select id="p1KindSelect">
+          <option value="neural" selected>🧠 神经网络 (best.pt)</option>
+          <option value="human">👤 人类玩家 (热座)</option>
+          <option value="heuristic">🤖 启发式 AI</option>
+          <option value="random">🎲 随机 AI</option>
+        </select>
+        <span id="neuralStatusDot" style="font-size:0.75rem; color:#22c55e;" title="神经网络服务状态">●</span>
+      </div>
+
+      <button class="btn-secondary" id="btnNewGame">新对局 🔄</button>
+      <button class="btn-accent" id="btnStepAi">AI 走步 🤖</button>
+      <label style="font-size:0.78rem; display:flex; align-items:center; gap:4px; cursor:pointer; user-select:none;">
+        <input type="checkbox" id="autoAiCheckbox" checked>
+        <span>AI 自动走步 ⚡</span>
+      </label>
+      <button class="btn-success" id="btnToReplay" title="将本局对战转入复盘系统逐帧分析">转入复盘分析 🎬</button>
+    </div>
+  </header>
+
+  <!-- 顶部操作指引条 -->
+  <div style="padding: 6px 14px 0 14px;">
+    <div class="turn-guide-banner" id="turnGuideBanner">
+      <div class="guide-text">
+        <span class="guide-badge" id="guideBadge">准备</span>
+        <span id="guideText">正在加载游戏数据...</span>
+      </div>
+      <div class="action-bar-buttons" id="actionBarButtons">
+        <!-- 动态操作按钮：确认拿取宝石、补充棋盘、跳过可选阶段等 -->
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <!-- 左侧：5x5 棋盘 + 特权/布袋 + 操作提示 -->
+    <div class="panel left-panel">
+      <div class="panel-title">
+        <span>5×5 宝石棋盘</span>
+        <span id="boardTokensCount" style="font-size:0.75rem; color:var(--accent-gold);">25 标记</span>
+      </div>
+
+      <div class="board-container" id="boardGrid">
+        <!-- 动态生成 25 个格子 -->
+      </div>
+
+      <div class="board-footer">
+        <span>📜 特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
+        <span>🎒 布袋剩余: <b id="bagCount">0</b></span>
+      </div>
+
+      <!-- 规则与快捷交互说明 -->
+      <div class="panel" style="background:#131722; border:1px solid rgba(255,255,255,0.05); font-size:0.72rem; color:var(--text-muted); line-height:1.4;">
+        <div style="font-weight:700; color:var(--accent-gold); margin-bottom:4px;">💡 操作指南</div>
+        <div>• <b>拿宝石</b>：点击棋盘上 1~3 颗同线连续非黄金宝石，然后点击上方【确认拿取】。</div>
+        <div>• <b>买卡/预留</b>：鼠标悬停在金字塔卡牌上，点击【购买】或【预留】。</div>
+        <div>• <b>盲抽预留</b>：点击各等级牌架右侧的【盲抽预留】按钮。</div>
+        <div>• <b>使用特权</b>：拥有卷轴且在可选阶段时，直接点击棋盘上任意非黄金宝石拿取。</div>
+        <div>• <b>明牌预留</b>：双方预留卡均明牌展示，买得起时直接在手牌区点击【购买】。</div>
+      </div>
+    </div>
+
+    <!-- 中间：王室赞助池 + 3 级金字塔卡牌 -->
+    <div class="panel pyramid-section">
+      <div class="panel-title">
+        <span>王室赞助池</span>
+        <span style="font-size:0.7rem; color:var(--text-muted);">满 3 / 6 王冠自动触发认领</span>
+      </div>
+      <div class="royals-row" id="royalsContainer">
+        <!-- 4 张王室卡 -->
+      </div>
+
+      <div class="panel-title">金字塔珠宝展示区</div>
+      
+      <!-- Tier 3 -->
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 3 (高阶)</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span>牌堆剩余: <b id="deck3Count">0</b></span>
+            <button class="deck-reserve-btn" id="deck3ReserveBtn">🎴 盲抽预留</button>
+          </div>
+        </div>
+        <div class="cards-flex" id="tier3Cards"></div>
+      </div>
+
+      <!-- Tier 2 -->
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 2 (中阶)</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span>牌堆剩余: <b id="deck2Count">0</b></span>
+            <button class="deck-reserve-btn" id="deck2ReserveBtn">🎴 盲抽预留</button>
+          </div>
+        </div>
+        <div class="cards-flex" id="tier2Cards"></div>
+      </div>
+
+      <!-- Tier 1 -->
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 1 (初阶)</span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span>牌堆剩余: <b id="deck1Count">0</b></span>
+            <button class="deck-reserve-btn" id="deck1ReserveBtn">🎴 盲抽预留</button>
+          </div>
+        </div>
+        <div class="cards-flex" id="tier1Cards"></div>
+      </div>
+    </div>
+
+    <!-- 右侧：双人平铺玩家仪表盘 (含明牌预留与已购 Tableau) -->
+    <div class="panel player-panel">
+      <div class="panel-title">
+        <span>对决双方仪表盘</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">预留卡明牌公开</span>
+      </div>
+
+      <div class="players-grid">
+        <!-- Player 0 -->
+        <div class="player-card" id="player0Card">
+          <div class="player-header">
+            <span class="player-name">
+              <span style="color:#38bdf8;">👤 Player 0</span>
+              <span class="acting-indicator">⚡ 行动中</span>
+            </span>
+            <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+          </div>
+          <div class="victory-progress">
+            <div>
+              <div class="progress-row"><span>声望总分</span><span><b id="p0Points">0</b> / 20</span></div>
+              <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>王冠数量</span><span><b id="p0Crowns">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill crowns" id="p0CrownsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>最高单色声望</span><span><b id="p0MaxColor">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill color" id="p0ColorBar" style="width: 0%"></div></div>
+            </div>
+          </div>
+          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p0TokenTotal">0</span>/10):</div>
+          <div class="token-chips" id="p0Tokens"></div>
+          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
+          <div class="token-chips" id="p0Bonuses"></div>
+          <div style="font-size:0.75rem; font-weight:700;">预留卡 (明牌 <span id="p0ReservedCount">0</span>/3):</div>
+          <div class="reserved-cards-container" id="p0ReservedCards"></div>
+
+          <!-- 已获王室赞助卡 -->
+          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p0RoyalCount">0</span>):</div>
+          <div class="royals-mini-container" id="p0RoyalCards"></div>
+
+          <!-- 已购买卡牌矩阵 (Tableau) -->
+          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
+            <span>已购卡牌 (<span id="p0PurchasedCount">0</span> 张):</span>
+            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
+          </div>
+          <div class="purchased-cards-container" id="p0PurchasedCards"></div>
+        </div>
+
+        <!-- Player 1 -->
+        <div class="player-card" id="player1Card">
+          <div class="player-header">
+            <span class="player-name">
+              <span style="color:#f472b6;">👤 Player 1</span>
+              <span class="acting-indicator">⚡ 行动中</span>
+            </span>
+            <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+          </div>
+          <div class="victory-progress">
+            <div>
+              <div class="progress-row"><span>声望总分</span><span><b id="p1Points">0</b> / 20</span></div>
+              <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>王冠数量</span><span><b id="p1Crowns">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill crowns" id="p1CrownsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>最高单色声望</span><span><b id="p1MaxColor">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill color" id="p1ColorBar" style="width: 0%"></div></div>
+            </div>
+          </div>
+          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p1TokenTotal">0</span>/10):</div>
+          <div class="token-chips" id="p1Tokens"></div>
+          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
+          <div class="token-chips" id="p1Bonuses"></div>
+          <div style="font-size:0.75rem; font-weight:700;">预留卡 (明牌 <span id="p1ReservedCount">0</span>/3):</div>
+          <div class="reserved-cards-container" id="p1ReservedCards"></div>
+
+          <!-- 已获王室赞助卡 -->
+          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p1RoyalCount">0</span>):</div>
+          <div class="royals-mini-container" id="p1RoyalCards"></div>
+
+          <!-- 已购买卡牌矩阵 (Tableau) -->
+          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
+            <span>已购卡牌 (<span id="p1PurchasedCount">0</span> 张):</span>
+            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
+          </div>
+          <div class="purchased-cards-container" id="p1PurchasedCards"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 通用模态对话框 (变色卡定色等) -->
+  <div class="modal-overlay" id="modalOverlay" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-title" id="modalTitle">操作提示</div>
+      <div class="modal-body" id="modalBody">请选择</div>
+      <div class="modal-options" id="modalOptions"></div>
+      <div class="modal-footer" id="modalFooter"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { GameController } from './js/game-controller.js';
+
+    const controller = new GameController();
+    controller.fetchState();
+
+    // 神经网络状态探测轮询
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/neural_status');
+        if (res.ok) {
+          const data = await res.json();
+          const dot = document.getElementById('neuralStatusDot');
+          if (dot) {
+            dot.style.color = data.available ? '#22c55e' : '#94a3b8';
+            dot.title = data.available ? '神经网络推理微服务在线' : '神经网络服务未连接';
+          }
+        }
+      } catch(e) {}
+    }, 5000);
+  </script>
+</body>
+</html>

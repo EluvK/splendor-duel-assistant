@@ -1,5 +1,8 @@
-use _engine::{NeuralAI, PlayerType, ReplaySession};
-use serde::Serialize;
+use _engine::{
+    Action, InteractiveSession, LegalActionDto, NeuralAI, PlayerKind, PlayerType, ReplaySession,
+    ReplayStep, StateDto,
+};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -33,6 +36,24 @@ struct HistoryResponse {
     steps: Vec<StepSummary>,
 }
 
+#[derive(Serialize)]
+struct GameStateResponse {
+    state: StateDto,
+    player_kinds: [String; 2],
+    current_player: usize,
+    current_player_kind: String,
+    is_human: bool,
+    legal_actions: Vec<LegalActionDto>,
+    neural_available: bool,
+    history_len: usize,
+    latest_step: Option<ReplayStep>,
+}
+
+struct AppState {
+    replay: RwLock<ReplaySession>,
+    game: RwLock<InteractiveSession>,
+}
+
 fn respond(stream: &mut TcpStream, status: &str, body: &[u8], content_type: &str) {
     let _ = write!(
         stream,
@@ -49,15 +70,25 @@ fn find_web_root() -> PathBuf {
         PathBuf::from("../engine/web"),
     ];
     for c in candidates {
-        if c.exists() && c.join("index.html").exists() {
+        if c.exists() && (c.join("index.html").exists() || c.join("play.html").exists()) {
             return c;
         }
     }
     PathBuf::from("engine/web")
 }
 
-fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, web_root: &Path) {
-    let mut buffer = [0u8; 4096];
+fn extract_body(request_str: &str) -> &str {
+    if let Some(idx) = request_str.find("\r\n\r\n") {
+        &request_str[idx + 4..]
+    } else if let Some(idx) = request_str.find("\n\n") {
+        &request_str[idx + 2..]
+    } else {
+        ""
+    }
+}
+
+fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) {
+    let mut buffer = [0u8; 8192];
     let bytes_read = match stream.read(&mut buffer) {
         Ok(n) if n > 0 => n,
         _ => return,
@@ -79,10 +110,168 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
         (raw_url, "")
     };
 
+    let body_str = extract_body(&request_str);
+
     match (method, path) {
-        // API: 获取最新状态
+        // ================= 交互对战 API =================
+        ("GET", "/api/game/state") => {
+            let game = state.game.read().unwrap();
+            let res = GameStateResponse {
+                state: game.current_state(),
+                player_kinds: [
+                    game.player_kinds[0].as_str().to_string(),
+                    game.player_kinds[1].as_str().to_string(),
+                ],
+                current_player: game.game.current_player,
+                current_player_kind: game.current_player_kind().as_str().to_string(),
+                is_human: game.is_current_player_human(),
+                legal_actions: game.legal_actions_dto(),
+                neural_available: NeuralAI::is_available(),
+                history_len: game.history.len(),
+                latest_step: game.history.last().cloned(),
+            };
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // 人类玩家提交执行动作
+        ("POST", "/api/game/action") => {
+            #[derive(Deserialize)]
+            struct ActionRequest {
+                action: Action,
+            }
+
+            let action_res: Result<Action, String> = if body_str.contains("\"action\"") {
+                serde_json::from_str::<ActionRequest>(body_str)
+                    .map(|r| r.action)
+                    .map_err(|e| format!("ActionRequest parse failed: {e}"))
+            } else {
+                serde_json::from_str::<Action>(body_str)
+                    .map_err(|e| format!("Action parse failed: {e}"))
+            };
+
+            match action_res {
+                Ok(action) => {
+                    let mut game = state.game.write().unwrap();
+                    match game.step_human(action) {
+                        Ok(step) => {
+                            let res = serde_json::json!({
+                                "ok": true,
+                                "step": step,
+                                "state": game.current_state(),
+                                "current_player": game.game.current_player,
+                                "is_human": game.is_current_player_human(),
+                                "legal_actions": game.legal_actions_dto(),
+                            });
+                            let json = serde_json::to_vec(&res).unwrap();
+                            respond(&mut stream, "200 OK", &json, "application/json");
+                        }
+                        Err(err) => {
+                            let res = serde_json::json!({ "ok": false, "error": err });
+                            let json = serde_json::to_vec(&res).unwrap();
+                            respond(&mut stream, "400 Bad Request", &json, "application/json");
+                        }
+                    }
+                }
+                Err(e) => {
+                    let res = serde_json::json!({ "ok": false, "error": format!("Invalid action JSON: {e}") });
+                    let json = serde_json::to_vec(&res).unwrap();
+                    respond(&mut stream, "400 Bad Request", &json, "application/json");
+                }
+            }
+        }
+
+        // 触发 AI 执行一步
+        ("POST", "/api/game/ai_step") | ("GET", "/api/game/ai_step") => {
+            let mut game = state.game.write().unwrap();
+            match game.step_ai() {
+                Ok(Some(step)) => {
+                    let res = serde_json::json!({
+                        "ok": true,
+                        "step": step,
+                        "state": game.current_state(),
+                        "current_player": game.game.current_player,
+                        "is_human": game.is_current_player_human(),
+                        "legal_actions": game.legal_actions_dto(),
+                    });
+                    let json = serde_json::to_vec(&res).unwrap();
+                    respond(&mut stream, "200 OK", &json, "application/json");
+                }
+                Ok(None) => {
+                    let res = serde_json::json!({
+                        "ok": false,
+                        "error": "Current player is human or game over"
+                    });
+                    let json = serde_json::to_vec(&res).unwrap();
+                    respond(&mut stream, "200 OK", &json, "application/json");
+                }
+                Err(err) => {
+                    let res = serde_json::json!({ "ok": false, "error": err });
+                    let json = serde_json::to_vec(&res).unwrap();
+                    respond(&mut stream, "400 Bad Request", &json, "application/json");
+                }
+            }
+        }
+
+        // 重置交互对战对局
+        ("POST", "/api/game/reset") | ("GET", "/api/game/reset") | ("POST", "/api/game/new") => {
+            let mut seed: u64 = 42;
+            let mut p0 = PlayerKind::Human;
+            let mut p1 = PlayerKind::Neural;
+
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "seed" {
+                        seed = v.parse::<u64>().unwrap_or(42);
+                    } else if k == "p0" {
+                        p0 = PlayerKind::parse(v);
+                    } else if k == "p1" {
+                        p1 = PlayerKind::parse(v);
+                    }
+                }
+            }
+
+            let mut game = state.game.write().unwrap();
+            game.reset(seed, [p0, p1]);
+
+            let res = GameStateResponse {
+                state: game.current_state(),
+                player_kinds: [
+                    game.player_kinds[0].as_str().to_string(),
+                    game.player_kinds[1].as_str().to_string(),
+                ],
+                current_player: game.game.current_player,
+                current_player_kind: game.current_player_kind().as_str().to_string(),
+                is_human: game.is_current_player_human(),
+                legal_actions: game.legal_actions_dto(),
+                neural_available: NeuralAI::is_available(),
+                history_len: game.history.len(),
+                latest_step: game.history.last().cloned(),
+            };
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // 将当前对局一键导出到复盘系统
+        ("POST", "/api/game/to_replay") | ("GET", "/api/game/to_replay") => {
+            let game = state.game.read().unwrap();
+            let replay_sess = game.to_replay_session();
+            let mut replay = state.replay.write().unwrap();
+            *replay = replay_sess;
+
+            let res = serde_json::json!({
+                "ok": true,
+                "total_steps": replay.history.len(),
+                "redirect": "replay.html"
+            });
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // ================= 现有回放 API =================
         ("GET", "/api/status") => {
-            let sess = session.read().unwrap();
+            let sess = state.replay.read().unwrap();
             let last_step = sess.history.last().unwrap().clone();
             let res = StatusResponse {
                 state: sess.current_state(),
@@ -97,7 +286,6 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 检测神经网络服务健康状态
         ("GET", "/api/neural_status") => {
             let available = NeuralAI::is_available();
             let res = serde_json::json!({ "available": available });
@@ -105,7 +293,6 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 单步推进或批量推进
         ("POST", "/api/step") | ("GET", "/api/step_next") => {
             let mut count: usize = 1;
             for param in query.split('&') {
@@ -117,7 +304,7 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                 }
             }
 
-            let mut sess = session.write().unwrap();
+            let mut sess = state.replay.write().unwrap();
             let prev_len = sess.history.len();
             match sess.step_n(count) {
                 Ok(advanced_count) => {
@@ -159,9 +346,8 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             }
         }
 
-        // API: 一键推至终局
         ("POST", "/api/play_to_end") | ("GET", "/api/play_to_end") => {
-            let mut sess = session.write().unwrap();
+            let mut sess = state.replay.write().unwrap();
             let _ = sess.play_to_end(2000);
             let last_step = sess.history.last().unwrap().clone();
             #[derive(Serialize)]
@@ -177,9 +363,8 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 动态修改玩家 AI 类型
         ("POST", "/api/set_players") | ("GET", "/api/set_players") => {
-            let mut sess = session.write().unwrap();
+            let mut sess = state.replay.write().unwrap();
             for param in query.split('&') {
                 let mut kv = param.split('=');
                 if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
@@ -200,7 +385,6 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 重置对局 (支持设置双方 AI 类型与一键生成全局)
         ("POST", "/api/reset") | ("GET", "/api/reset") => {
             let mut seed: u64 = 42;
             let mut play_to_end = false;
@@ -222,7 +406,7 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                 }
             }
 
-            let mut sess = session.write().unwrap();
+            let mut sess = state.replay.write().unwrap();
             sess.reset_with_players(seed, [p0, p1]);
             if play_to_end {
                 let _ = sess.play_to_end(2000);
@@ -241,7 +425,6 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 获取指定步数快照
         ("GET", "/api/step") => {
             let mut index = 0;
             for param in query.split('&') {
@@ -253,7 +436,7 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                 }
             }
 
-            let sess = session.read().unwrap();
+            let sess = state.replay.read().unwrap();
             if let Some(step) = sess.get_step(index) {
                 let json = serde_json::to_vec(step).unwrap();
                 respond(&mut stream, "200 OK", &json, "application/json");
@@ -262,9 +445,8 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             }
         }
 
-        // API: 获取历史列表
         ("GET", "/api/history") => {
-            let sess = session.read().unwrap();
+            let sess = state.replay.read().unwrap();
             let steps: Vec<_> = sess
                 .history
                 .iter()
@@ -290,10 +472,16 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // 静态文件服务
+        // ================= 静态文件服务 =================
         ("GET", _) => {
-            let rel_path = if path == "/" || path == "/index.html" {
-                "index.html"
+            let rel_path = if path == "/" || path == "/index.html" || path == "/play" || path == "/play.html" {
+                if web_root.join("play.html").exists() {
+                    "play.html"
+                } else {
+                    "index.html"
+                }
+            } else if path == "/replay" {
+                "replay.html"
             } else {
                 path.trim_start_matches('/')
             };
@@ -343,86 +531,119 @@ fn ensure_neural_server_running() {
         PathBuf::from("../checkpoints/best.pt"),
     ];
 
-    let mut found_ckpt = None;
+    let mut pt_path = None;
     for c in &candidates {
         if c.exists() {
-            found_ckpt = Some(c.clone());
+            pt_path = Some(c.clone());
             break;
         }
     }
 
-    if let Some(ckpt) = found_ckpt {
-        println!("🔍 检测到模型权重 {}，正在自动唤起后台 Python 推理微服务...", ckpt.display());
-        let python_bins = [
-            ".venv/Scripts/python.exe",
-            "../.venv/Scripts/python.exe",
-            ".venv/bin/python",
-            "python",
-        ];
-
-        let mut py_exec = "python";
-        for py in &python_bins {
-            if Path::new(py).exists() {
-                py_exec = py;
-                break;
-            }
+    let checkpoint = match pt_path {
+        Some(p) => p,
+        None => {
+            println!("ℹ️ 未检测到 checkpoints/best.pt，神经网络对局功能将暂时回退为启发式 AI");
+            return;
         }
+    };
 
-        let script = if Path::new("python/splendor_ai/server.py").exists() {
-            "python/splendor_ai/server.py"
-        } else {
-            "../python/splendor_ai/server.py"
-        };
+    println!("🚀 正在自动拉起神经网络推理后台服务 (端口 8088)...");
 
-        let child = std::process::Command::new(py_exec)
-            .args([script, "--port", "8088", "--checkpoint", ckpt.to_str().unwrap()])
-            .spawn();
+    let py_candidates = [
+        PathBuf::from(".venv/Scripts/python.exe"),
+        PathBuf::from(".venv/bin/python"),
+        PathBuf::from("python.exe"),
+        PathBuf::from("python"),
+    ];
 
-        if let Ok(_) = child {
-            // 等待 Python 进程初始化
-            for _ in 0..15 {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+    let mut python_bin = None;
+    for p in &py_candidates {
+        if p.exists() {
+            python_bin = Some(p.clone());
+            break;
+        }
+    }
+
+    let py_cmd = python_bin.unwrap_or_else(|| PathBuf::from("python"));
+    let server_script = if Path::new("python/splendor_ai/server.py").exists() {
+        "python/splendor_ai/server.py"
+    } else {
+        "../python/splendor_ai/server.py"
+    };
+
+    let mut spawn_cmd = std::process::Command::new(py_cmd);
+    spawn_cmd.args([
+        server_script,
+        "--port",
+        "8088",
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        spawn_cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    match spawn_cmd.spawn() {
+        Ok(_) => {
+            println!("⏳ 等待神经网络推理微服务启动...");
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
                 if NeuralAI::is_available() {
-                    println!("✨ 神经网络推理微服务已成功自动启动并就绪 (127.0.0.1:8088)！");
+                    println!("✅ 神经网络推理微服务已成功建立连接！");
                     return;
                 }
             }
-            println!("⏳ 神经网络推理微服务已发起启动，正在后台加载模型权重...");
-        } else {
-            println!("💡 提示: 未能自动拉起 Python，可通过命令行手动启动: python python/splendor_ai/server.py");
+            println!("⚠️ 启动超时，稍后请求时可自动重试连接。");
+        }
+        Err(e) => {
+            println!("⚠️ 自动启动 Python 推理服务失败: {e}");
         }
     }
 }
 
 fn main() {
-    let port = env::args()
-        .nth(1)
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(8080);
+    let args: Vec<String> = env::args().collect();
+    let port = args.get(1).and_then(|p| p.parse().ok()).unwrap_or(8080);
     let addr = format!("127.0.0.1:{port}");
 
-    let listener = TcpListener::bind(&addr).unwrap_or_else(|e| {
-        eprintln!("无法绑定地址 {addr}: {e}");
-        std::process::exit(1);
-    });
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("❌ 端口绑定失败 {addr}: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let web_root = find_web_root();
-    println!("==================================================");
-    println!("✨ 璀璨宝石：对决 (Splendor Duel) 可视化对局回放服务已启动！");
-    println!("🌐 本地访问地址: http://{addr}");
-    println!("📁 静态网页目录: {}", web_root.display());
-    println!("==================================================");
 
+    // 尝试拉起神经网络推理微服务
     ensure_neural_server_running();
 
-    let session = Arc::new(RwLock::new(ReplaySession::new(42)));
+    let replay_session = ReplaySession::new(42);
+    let interactive_session = InteractiveSession::new(42, [PlayerKind::Human, PlayerKind::Neural]);
+
+    let app_state = Arc::new(AppState {
+        replay: RwLock::new(replay_session),
+        game: RwLock::new(interactive_session),
+    });
+
+    println!("\n========================================================");
+    println!("💎 璀璨宝石：对决 (Splendor Duel) 全功能服务已启动！");
+    println!("🎮 实时人机/双人对战:   http://{addr}/play.html");
+    println!("🎬 AI 自博弈复盘分析:   http://{addr}/replay.html");
+    println!("📁 静态网页根目录:      {}", web_root.display());
+    println!("========================================================\n");
 
     for stream in listener.incoming() {
         if let Ok(stream) = stream {
-            let session = Arc::clone(&session);
-            let web_root = web_root.clone();
+            let app_state_clone = Arc::clone(&app_state);
+            let root_clone = web_root.clone();
             std::thread::spawn(move || {
-                handle_client(stream, &session, &web_root);
+                handle_client(stream, &app_state_clone, &root_clone);
             });
         }
     }

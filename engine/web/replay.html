@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>璀璨宝石：对决 (Splendor Duel) - AI 复盘分析视窗</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header>
+    <div class="title-group">
+      <h1>💎 璀璨宝石：对决</h1>
+      <div class="nav-tabs">
+        <a href="play.html" class="nav-tab">🎮 实时对战</a>
+        <a href="replay.html" class="nav-tab active">🎬 复盘分析</a>
+      </div>
+      <span class="status-badge" id="gamePhase">正在初始化...</span>
+    </div>
+
+    <div class="controls">
+      <!-- 双方对战 AI 类型设置 -->
+      <div class="ai-config-group" title="设置双方座位的 AI 决策类型">
+        <span style="font-size:0.75rem; color:#38bdf8; font-weight:700;">P0:</span>
+        <select id="p0TypeSelect">
+          <option value="heuristic" selected>🤖 启发式 AI</option>
+          <option value="neural">🧠 神经网络 (best.pt)</option>
+          <option value="random">🎲 随机 AI</option>
+        </select>
+        <span style="font-size:0.75rem; color:#f472b6; font-weight:700;">P1:</span>
+        <select id="p1TypeSelect">
+          <option value="heuristic" selected>🤖 启发式 AI</option>
+          <option value="neural">🧠 神经网络 (best.pt)</option>
+          <option value="random">🎲 随机 AI</option>
+        </select>
+        <span id="neuralStatusDot" style="font-size:0.75rem; color:#22c55e;" title="神经网络服务状态">●</span>
+      </div>
+
+      <div class="slider-container">
+        <span style="font-size:0.8rem; min-width: 90px;">步数: <b id="currentStepText" style="color:var(--accent-gold);">0</b> / <b id="totalStepsText">0</b></span>
+        <input type="range" id="stepSlider" min="0" max="0" value="0">
+      </div>
+      <button class="btn-secondary" id="btnPrev">◀ 上一步</button>
+      <button id="btnNext">下一步 ▶</button>
+      <button class="btn-secondary" id="btnPlay">自动播放 ⏯</button>
+      <select id="playSpeed">
+        <option value="20">极速 (20ms)</option>
+        <option value="50">5x (50ms)</option>
+        <option value="120" selected>2x (120ms)</option>
+        <option value="300">1x (300ms)</option>
+        <option value="600">0.5x (600ms)</option>
+      </select>
+      <button class="btn-accent" id="btnPlayToEnd" title="瞬间在引擎内模拟完整局并载入全部历史">推至终局 ⏩</button>
+      <button class="btn-secondary" id="btnReset">重置对局 🔄</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- 左侧：5x5 棋盘 + 特权/布袋 + 下方对局步骤日志 -->
+    <div class="panel left-panel">
+      <div class="panel-title">
+        <span>5×5 棋盘矩阵</span>
+        <span id="boardTokensCount" style="font-size:0.75rem; color:var(--accent-gold);">25 标记</span>
+      </div>
+
+      <div class="board-container" id="boardGrid">
+        <!-- 动态生成 25 个格子 -->
+      </div>
+
+      <div class="board-footer">
+        <span>📜 特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
+        <span>🎒 布袋剩余: <b id="bagCount">0</b></span>
+      </div>
+
+      <!-- 对局日志：集成在左侧下方 -->
+      <div class="panel-title" style="margin-top: 2px;">
+        <span>对局操作日志</span>
+        <span style="font-size:0.7rem; color:var(--text-muted);">点击步骤快速跳转</span>
+      </div>
+      <div class="log-panel" id="logContainer">
+        <!-- 动态追加步骤记录 -->
+      </div>
+    </div>
+
+    <!-- 中间：王室卡与 3 级金字塔卡牌 -->
+    <div class="panel pyramid-section">
+      <div class="panel-title">王室赞助池</div>
+      <div class="royals-row" id="royalsContainer">
+        <!-- 4 张王室卡 -->
+      </div>
+
+      <div class="panel-title">金字塔明牌展示区</div>
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 3</span>
+          <span>牌堆剩余: <b id="deck3Count">0</b></span>
+        </div>
+        <div class="cards-flex" id="tier3Cards"></div>
+      </div>
+
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 2</span>
+          <span>牌堆剩余: <b id="deck2Count">0</b></span>
+        </div>
+        <div class="cards-flex" id="tier2Cards"></div>
+      </div>
+
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 1</span>
+          <span>牌堆剩余: <b id="deck1Count">0</b></span>
+        </div>
+        <div class="cards-flex" id="tier1Cards"></div>
+      </div>
+    </div>
+
+    <!-- 右侧：双人平铺玩家仪表盘 + AI 决策与评分分析模块 -->
+    <div class="panel player-panel">
+      <div class="panel-title">
+        <span>对决玩家仪表盘</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">双方状态水平并排平铺</span>
+      </div>
+
+      <div class="players-grid">
+        <!-- Player 0 -->
+        <div class="player-card" id="player0Card">
+          <div class="player-header">
+            <span class="player-name">
+              <span style="color:#38bdf8;">👤 Player 0</span>
+              <span class="acting-indicator">⚡ 本步行动</span>
+              <span class="next-indicator">⏱ 下步待命</span>
+            </span>
+            <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+          </div>
+          <div class="victory-progress">
+            <div>
+              <div class="progress-row"><span>声望总分</span><span><b id="p0Points">0</b> / 20</span></div>
+              <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>王冠数量</span><span><b id="p0Crowns">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill crowns" id="p0CrownsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>最高单色声望</span><span><b id="p0MaxColor">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill color" id="p0ColorBar" style="width: 0%"></div></div>
+            </div>
+          </div>
+          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p0TokenTotal">0</span>/10):</div>
+          <div class="token-chips" id="p0Tokens"></div>
+          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
+          <div class="token-chips" id="p0Bonuses"></div>
+          <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p0ReservedCount">0</span>/3):</div>
+          <div class="reserved-cards-container" id="p0ReservedCards"></div>
+
+          <!-- 已获王室赞助卡 -->
+          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p0RoyalCount">0</span>):</div>
+          <div class="royals-mini-container" id="p0RoyalCards"></div>
+
+          <!-- 已购买卡牌矩阵 (Tableau) -->
+          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
+            <span>已购卡牌 (<span id="p0PurchasedCount">0</span> 张):</span>
+            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
+          </div>
+          <div class="purchased-cards-container" id="p0PurchasedCards"></div>
+        </div>
+
+        <!-- Player 1 -->
+        <div class="player-card" id="player1Card">
+          <div class="player-header">
+            <span class="player-name">
+              <span style="color:#f472b6;">👤 Player 1</span>
+              <span class="acting-indicator">⚡ 本步行动</span>
+              <span class="next-indicator">⏱ 下步待命</span>
+            </span>
+            <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+          </div>
+          <div class="victory-progress">
+            <div>
+              <div class="progress-row"><span>声望总分</span><span><b id="p1Points">0</b> / 20</span></div>
+              <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>王冠数量</span><span><b id="p1Crowns">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill crowns" id="p1CrownsBar" style="width: 0%"></div></div>
+            </div>
+            <div>
+              <div class="progress-row"><span>最高单色声望</span><span><b id="p1MaxColor">0</b> / 10</span></div>
+              <div class="progress-bar"><div class="progress-fill color" id="p1ColorBar" style="width: 0%"></div></div>
+            </div>
+          </div>
+          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p1TokenTotal">0</span>/10):</div>
+          <div class="token-chips" id="p1Tokens"></div>
+          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
+          <div class="token-chips" id="p1Bonuses"></div>
+          <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p1ReservedCount">0</span>/3):</div>
+          <div class="reserved-cards-container" id="p1ReservedCards"></div>
+
+          <!-- 已获王室赞助卡 -->
+          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p1RoyalCount">0</span>):</div>
+          <div class="royals-mini-container" id="p1RoyalCards"></div>
+
+          <!-- 已购买卡牌矩阵 (Tableau) -->
+          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
+            <span>已购卡牌 (<span id="p1PurchasedCount">0</span> 张):</span>
+            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
+          </div>
+          <div class="purchased-cards-container" id="p1PurchasedCards"></div>
+        </div>
+      </div>
+
+      <!-- 下方模块：AI 决策与动作评分分析 -->
+      <div class="ai-decision-panel" id="aiDecisionSection">
+        <div class="panel-title" style="margin-top: 2px;">
+          <span style="color:var(--accent-gold); display:flex; align-items:center; gap:6px;">
+            🧠 AI 决策与动作估值分析
+            <span id="decisionStepIndex" style="font-size:0.75rem; color:var(--text-muted);">#0</span>
+          </span>
+          <span id="decisionAiTypeBadge" class="ai-type-badge">启发式 AI</span>
+        </div>
+
+        <div class="decision-content">
+          <!-- 选定动作与得分概览 -->
+          <div class="decision-summary">
+            <div class="summary-item">
+              <span class="summary-label">决策玩家:</span>
+              <b id="decisionPlayer" style="color:#38bdf8;">Player 0</b>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">采纳动作:</span>
+              <b id="decisionAction" style="color:var(--text-main); font-size:0.72rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px;">Game Started</b>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label" id="decisionScoreLabel">估值评估:</span>
+              <b id="decisionScore" class="score-badge">+0.0</b>
+            </div>
+          </div>
+
+          <!-- 候选合法动作打分排行榜 -->
+          <div class="candidates-section">
+            <div class="candidates-title">
+              <span id="candidatesRankingTitle">候选合法动作打分排名 (Top Candidates)</span>
+              <span id="candidatesRankingSubtitle" style="font-size:0.68rem; color:var(--text-muted);">启发式估值越高越优先</span>
+            </div>
+            <div class="candidates-list" id="candidatesList">
+              <!-- 动态填充打分行 -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import {
+      renderBoard,
+      renderCardsList,
+      renderRoyalsPool,
+      renderPlayerDashboard
+    } from './js/shared-components.js';
+
+    let currentStep = 0;
+    let totalSteps = 0;
+    let isPlaying = false;
+    let playTimer = null;
+    let isFetching = false;
+
+    // 客户端步骤缓存，避免重复拉取
+    const stepCache = new Map();
+    let historySteps = [];
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        // 同步双方 AI 类型下拉选择器
+        if (data.player_types) {
+          document.getElementById('p0TypeSelect').value = data.player_types[0] || 'heuristic';
+          document.getElementById('p1TypeSelect').value = data.player_types[1] || 'heuristic';
+        }
+
+        const dot = document.getElementById('neuralStatusDot');
+        if (dot) {
+          if (data.neural_available) {
+            dot.style.color = '#22c55e';
+            dot.title = '神经网络推理微服务已连接 (127.0.0.1:8088)';
+          } else {
+            dot.style.color = '#94a3b8';
+            dot.title = '神经网络推理微服务未连接 (可后台自动拉起)';
+          }
+        }
+
+        if (data.step) {
+          stepCache.set(data.step.step_index, data.step);
+          currentStep = data.step.step_index;
+          renderState(data.state, data.step);
+          renderDecision(data.step);
+        } else {
+          renderState(data.state, null);
+        }
+
+        await reloadFullHistory();
+      } catch (e) {
+        console.error("fetchStatus failed:", e);
+      }
+    }
+
+    async function reloadFullHistory() {
+      try {
+        const res = await fetch('/api/history');
+        if (res.ok) {
+          const data = await res.json();
+          totalSteps = data.total_steps;
+          historySteps = data.steps;
+          rebuildLogDom(historySteps);
+          updateControlUI();
+        }
+      } catch (e) {
+        console.error("reloadFullHistory failed:", e);
+      }
+    }
+
+    async function fetchStep(index) {
+      if (index < 0 || (totalSteps > 0 && index >= totalSteps)) return;
+      currentStep = index;
+
+      if (stepCache.has(index)) {
+        const step = stepCache.get(index);
+        renderState(step.state, step);
+        renderDecision(step);
+        updateControlUI();
+        updateActiveLogInView(index);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/step?index=${index}`);
+        if (res.ok) {
+          const step = await res.json();
+          stepCache.set(index, step);
+          renderState(step.state, step);
+          renderDecision(step);
+          updateControlUI();
+          updateActiveLogInView(index);
+        }
+      } catch (e) {
+        console.error("fetchStep failed:", e);
+      }
+    }
+
+    async function stepNext() {
+      if (isFetching) return;
+
+      if (currentStep < totalSteps - 1) {
+        await fetchStep(currentStep + 1);
+        return;
+      }
+
+      isFetching = true;
+      try {
+        const res = await fetch('/api/step', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          const prevTotal = totalSteps;
+          totalSteps = data.total_steps;
+          currentStep = totalSteps - 1;
+
+          stepCache.set(currentStep, data.step);
+          renderState(data.step.state, data.step);
+          renderDecision(data.step);
+
+          if (data.new_steps && data.new_steps.length > 0) {
+            data.new_steps.forEach(s => appendLogItem(s));
+          } else if (totalSteps > prevTotal) {
+            await reloadFullHistory();
+          }
+
+          updateActiveLogInView(currentStep);
+          updateControlUI();
+
+          if (!data.advanced && isPlaying) {
+            togglePlay(false);
+          }
+        }
+      } catch (e) {
+        console.error("stepNext failed:", e);
+      } finally {
+        isFetching = false;
+      }
+    }
+
+    async function stepPrev() {
+      if (currentStep > 0) {
+        await fetchStep(currentStep - 1);
+      }
+    }
+
+    async function playToEnd() {
+      if (isPlaying) togglePlay(false);
+      try {
+        const res = await fetch('/api/play_to_end', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          totalSteps = data.total_steps;
+          currentStep = totalSteps - 1;
+          stepCache.set(currentStep, data.step);
+          renderState(data.step.state, data.step);
+          renderDecision(data.step);
+          await reloadFullHistory();
+          updateControlUI();
+        }
+      } catch (e) {
+        console.error("playToEnd failed:", e);
+      }
+    }
+
+    async function resetGame() {
+      if (isPlaying) togglePlay(false);
+      stepCache.clear();
+      const seed = Math.floor(Math.random() * 100000);
+      const p0 = document.getElementById('p0TypeSelect').value;
+      const p1 = document.getElementById('p1TypeSelect').value;
+
+      try {
+        const res = await fetch(`/api/reset?seed=${seed}&p0=${p0}&p1=${p1}`, { method: 'POST' });
+        if (res.ok) {
+          currentStep = 0;
+          totalSteps = 1;
+          await fetchStatus();
+        }
+      } catch (e) {
+        console.error("resetGame failed:", e);
+      }
+    }
+
+    async function updateAiConfig() {
+      const p0 = document.getElementById('p0TypeSelect').value;
+      const p1 = document.getElementById('p1TypeSelect').value;
+      try {
+        await fetch(`/api/set_players?p0=${p0}&p1=${p1}`, { method: 'POST' });
+      } catch (e) {
+        console.error("updateAiConfig failed:", e);
+      }
+    }
+
+    function updateControlUI() {
+      document.getElementById('currentStepText').innerText = currentStep;
+      document.getElementById('totalStepsText').innerText = Math.max(0, totalSteps - 1);
+      const slider = document.getElementById('stepSlider');
+      slider.max = Math.max(0, totalSteps - 1);
+      slider.value = currentStep;
+      document.getElementById('btnPrev').disabled = (currentStep === 0);
+      document.getElementById('btnNext').disabled = (totalSteps > 0 && currentStep >= totalSteps - 1 && document.getElementById('gamePhase').innerText.includes('获胜'));
+    }
+
+    /* 日志 DOM 构建与增量追加 */
+    function rebuildLogDom(steps) {
+      const container = document.getElementById('logContainer');
+      container.innerHTML = '';
+      steps.forEach(s => appendLogItem(s));
+      updateActiveLogInView(currentStep);
+    }
+
+    function appendLogItem(s) {
+      const container = document.getElementById('logContainer');
+      if (container.querySelector(`[data-index="${s.index}"]`)) return;
+
+      const item = document.createElement('div');
+      item.className = 'log-item';
+      item.setAttribute('data-index', s.index);
+      const scoreHint = (s.score !== undefined && s.score !== null) ? ` [估值: ${s.score.toFixed(1)}]` : '';
+      item.title = `#${s.index} [P${s.player}] ${s.action} (${s.phase})${scoreHint}`;
+
+      item.innerHTML = `
+        <span class="log-idx">#${s.index}</span>
+        <span class="log-p" style="color:${s.player === 0 ? '#38bdf8' : '#f472b6'};">P${s.player}</span>
+        <span class="log-act">${s.action}</span>
+        ${(s.score !== undefined && s.score !== null) ? `<span class="log-score-tag">${s.score.toFixed(0)}</span>` : ''}
+      `;
+      item.onclick = () => fetchStep(s.index);
+      container.appendChild(item);
+    }
+
+    function updateActiveLogInView(index) {
+      const container = document.getElementById('logContainer');
+      const prev = container.querySelector('.active-step');
+      if (prev) prev.classList.remove('active-step');
+
+      const target = container.querySelector(`[data-index="${index}"]`);
+      if (target) {
+        target.classList.add('active-step');
+        const itemTop = target.offsetTop - container.offsetTop;
+        const itemHeight = target.offsetHeight;
+        const containerHeight = container.clientHeight;
+        const currentScroll = container.scrollTop;
+
+        if (itemTop < currentScroll || (itemTop + itemHeight) > (currentScroll + containerHeight)) {
+          container.scrollTop = itemTop - Math.floor((containerHeight - itemHeight) / 2);
+        }
+      }
+    }
+
+    /* 渲染 AI 决策与评分分析模块 */
+    function renderDecision(step) {
+      if (!step) return;
+      document.getElementById('decisionStepIndex').innerText = `#${step.step_index}`;
+      const pEl = document.getElementById('decisionPlayer');
+      pEl.innerText = `Player ${step.player}`;
+      pEl.style.color = (step.player === 0 ? '#38bdf8' : '#f472b6');
+
+      const actEl = document.getElementById('decisionAction');
+      actEl.innerText = step.action_desc;
+      actEl.title = step.action_desc;
+
+      const scoreEl = document.getElementById('decisionScore');
+      const scoreLabelEl = document.getElementById('decisionScoreLabel');
+      const badgeEl = document.getElementById('decisionAiTypeBadge');
+      const candidatesList = document.getElementById('candidatesList');
+      const rankTitle = document.getElementById('candidatesRankingTitle');
+      const rankSub = document.getElementById('candidatesRankingSubtitle');
+      candidatesList.innerHTML = '';
+
+      const decision = step.decision;
+      if (decision) {
+        const isNeural = decision.ai_type.includes('neural');
+        const isRandom = decision.ai_type === 'random';
+
+        if (isNeural) {
+          badgeEl.innerText = `🧠 神经网络 AI (${decision.ai_type})`;
+          badgeEl.style.borderColor = '#22c55e';
+          badgeEl.style.backgroundColor = 'rgba(34, 197, 94, 0.15)';
+          scoreLabelEl.innerText = '胜率估值:';
+          rankTitle.innerText = '神经网络策略概率分布 P(a|s)';
+          rankSub.innerText = 'Policy Head 输出的高置信动作';
+        } else if (isRandom) {
+          badgeEl.innerText = '🎲 随机 AI (Random)';
+          badgeEl.style.borderColor = '#f59e0b';
+          badgeEl.style.backgroundColor = 'rgba(245, 158, 11, 0.15)';
+          scoreLabelEl.innerText = '动作估值:';
+          rankTitle.innerText = '候选动作列表';
+          rankSub.innerText = '随机均匀采样';
+        } else {
+          badgeEl.innerText = '🤖 启发式 AI (Heuristic)';
+          badgeEl.style.borderColor = 'var(--primary)';
+          badgeEl.style.backgroundColor = 'rgba(99, 102, 241, 0.25)';
+          scoreLabelEl.innerText = '启发式估值:';
+          rankTitle.innerText = '候选动作打分排名 (Top Candidates)';
+          rankSub.innerText = '规则特征加权评分';
+        }
+
+        if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
+          const sc = decision.chosen_score;
+          if (isNeural) {
+            const winrateProb = (sc + 100.0) / 2.0;
+            scoreEl.innerText = `${winrateProb.toFixed(1)}% 胜率`;
+            scoreEl.style.color = winrateProb >= 50 ? '#22c55e' : '#f87171';
+          } else {
+            scoreEl.innerText = sc >= 1000 ? `+${sc.toFixed(0)} (斩杀优先)` : `+${sc.toFixed(1)}`;
+            scoreEl.style.color = '#22c55e';
+          }
+          scoreEl.style.display = 'inline-block';
+        } else {
+          scoreEl.innerText = '无打分';
+          scoreEl.style.display = 'inline-block';
+        }
+
+        if (decision.top_candidates && decision.top_candidates.length > 0) {
+          decision.top_candidates.forEach((cand, idx) => {
+            const row = document.createElement('div');
+            row.className = `candidate-row ${cand.is_chosen ? 'chosen' : ''}`;
+            let scoreStr = '';
+            if (isNeural) {
+              scoreStr = `${cand.score.toFixed(1)}%`;
+            } else {
+              const isKill = cand.score >= 1000;
+              scoreStr = isKill ? `+${cand.score.toFixed(0)} 斩杀` : (cand.score >= 0 ? `+${cand.score.toFixed(1)}` : `${cand.score.toFixed(1)}`);
+            }
+
+            const chosenBadge = isNeural ? '<span class="candidate-chosen-badge">★ 采纳</span>' : '<span class="candidate-chosen-badge">★ 选定</span>';
+
+            row.innerHTML = `
+              <span style="color:#64748b; font-size:0.68rem; min-width:16px;">${idx + 1}.</span>
+              <span class="candidate-act" title="${cand.action_desc}">${cand.action_desc}</span>
+              ${cand.is_chosen ? chosenBadge : ''}
+              <span class="candidate-score" style="color:${cand.is_chosen ? '#22c55e' : '#38bdf8'};">${scoreStr}</span>
+            `;
+            candidatesList.appendChild(row);
+          });
+        } else {
+          candidatesList.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:4px;">当前步骤由随机 AI 执行，无动作估值排行</span>';
+        }
+      } else {
+        badgeEl.innerText = '对局初始化';
+        scoreEl.innerText = '-';
+        candidatesList.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:4px;">初始棋盘就绪，先手玩家准备行动</span>';
+      }
+    }
+
+    /* 渲染完整盘面 */
+    function renderState(state, step) {
+      const actor = (step && step.step_index > 0) ? step.player : state.current_player;
+      const nextPlayer = state.current_player;
+
+      const phaseEl = document.getElementById('gamePhase');
+      if (state.winner) {
+        phaseEl.innerText = `🏆 获胜者: ${state.winner}`;
+        phaseEl.style.backgroundColor = '#dc2626';
+        phaseEl.style.color = '#fff';
+      } else if (step && step.step_index > 0) {
+        const turnTip = (actor !== nextPlayer) ? `(下次回合由 P${nextPlayer} 接手)` : `(持续行动)`;
+        phaseEl.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase} ${turnTip}`;
+        phaseEl.style.backgroundColor = 'var(--bg-card)';
+        phaseEl.style.color = 'var(--text-main)';
+      } else {
+        phaseEl.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
+        phaseEl.style.backgroundColor = 'var(--bg-card)';
+        phaseEl.style.color = 'var(--text-main)';
+      }
+
+      // 5x5 棋盘
+      const tokenCount = renderBoard(state.board, document.getElementById('boardGrid'));
+      document.getElementById('boardTokensCount').innerText = `${tokenCount} 标记`;
+      document.getElementById('privilegePool').innerText = state.privilege_pool;
+      document.getElementById('bagCount').innerText = state.bag_count;
+
+      // 王室卡
+      renderRoyalsPool(state.royal_cards, document.getElementById('royalsContainer'));
+
+      // 金字塔卡牌
+      renderCardsList(state.pyramid[2], document.getElementById('tier3Cards'));
+      renderCardsList(state.pyramid[1], document.getElementById('tier2Cards'));
+      renderCardsList(state.pyramid[0], document.getElementById('tier1Cards'));
+
+      document.getElementById('deck3Count').innerText = state.decks_count[2];
+      document.getElementById('deck2Count').innerText = state.decks_count[1];
+      document.getElementById('deck1Count').innerText = state.decks_count[0];
+
+      // 玩家平铺展示
+      const p0Acting = (actor === 0);
+      const p1Acting = (actor === 1);
+      const p0Next = (step && step.step_index > 0 && actor !== nextPlayer && nextPlayer === 0);
+      const p1Next = (step && step.step_index > 0 && actor !== nextPlayer && nextPlayer === 1);
+
+      renderPlayerDashboard(state.players[0], document.getElementById('player0Card'), p0Acting, p0Next, 'p0');
+      renderPlayerDashboard(state.players[1], document.getElementById('player1Card'), p1Acting, p1Next, 'p1');
+    }
+
+    function togglePlay(start) {
+      isPlaying = (start !== undefined) ? start : !isPlaying;
+      const btn = document.getElementById('btnPlay');
+      btn.innerText = isPlaying ? '暂停 ⏸' : '自动播放 ⏯';
+      if (isPlaying) {
+        btn.style.backgroundColor = '#dc2626';
+        scheduleNextTick();
+      } else {
+        btn.style.backgroundColor = '';
+        if (playTimer) clearTimeout(playTimer);
+      }
+    }
+
+    function scheduleNextTick() {
+      if (!isPlaying) return;
+      const speed = parseInt(document.getElementById('playSpeed').value, 10) || 120;
+      playTimer = setTimeout(async () => {
+        if (!isPlaying) return;
+        if (currentStep < totalSteps - 1) {
+          await fetchStep(currentStep + 1);
+          scheduleNextTick();
+        } else {
+          await stepNext();
+          if (isPlaying) scheduleNextTick();
+        }
+      }, speed);
+    }
+
+    // 事件绑定
+    document.getElementById('btnNext').onclick = stepNext;
+    document.getElementById('btnPrev').onclick = stepPrev;
+    document.getElementById('btnPlay').onclick = () => togglePlay();
+    document.getElementById('btnPlayToEnd').onclick = playToEnd;
+    document.getElementById('btnReset').onclick = resetGame;
+    document.getElementById('p0TypeSelect').onchange = updateAiConfig;
+    document.getElementById('p1TypeSelect').onchange = updateAiConfig;
+
+    document.getElementById('stepSlider').oninput = (e) => {
+      if (isPlaying) togglePlay(false);
+      fetchStep(parseInt(e.target.value, 10));
+    };
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') stepNext();
+      if (e.key === 'ArrowLeft') stepPrev();
+      if (e.key === ' ') {
+        e.preventDefault();
+        togglePlay();
+      }
+    });
+
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/neural_status');
+        if (res.ok) {
+          const data = await res.json();
+          const dot = document.getElementById('neuralStatusDot');
+          if (dot) {
+            if (data.available) {
+              dot.style.color = '#22c55e';
+              dot.title = `神经网络推理服务在线 (${data.device || 'CUDA'})`;
+            } else {
+              dot.style.color = '#94a3b8';
+              dot.title = '神经网络推理微服务未连接';
+            }
+          }
+        }
+      } catch(e) {}
+    }, 5000);
+
+    fetchStatus();
+  </script>
+</body>
+</html>

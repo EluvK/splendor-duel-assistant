@@ -466,7 +466,23 @@ impl ReplaySession {
     }
 }
 
-fn format_action(action: &Action) -> String {
+pub fn action_category(action: &Action) -> &'static str {
+    match action {
+        Action::SkipOptional => "skip_optional",
+        Action::UsePrivilege { .. } => "use_privilege",
+        Action::ReplenishBoard => "replenish",
+        Action::TakeTokens { .. } => "take_tokens",
+        Action::ReserveCard { .. } => "reserve_card",
+        Action::PurchaseCard { .. } => "purchase_card",
+        Action::AssignJokerColor { .. } => "joker",
+        Action::TakeSameColorToken { .. } => "same_color",
+        Action::StealToken { .. } => "steal",
+        Action::SelectRoyal { .. } => "royal",
+        Action::DiscardToken { .. } => "discard",
+    }
+}
+
+pub fn format_action(action: &Action) -> String {
     match action {
         Action::SkipOptional => "Skip Optional".to_string(),
         Action::UsePrivilege { r, c } => format!("Use Privilege ({r}, {c})"),
