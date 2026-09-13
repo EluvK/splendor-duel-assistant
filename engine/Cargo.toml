@@ -27,3 +27,7 @@ python = ["dep:base64", "dep:numpy", "dep:pyo3"]
 [[bin]]
 name = "replay_web"
 path = "src/bin/replay_web.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
