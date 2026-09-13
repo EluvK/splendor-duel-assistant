@@ -30,6 +30,8 @@ def inspect_metadata(ckpt_path: Path) -> Dict[str, Any]:
     promoted = meta.get("promoted", None)
     c_wins = meta.get("candidate_wins", None)
     b_wins = meta.get("baseline_wins", None)
+    total_games = meta.get("total_games", None)
+    total_samples = meta.get("total_samples", None)
 
     # 模型参数量统计
     net = SplendorNet()
@@ -47,6 +49,8 @@ def inspect_metadata(ckpt_path: Path) -> Dict[str, Any]:
         "promoted": promoted,
         "candidate_wins": c_wins,
         "baseline_wins": b_wins,
+        "total_games": total_games,
+        "total_samples": total_samples,
         "meta": meta,
         "total_params": total_params,
         "trainable_params": trainable_params,
@@ -96,10 +100,13 @@ def run_benchmark(
             promo_str += f" ({info['candidate_wins']} 胜 / {info['baseline_wins']} 负)"
         print(promo_str)
 
-    # 估算数据量
-    if info["iteration"]:
+    # 统计数据量
+    if info["total_games"] is not None:
+        sample_str = f" ({info['total_samples']:,} 真实决策步)" if info["total_samples"] is not None else ""
+        print(f"   • 累计训练经历: {info['total_games']:,} 局对弈{sample_str}")
+    elif info["iteration"]:
         est_games = info["iteration"] * 100
-        print(f"   • 累计自博弈经历: 约 {est_games:,} 局对弈 (~{est_games * 160:,} 决策步)")
+        print(f"   • 累计自博弈经历 (估算): 约 {est_games:,} 局对弈 (~{est_games * 160:,} 决策步)")
     elif "train" in info["meta"]:
         print(f"   • 模仿学习最后指标: loss={info['meta']['train'].get('loss', 0):.4f}")
 
@@ -181,7 +188,7 @@ def parse_args() -> argparse.Namespace:
         default="checkpoints/best.pt",
         help="Path to the checkpoint file (default: checkpoints/best.pt)",
     )
-    parser.add_argument("--games", type=int, default=10, help="Total evaluation games for each benchmark (default: 10)")
+    parser.add_argument("--games", type=int, default=20, help="Total evaluation games for each benchmark (default: 20)")
     parser.add_argument("--device", type=str, default="auto", help="Compute device ('auto', 'cuda', 'cpu')")
     parser.add_argument("--mcts", action="store_true", help="Evaluate with MCTS search instead of pure PolicyNet")
     parser.add_argument("--sims", type=int, default=30, help="MCTS simulation count if --mcts is enabled")

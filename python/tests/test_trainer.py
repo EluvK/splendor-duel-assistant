@@ -66,8 +66,19 @@ def test_trainer_with_compact_dataset(tmp_path: Path):
     assert trainer.epoch == 2
 
     # 测试检查点
-    ckpt_path = trainer.save_checkpoint("compact_test.pt")
+    ckpt_path = trainer.save_checkpoint(
+        "compact_test.pt",
+        meta={"total_games": 10, "total_samples": batch.num_samples, "iteration": 1},
+    )
     assert ckpt_path.exists()
+
+    # 测试加载与元数据保持
+    net2 = SplendorNet(spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64)
+    trainer2 = Trainer(net2, cfg)
+    meta = trainer2.load_checkpoint(ckpt_path)
+    assert trainer2.epoch == 2
+    assert meta.get("total_games") == 10
+    assert meta.get("total_samples") == batch.num_samples
 
 
 def test_mcts_selfplay_compact_generation():

@@ -114,6 +114,7 @@ def train_imitation(args: argparse.Namespace) -> None:
         train_shards = all_shards
 
     print(f"📊 分片划分: 训练分片 = {len(train_shards)} 个 | 验证分片 = {val_shard.name}")
+    total_samples = buffer.count_total_samples()
 
     net = SplendorNet()
     cfg = TrainerConfig(
@@ -142,11 +143,18 @@ def train_imitation(args: argparse.Namespace) -> None:
         )
         val_metrics = trainer.evaluate_sharded(val_shard, batch_size=args.batch_size)
 
+        meta = {
+            "epoch": ep,
+            "total_games": args.games,
+            "total_samples": total_samples,
+            "train": train_metrics,
+            "val": val_metrics,
+        }
         is_best = val_metrics["eval_loss"] < best_val_loss
         if is_best:
             best_val_loss = val_metrics["eval_loss"]
-            trainer.save_checkpoint(f"epoch_{ep:03d}.pt", is_best=True, meta={"epoch": ep, "train": train_metrics, "val": val_metrics})
-        trainer.save_checkpoint("latest.pt", is_best=False, meta={"epoch": ep, "train": train_metrics, "val": val_metrics})
+            trainer.save_checkpoint(f"epoch_{ep:03d}.pt", is_best=True, meta=meta)
+        trainer.save_checkpoint("latest.pt", is_best=False, meta=meta)
 
         top1_str = f"{train_metrics['top1_acc']*100:.1f}%"
         top3_str = f"{train_metrics['top3_acc']*100:.1f}%"
@@ -178,20 +186,32 @@ def train_selfplay(args: argparse.Namespace) -> None:
     # 1. 初始化基准模型 (若指定 resume 或已有 best.pt 则热启)
     baseline_net = SplendorNet().to(device)
     start_iter = 1
+    last_epoch = 0
+    total_games = 0
+    total_samples = 0
+    ckpt_loaded = None
+
     if args.resume and Path(args.resume).exists():
-        checkpoint = torch.load(args.resume, map_location=device)
-        baseline_net.load_state_dict(checkpoint["model_state"])
-        last_it = checkpoint.get("meta", {}).get("iteration", 0)
-        start_iter = last_it + 1
-        print(f"🔄 从指定检查点恢复基准模型: {args.resume} (已完成迭代: {last_it}, Epoch: {checkpoint.get('epoch', 0)})")
+        ckpt_loaded = torch.load(args.resume, map_location=device)
+        print(f"🔄 从指定检查点恢复基准模型: {args.resume}")
     elif best_path.exists():
-        checkpoint = torch.load(best_path, map_location=device)
-        baseline_net.load_state_dict(checkpoint["model_state"])
-        last_it = checkpoint.get("meta", {}).get("iteration", 0)
-        start_iter = last_it + 1
-        print(f"🏆 成功加载现有基准冠军模型: {best_path} (已完成迭代: {last_it}, Epoch: {checkpoint.get('epoch', 0)})")
+        ckpt_loaded = torch.load(best_path, map_location=device)
+        print(f"🏆 成功加载现有基准冠军模型: {best_path}")
     else:
         print("🌱 未发现已存模型，从随机初始网络开始自对弈...")
+
+    if ckpt_loaded is not None:
+        baseline_net.load_state_dict(ckpt_loaded["model_state"])
+        last_meta = ckpt_loaded.get("meta", {})
+        last_it = last_meta.get("iteration", 0)
+        start_iter = last_it + 1
+        last_epoch = ckpt_loaded.get("epoch", 0)
+        total_games = last_meta.get("total_games", last_it * args.games_per_iter)
+        total_samples = last_meta.get("total_samples", 0)
+        print(
+            f"   📊 继承历史档案: 已完成迭代 {last_it} 轮 | 累计 Epoch: {last_epoch} | "
+            f"累计对局: {total_games:,} 局 | 累计样本: {total_samples:,} 步"
+        )
 
     # 候选训练模型
     candidate_net = SplendorNet().to(device)
@@ -207,6 +227,7 @@ def train_selfplay(args: argparse.Namespace) -> None:
         t_max_epochs=args.iterations * args.train_epochs,
     )
     trainer = Trainer(candidate_net, cfg)
+    trainer.epoch = last_epoch
 
     # 2. 迭代飞轮
     end_iter = start_iter + args.iterations - 1
@@ -229,6 +250,9 @@ def train_selfplay(args: argparse.Namespace) -> None:
         if batch.num_samples == 0:
             print("   ⚠️ 样本采集为空，跳过本轮训练。")
             continue
+
+        total_games += args.games_per_iter
+        total_samples += batch.num_samples
 
         # (B) 候选模型拟合更新
         print(f"2. 训练候选模型 ({args.train_epochs} Epochs)...")
@@ -256,24 +280,28 @@ def train_selfplay(args: argparse.Namespace) -> None:
         )
 
         # 晋升判定
-        if win_rate >= args.promote_threshold:
+        promoted = win_rate >= args.promote_threshold
+        meta = {
+            "iteration": it,
+            "total_games": total_games,
+            "total_samples": total_samples,
+            "win_rate": win_rate,
+            "promoted": promoted,
+            "candidate_wins": match_result.agent0_wins,
+            "baseline_wins": match_result.agent1_wins,
+        }
+
+        if promoted:
             print(f"   🎉 胜率达到 {win_rate*100:.1f}% (>= {args.promote_threshold*100:.0f}%) -> 晋升为新主力！🌟")
             baseline_net.load_state_dict(candidate_net.state_dict())
             iter_filename = f"iter_{it:03d}.pt"
-            meta = {
-                "iteration": it,
-                "win_rate": win_rate,
-                "promoted": True,
-                "candidate_wins": match_result.agent0_wins,
-                "baseline_wins": match_result.agent1_wins,
-            }
             trainer.save_checkpoint(iter_filename, is_best=True, meta=meta)
             print(f"   💾 成功归档晋升存档: {ckpt_dir / iter_filename} 并同步更新主力 {best_path}")
         else:
             print(f"   ⚠️ 胜率 {win_rate*100:.1f}% 未达门禁要求 ({args.promote_threshold*100:.0f}%) -> 淘汰放弃，保留原基准重新探索。")
             candidate_net.load_state_dict(baseline_net.state_dict())
 
-        trainer.save_checkpoint("latest.pt", is_best=False, meta={"iteration": it, "win_rate": win_rate})
+        trainer.save_checkpoint("latest.pt", is_best=False, meta=meta)
 
     print(f"\n🏁 全部自博弈迭代完成！终局最强模型位于 {best_path}")
 
