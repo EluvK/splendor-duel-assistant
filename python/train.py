@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--promote-threshold", type=float, default=0.55, help="Win-rate threshold to promote candidate to best")
 
     # 训练超参数
-    parser.add_argument("--batch-size", type=int, default=512, help="Batch size for training")
+    parser.add_argument("--batch-size", type=int, default=4096, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="L2 weight decay")
     parser.add_argument("--device", type=str, default="auto", help="Compute device ('auto', 'cuda', 'cpu')")
