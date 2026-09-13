@@ -6,10 +6,10 @@ use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard, RoyalAbili
 use crate::model::token::GemType;
 
 /// 观察向量维度
-pub const OBS_SIZE: usize = 725;
+pub const OBS_SIZE: usize = 726;
 
 /// 动作空间大小（离散动作总维度）
-pub const ACTION_SIZE: usize = 256;
+pub const ACTION_SIZE: usize = 288;
 
 /// 预计算 5x5 网格中所有 120 种可能的 2~3 连线几何线段
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,7 +188,7 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     offset += 84;
 
     // -------------------------------------------------------------
-    // 分块 5: 全局环境与阶段 (16 维) [709..725]
+    // 分块 5: 全局环境与阶段 (17 维) [709..726]
     // -------------------------------------------------------------
     match state.phase {
         TurnPhase::OptionalActions => out[offset] = 1.0,
@@ -198,16 +198,17 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
         TurnPhase::CardAbilitySteal => out[offset + 4] = 1.0,
         TurnPhase::SelectRoyalCard => out[offset + 5] = 1.0,
         TurnPhase::DiscardTokens => out[offset + 6] = 1.0,
-        TurnPhase::GameOver(_) => out[offset + 7] = 1.0,
+        TurnPhase::SelectReserveGold => out[offset + 7] = 1.0,
+        TurnPhase::GameOver(_) => out[offset + 8] = 1.0,
     }
-    out[offset + 8] = state.privilege_pool as f32 / 3.0;
-    out[offset + 9] = state.bag.len() as f32 / 25.0;
-    out[offset + 10] = state.board.count_tokens() as f32 / 25.0;
-    out[offset + 11] = (state.turn_number as f32 / 60.0).min(1.0);
-    out[offset + 12] = if state.extra_turn_granted { 1.0 } else { 0.0 };
-    out[offset + 13] = state.decks[0].len() as f32 / 30.0;
-    out[offset + 14] = state.decks[1].len() as f32 / 24.0;
-    out[offset + 15] = state.decks[2].len() as f32 / 13.0;
+    out[offset + 9] = state.privilege_pool as f32 / 3.0;
+    out[offset + 10] = state.bag.len() as f32 / 25.0;
+    out[offset + 11] = state.board.count_tokens() as f32 / 25.0;
+    out[offset + 12] = (state.turn_number as f32 / 60.0).min(1.0);
+    out[offset + 13] = if state.extra_turn_granted { 1.0 } else { 0.0 };
+    out[offset + 14] = state.decks[0].len() as f32 / 30.0;
+    out[offset + 15] = state.decks[1].len() as f32 / 24.0;
+    out[offset + 16] = state.decks[2].len() as f32 / 13.0;
 
     out
 }
@@ -318,10 +319,11 @@ pub fn action_to_id(action: &Action) -> usize {
         Action::StealToken { gem } => 232 + gem.index(),
         Action::SelectRoyal { royal_id } => 239 + (*royal_id as usize),
         Action::DiscardToken { gem } => 243 + gem.index(),
+        Action::TakeGoldToken { r, c } => 250 + (r * 5 + c),
     }
 }
 
-/// 生成合法动作掩码 [bool; 256]
+/// 生成合法动作掩码 [bool; ACTION_SIZE]
 pub fn action_mask(state: &GameState) -> [bool; ACTION_SIZE] {
     let mut mask = [false; ACTION_SIZE];
     let legals = RuleEngine::legal_actions(state);

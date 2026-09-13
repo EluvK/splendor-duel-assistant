@@ -89,8 +89,8 @@ def generate_selfplay_compact_batch(
                     all_values.append(1.0 if ply_s == winner else -1.0)
 
     total_steps = len(all_actions)
-    obs_arr = np.array(all_obs, dtype=np.float32) if total_steps > 0 else np.zeros((0, 725), dtype=np.float32)
-    masks_arr = np.array(all_masks, dtype=bool) if total_steps > 0 else np.zeros((0, 256), dtype=bool)
+    obs_arr = np.array(all_obs, dtype=np.float32) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32)
+    masks_arr = np.array(all_masks, dtype=bool) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool)
     actions_arr = np.array(all_actions, dtype=np.int64)
     values_arr = np.array(all_values, dtype=np.float32).reshape(-1, 1)
 

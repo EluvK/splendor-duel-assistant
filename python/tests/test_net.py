@@ -12,16 +12,16 @@ def test_net_forward_shapes():
     net = SplendorNet(spatial_channels=32, num_res_blocks=2)
 
     # 单样本前向
-    single_obs = torch.randn(725)
+    single_obs = torch.randn(726)
     logits, value = net(single_obs)
-    assert logits.shape == (1, 256)
+    assert logits.shape == (1, 288)
     assert value.shape == (1, 1)
     assert (-1.0 <= value.item() <= 1.0)
 
     # 批处理前向 (Batch Size = 8)
-    batch_obs = torch.randn(8, 725)
+    batch_obs = torch.randn(8, 726)
     batch_logits, batch_value = net(batch_obs)
-    assert batch_logits.shape == (8, 256)
+    assert batch_logits.shape == (8, 288)
     assert batch_value.shape == (8, 1)
     assert (batch_value >= -1.0).all() and (batch_value <= 1.0).all()
 
@@ -36,7 +36,7 @@ def test_net_action_masking():
 
     probs, value = net.predict_action_probs(obs_t, mask_t)
 
-    assert probs.shape == (1, 256)
+    assert probs.shape == (1, 288)
     probs_np = probs.detach().cpu().numpy()[0]
 
     # 验证非法动作的概率为 0

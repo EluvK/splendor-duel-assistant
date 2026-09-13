@@ -221,6 +221,12 @@ impl HeuristicAI {
                     p.tokens.get(*gem) as f32 * 5.0
                 }
             }
+
+            Action::TakeGoldToken { r, c } => {
+                // 评估拿黄金：靠近中心的黄金先拿（释放中央螺旋空格）
+                let dist_to_center = (*r as isize - 2).abs() + (*c as isize - 2).abs();
+                50.0 - dist_to_center as f32 * 2.0
+            }
         }
     }
 }

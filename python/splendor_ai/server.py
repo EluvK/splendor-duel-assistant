@@ -251,9 +251,9 @@ def make_handler(service: ModelInferenceService):
                     mask = data.get("mask")
                     temp = float(data.get("temperature", 1.0))
 
-                    if not obs or not mask or len(obs) != 725 or len(mask) != 256:
+                    if not obs or not mask or len(obs) != SplendorDuelEnv.OBS_SIZE or len(mask) != SplendorDuelEnv.ACTION_SIZE:
                         self._send_json(400, {
-                            "error": f"Invalid obs length ({len(obs) if obs else 0}/725) or mask length ({len(mask) if mask else 0}/256)"
+                            "error": f"Invalid obs length ({len(obs) if obs else 0}/{SplendorDuelEnv.OBS_SIZE}) or mask length ({len(mask) if mask else 0}/{SplendorDuelEnv.ACTION_SIZE})"
                         })
                         return
 

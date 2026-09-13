@@ -22,11 +22,11 @@ from splendor_ai import (
 def test_heuristic_compact_generation():
     batch = generate_heuristic_compact_batch(num_games=5, start_seed=42)
     assert batch.num_samples > 0
-    assert batch.obs.shape == (batch.num_samples, 725)
-    assert batch.mask.shape == (batch.num_samples, 256)
+    assert batch.obs.shape == (batch.num_samples, 726)
+    assert batch.mask.shape == (batch.num_samples, 288)
     assert batch.action.shape == (batch.num_samples,)
     assert batch.value.shape == (batch.num_samples, 1)
-    assert (batch.action >= 0).all() and (batch.action < 256).all()
+    assert (batch.action >= 0).all() and (batch.action < 288).all()
 
 
 def test_sharded_buffer(tmp_path: Path):
@@ -84,4 +84,4 @@ def test_trainer_with_compact_dataset(tmp_path: Path):
 def test_mcts_selfplay_compact_generation():
     batch = generate_mcts_selfplay_compact_batch(num_games=2, num_simulations=10, start_seed=42)
     assert batch.num_samples > 0
-    assert batch.obs.shape[1] == 725
+    assert batch.obs.shape[1] == 726

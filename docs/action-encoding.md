@@ -20,16 +20,16 @@
 
 ---
 
-## 二、状态特征张量布局 (Total: 665 Float32)
+## 二、状态特征张量布局 (Total: 726 Float32)
 
-全局状态由 5 大特征分块组成，展平总维度为 **665 维**：
+全局状态由 5 大特征分块组成，展平总维度为 **726 维**：
 
 ```
-[0..200]    分块 1: 5×5 棋盘空间 (8 通道 × 25 格)
-[200..545]  分块 2: 金字塔市场卡牌 (15 槽位 × 23 维)
-[545..565]  分块 3: 场上王室卡 (4 槽位 × 5 维)
-[565..649]  分块 4: 双方玩家状态 (2 玩家 × 42 维)
-[649..665]  分块 5: 全局环境与阶段 (16 维)
+[0..200]    分块 1: 5×5 棋盘空间 (8 通道 × 25 格 = 200 维)
+[200..605]  分块 2: 金字塔市场卡牌 (15 槽位 × 27 维 = 405 维)
+[605..625]  分块 3: 场上王室卡 (4 槽位 × 5 维 = 20 维)
+[625..709]  分块 4: 双方玩家状态 (2 玩家 × 42 维 = 84 维)
+[709..726]  分块 5: 全局环境与阶段 (17 维)
 ```
 
 ### 1. 棋盘空间张量 (200 维)
@@ -78,18 +78,18 @@
   - 3 冠里程碑是否已达成 (bool)
 - `[24..41]`: 预留手牌 (3 槽位 × 6 维): `[present, is_public, points/6, crowns/3, bonus_color/5, can_afford]`
 
-### 5. 全局环境与阶段 (16 维)
-- `[0..7]`: `TurnPhase` (8-way One-Hot)
-- `[8]`: `privilege_pool / 3.0`
-- `[9]`: `bag_count / 25.0`
-- `[10]`: `board_token_count / 25.0`
-- `[11]`: `turn_number_norm` (`min(1.0, turn / 60.0)`)
-- `[12]`: `extra_turn_granted` (1.0 或 0.0)
-- `[13..15]`: 牌堆剩余比例 `[deck1/30, deck2/24, deck3/13]`
+### 5. 全局环境与阶段 (17 维)
+- `[0..8]`: `TurnPhase` (9-way One-Hot: OptionalActions, MandatoryAction, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens, SelectReserveGold, GameOver)
+- `[9]`: `privilege_pool / 3.0`
+- `[10]`: `bag_count / 25.0`
+- `[11]`: `board_token_count / 25.0`
+- `[12]`: `turn_number_norm` (`min(1.0, turn / 60.0)`)
+- `[13]`: `extra_turn_granted` (1.0 或 0.0)
+- `[14..16]`: 牌堆剩余比例 `[deck1/30, deck2/24, deck3/13]`
 
 ---
 
-## 三、动作空间 (Action Space) 离散编码 (245 维)
+## 三、动作空间 (Action Space) 离散编码 (288 维)
 
 ```
 ID 范围         动作语义
@@ -98,17 +98,18 @@ ID 范围         动作语义
 [1..=25]        UsePrivilege (棋盘 25 个坐标)
 [26]            ReplenishBoard (补充棋盘)
 [27..=51]       TakeTokens: 单个标记 (25 个坐标)
-[52..=136]      TakeTokens: 直线相邻 2~3 连线 (85 种直线组合)
-[137..=148]     ReserveCard: 金字塔明牌 (12 个槽位)
-[149..=151]     ReserveCard: 牌堆顶盲抽 (3 个等级)
-[152..=163]     PurchaseCard: 金字塔明牌 (12 个槽位)
-[164..=166]     PurchaseCard: 自己预留卡 (3 个槽位)
-[167..=171]     AssignJokerColor: 变色卡附着颜色 (5 种基础颜色)
-[172..=196]     TakeSameColorToken: 盘上取同色 (25 个坐标)
-[197..=202]     StealToken: 偷对手标记 (5 种宝石 + 珍珠)
-[203..=206]     SelectRoyal: 选择王室卡 (4 个槽位)
-[207..=213]     DiscardToken: 超限弃牌 (7 类标记)
-[214..=244]     预留空间
+[52..=171]      TakeTokens: 直线相邻 2~3 连线 (120 种几何直线组合)
+[172..=183]     ReserveCard: 金字塔明牌 (12 个槽位)
+[184..=186]     ReserveCard: 牌堆顶盲抽 (3 个等级)
+[187..=198]     PurchaseCard: 金字塔明牌 (12 个槽位)
+[199..=201]     PurchaseCard: 自己预留卡 (3 个槽位)
+[202..=206]     AssignJokerColor: 变色卡附着颜色 (5 种基础颜色)
+[207..=231]     TakeSameColorToken: 盘上取同色 (25 个坐标)
+[232..=238]     StealToken: 偷对手标记 (5 种宝石 + 珍珠 + 黄金)
+[239..=242]     SelectRoyal: 选择王室卡 (4 个槽位)
+[243..=249]     DiscardToken: 超限弃牌 (7 类标记)
+[250..=274]     TakeGoldToken: 预留卡牌连锁选择拿取黄金 (棋盘 25 个坐标)
+[275..=287]     预留对齐空间 (13 维)
 ----------------------------------------------------------------------
-总动作空间大小 NUM_ACTIONS = 245
+总动作空间大小 ACTION_SIZE = 288
 ```

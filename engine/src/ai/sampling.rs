@@ -13,7 +13,7 @@ use crate::gameplay::engine::GameEngine;
 struct SingleGameTrajectory {
     obs: Vec<f32>,     // steps * OBS_SIZE
     masks: Vec<u8>,    // steps * ACTION_SIZE (0 或 1)
-    actions: Vec<u8>,  // steps (0..255)
+    actions: Vec<i32>, // steps (0..ACTION_SIZE-1)
     values: Vec<f32>,  // steps (-1.0 或 1.0)
     steps: usize,
 }
@@ -23,7 +23,7 @@ pub struct CompactBatchSamples {
     pub total_steps: usize,
     pub obs: Vec<f32>,
     pub masks: Vec<u8>,
-    pub actions: Vec<u8>,
+    pub actions: Vec<i32>,
     pub values: Vec<f32>,
 }
 
@@ -57,7 +57,7 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
         for &b in mask.iter() {
             raw_masks.push(if b { 1 } else { 0 });
         }
-        raw_actions.push(action_id as u8);
+        raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
 
         if GameEngine::step(&mut game, &action).is_err() {
@@ -145,7 +145,7 @@ fn simulate_single_mcts_game(
         for &b in mask.iter() {
             raw_masks.push(if b { 1 } else { 0 });
         }
-        raw_actions.push(action_id as u8);
+        raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
 
         if GameEngine::step(&mut game, &action).is_err() {

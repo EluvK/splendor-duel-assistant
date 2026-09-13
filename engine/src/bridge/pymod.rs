@@ -165,7 +165,7 @@ pub fn generate_heuristic_samples<'py>(
 ) -> PyResult<(
     Bound<'py, numpy::PyArray1<f32>>,
     Bound<'py, numpy::PyArray1<u8>>,
-    Bound<'py, numpy::PyArray1<u8>>,
+    Bound<'py, numpy::PyArray1<i32>>,
     Bound<'py, numpy::PyArray1<f32>>,
     usize,
 )> {
@@ -191,7 +191,7 @@ pub fn generate_mcts_samples<'py>(
 ) -> PyResult<(
     Bound<'py, numpy::PyArray1<f32>>,
     Bound<'py, numpy::PyArray1<u8>>,
-    Bound<'py, numpy::PyArray1<u8>>,
+    Bound<'py, numpy::PyArray1<i32>>,
     Bound<'py, numpy::PyArray1<f32>>,
     usize,
 )> {
