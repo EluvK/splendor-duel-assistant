@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+commit_msg_file="$1"
+commit_msg=$(head -n 1 "$commit_msg_file")
+
+# 忽略 Merge 或 Revert 提交
+if [[ "$commit_msg" =~ ^(Merge|Revert) ]]; then
+    exit 0
+fi
+
+# 在此集中维护允许的前缀，未来只需在此增删
+ALLOWED_PREFIXES=(
+    engine
+    docs
+    python
+    bugfix
+    perf
+    refactor
+    reference
+    chore
+)
+
+# 动态生成正则与提示文本
+PREFIX_REGEX=$(IFS="|"; echo "${ALLOWED_PREFIXES[*]}")
+pattern="^(${PREFIX_REGEX})(,(${PREFIX_REGEX}))*: .+$"
+
+if ! [[ "$commit_msg" =~ $pattern ]]; then
+    PREFIX_DISPLAY=$(IFS=", "; echo "${ALLOWED_PREFIXES[*]}")
+    echo "❌ Commit message 不符合项目规范！" >&2
+    echo "当前提交信息: $commit_msg" >&2
+    echo "规范格式: <prefix1>[,<prefix2>...]: <description>" >&2
+    echo "允许前缀: $PREFIX_DISPLAY" >&2
+    echo "正确示例: engine,docs: xxxxxxxxx" >&2
+    echo "========================================================" >&2
+    exit 1
+fi

@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["engine"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# for local development
+[profile.fast-release]
+inherits = "release"
+opt-level = 3          # 保持最高的代码优化级别（运行速度几乎不受影响）
+lto = false            # 关闭全局 LTO，省去 70%+ 的链接时间
+codegen-units = 16     # 开启多核并行编译（默认值通常为 16）

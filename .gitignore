@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pdb
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Rust
+target/
+Cargo.lock
+
+# Node
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data / models (大文件不入库)
+models/
+checkpoints/
+*.pt
+*.onnx
+*.bin
+data/games/
+logs/
+
+# Local
+.env

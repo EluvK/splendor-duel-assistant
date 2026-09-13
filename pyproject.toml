@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "splendor-duel-assistant"
+version = "0.1.0"
+requires-python = ">=3.9,<3.13"
+dependencies = ["numpy", "torch"]
+
+[project.optional-dependencies]
+dev = ["pytest", "maturin"]
+
+[tool.uv]
+extra-index-url = ["https://download.pytorch.org/whl/cu124"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "splendor_ai._engine"
+manifest-path = "engine/Cargo.toml"
+features = ["pyo3/extension-module"]
