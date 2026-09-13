@@ -1,5 +1,6 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use rand::SeedableRng;
 
 use super::encode::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 use crate::game_state::phase::TurnPhase;
@@ -121,6 +122,14 @@ impl PyGameState {
             self.state.players[0].total_crowns,
             self.state.players[1].total_crowns,
         )
+    }
+
+    /// 获取启发式 AI 在当前盘面下选择的动作 ID
+    #[pyo3(signature = (seed=42))]
+    pub fn heuristic_action_id(&self, seed: u64) -> Option<usize> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+        crate::ai::HeuristicAI::select_action(&self.state, &mut rng)
+            .map(|a| action_to_id(&a))
     }
 
     #[staticmethod]

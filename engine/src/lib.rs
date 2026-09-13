@@ -4,7 +4,9 @@ pub mod game_state;
 pub mod gameplay;
 pub mod model;
 
-pub use ai::{CardDto, PlayerDto, RandomAI, ReplaySession, ReplayStep, RoyalDto, StateDto};
+pub use ai::{
+    CardDto, HeuristicAI, PlayerDto, RandomAI, ReplaySession, ReplayStep, RoyalDto, StateDto,
+};
 pub use bridge::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 #[cfg(feature = "python")]
 pub use bridge::PyGameState;

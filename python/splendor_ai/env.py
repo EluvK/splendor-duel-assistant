@@ -100,6 +100,10 @@ class SplendorDuelEnv:
     def is_done(self) -> bool:
         return self.game.is_done()
 
+    def heuristic_action(self, seed: int = 42) -> Optional[int]:
+        """获取启发式 AI 推荐的动作 ID."""
+        return self.game.heuristic_action_id(seed)
+
     def clone(self) -> "SplendorDuelEnv":
         """深拷贝环境，用于 MCTS 搜索分支模拟."""
         new_env = SplendorDuelEnv.__new__(SplendorDuelEnv)

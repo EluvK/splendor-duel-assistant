@@ -1,4 +1,4 @@
-use _engine::{GameEngine, GameState, RandomAI, TurnPhase, VictoryReason};
+use _engine::{GameEngine, GameState, HeuristicAI, RandomAI, TurnPhase, VictoryReason};
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
@@ -12,26 +12,43 @@ fn main() {
         .expect("Failed to build rayon thread pool");
 
     println!("============================================================");
-    println!("🚀 《璀璨宝石：对决》Rust 游戏引擎性能基准测试 (Release 模式)");
+    println!("🚀 《璀璨宝石：对决》Rust 性能基准测试 (Release 模式)");
     println!("⚙️  并发配置: {num_threads} 线程并行");
     println!("============================================================");
 
-    // 预热 1,000 局
-    println!("正在预热 JIT 与 CPU 缓存 (1,000 局)...");
-    (0..1_000).into_par_iter().for_each(|seed| {
+    // -------------------------------------------------------------
+    // 测试组 1: 纯随机 AI vs 纯随机 AI (10,000 局)
+    // -------------------------------------------------------------
+    println!("\n▶️  [测试组 1] 纯随机 AI 自博弈 (10,000 局)");
+    run_benchmark("RandomAI vs RandomAI", 10_000, |game, rng| {
+        RandomAI::select_action(game, rng)
+    });
+
+    // -------------------------------------------------------------
+    // 测试组 2: 启发式 AI vs 启发式 AI (20,000 局)
+    // -------------------------------------------------------------
+    println!("\n▶️  [测试组 2] 启发式 AI 自博弈 (20,000 局)");
+    run_benchmark("HeuristicAI vs HeuristicAI", 20_000, |game, rng| {
+        HeuristicAI::select_action(game, rng)
+    });
+}
+
+fn run_benchmark<F>(name: &str, total_games: usize, select_fn: F)
+where
+    F: Fn(&GameState, &mut ChaCha8Rng) -> Option<_engine::Action> + Sync + Send,
+{
+    // 预热 500 局
+    (0..500).into_par_iter().for_each(|seed| {
         let mut game = GameState::new_game(seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         while !matches!(game.phase, TurnPhase::GameOver(_)) {
-            if let Some(action) = RandomAI::select_action(&game, &mut rng) {
+            if let Some(action) = select_fn(&game, &mut rng) {
                 let _ = GameEngine::step(&mut game, &action);
             } else {
                 break;
             }
         }
     });
-
-    let total_games: usize = 100_000;
-    println!("开始正式基准测试: 总对局数 = {total_games} 局...\n");
 
     let start_time = Instant::now();
 
@@ -47,7 +64,7 @@ fn main() {
                 if steps > 2000 {
                     break;
                 }
-                if let Some(action) = RandomAI::select_action(&game, &mut rng) {
+                if let Some(action) = select_fn(&game, &mut rng) {
                     let _ = GameEngine::step(&mut game, &action);
                 } else {
                     break;
@@ -63,8 +80,7 @@ fn main() {
         })
         .collect();
 
-    let duration = start_time.elapsed();
-    let elapsed_sec = duration.as_secs_f64();
+    let elapsed_sec = start_time.elapsed().as_secs_f64();
 
     let mut total_steps: u64 = 0;
     let mut reason_20_pts = 0;
@@ -94,21 +110,13 @@ fn main() {
     let min_steps = step_list[0];
     let max_steps = step_list[total_games - 1];
 
-    println!("================== 测试结果汇总 ==================");
+    println!("------------------ {name} 汇总 ------------------");
     println!("⏱️  总耗时:           {elapsed_sec:.3} 秒");
     println!("🔥  对局吞吐量 (GPS):   {games_per_sec:.1} 局/秒");
     println!("⚡  状态转移吞吐 (SPS): {steps_per_sec:.1} 步/秒 ({:.2} 万步/秒)", steps_per_sec / 10000.0);
-    println!("--------------------------------------------------");
-    println!("📊  平均对局步数:       {avg_steps:.1} 步");
-    println!("    - 最短对局:         {min_steps} 步");
-    println!("    - 中位数 (P50):     {p50} 步");
-    println!("    - P90 步数:         {p90} 步");
-    println!("    - P99 步数:         {p99} 步");
-    println!("    - 最长对局:         {max_steps} 步");
-    println!("--------------------------------------------------");
+    println!("📊  平均对局步数:       {avg_steps:.1} 步 (P50: {p50}, P90: {p90}, P99: {p99}, Min: {min_steps}, Max: {max_steps})");
     println!("🏆  胜利条件分布:");
     println!("    - 20 声望获胜:      {reason_20_pts} 局 ({:.2}%)", reason_20_pts as f64 / total_games as f64 * 100.0);
     println!("    - 10 王冠获胜:      {reason_10_crowns} 局 ({:.2}%)", reason_10_crowns as f64 / total_games as f64 * 100.0);
     println!("    - 单色 10 分获胜:   {reason_single_color} 局 ({:.2}%)", reason_single_color as f64 / total_games as f64 * 100.0);
-    println!("==================================================");
 }
