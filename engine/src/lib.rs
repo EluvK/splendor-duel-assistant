@@ -1,9 +1,11 @@
 pub mod ai;
+pub mod bridge;
 pub mod game_state;
 pub mod gameplay;
 pub mod model;
 
 pub use ai::{CardDto, PlayerDto, RandomAI, ReplaySession, ReplayStep, RoyalDto, StateDto};
+pub use bridge::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 pub use game_state::{Board, GameState, PlayerState, TurnPhase, VictoryReason};
 pub use gameplay::{check_victory, compute_card_payment, GameEngine, RuleEngine};
 pub use model::{
