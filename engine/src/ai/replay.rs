@@ -253,6 +253,27 @@ impl ReplaySession {
         *self = Self::new(seed);
     }
 
+    /// 批量推进 N 步，返回实际推进的步数
+    pub fn step_n(&mut self, n: usize) -> Result<usize, String> {
+        let mut count = 0;
+        for _ in 0..n {
+            if matches!(self.live_game.phase, TurnPhase::GameOver(_)) {
+                break;
+            }
+            if self.step()? {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        Ok(count)
+    }
+
+    /// 自动推进直到游戏结束或达到最大步数限制（如 1500 步）
+    pub fn play_to_end(&mut self, max_steps: usize) -> Result<usize, String> {
+        self.step_n(max_steps)
+    }
+
     /// 执行一步随机/策略动作并记录快照
     pub fn step(&mut self) -> Result<bool, String> {
         if matches!(self.live_game.phase, TurnPhase::GameOver(_)) {

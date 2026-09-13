@@ -76,22 +76,47 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 单步推进
+        // API: 单步推进或批量推进
         ("POST", "/api/step") | ("GET", "/api/step_next") => {
+            let mut count: usize = 1;
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "count" {
+                        count = v.parse::<usize>().unwrap_or(1);
+                    }
+                }
+            }
+
             let mut sess = session.write().unwrap();
-            match sess.step() {
-                Ok(advanced) => {
+            let prev_len = sess.history.len();
+            match sess.step_n(count) {
+                Ok(advanced_count) => {
                     let last_step = sess.history.last().unwrap().clone();
+                    let new_steps: Vec<StepSummary> = sess.history[prev_len..]
+                        .iter()
+                        .map(|s| StepSummary {
+                            index: s.step_index,
+                            player: s.player,
+                            action: s.action_desc.clone(),
+                            phase: s.phase.clone(),
+                        })
+                        .collect();
+
                     #[derive(Serialize)]
                     struct StepResult {
                         advanced: bool,
+                        advanced_count: usize,
                         total_steps: usize,
                         step: _engine::ReplayStep,
+                        new_steps: Vec<StepSummary>,
                     }
                     let res = StepResult {
-                        advanced,
+                        advanced: advanced_count > 0,
+                        advanced_count,
                         total_steps: sess.history.len(),
                         step: last_step,
+                        new_steps,
                     };
                     let json = serde_json::to_vec(&res).unwrap();
                     respond(&mut stream, "200 OK", &json, "application/json");
@@ -103,20 +128,44 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             }
         }
 
+        // API: 一键推至终局
+        ("POST", "/api/play_to_end") | ("GET", "/api/play_to_end") => {
+            let mut sess = session.write().unwrap();
+            let _ = sess.play_to_end(2000);
+            let last_step = sess.history.last().unwrap().clone();
+            #[derive(Serialize)]
+            struct EndResult {
+                total_steps: usize,
+                step: _engine::ReplayStep,
+            }
+            let res = EndResult {
+                total_steps: sess.history.len(),
+                step: last_step,
+            };
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
         // API: 重置对局
         ("POST", "/api/reset") | ("GET", "/api/reset") => {
             let mut seed: u64 = 42;
+            let mut play_to_end = false;
             for param in query.split('&') {
                 let mut kv = param.split('=');
                 if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
                     if k == "seed" {
                         seed = v.parse::<u64>().unwrap_or(42);
+                    } else if k == "play_to_end" {
+                        play_to_end = v == "true" || v == "1";
                     }
                 }
             }
 
             let mut sess = session.write().unwrap();
             sess.reset(seed);
+            if play_to_end {
+                let _ = sess.play_to_end(2000);
+            }
             let json = serde_json::to_vec(&sess.current_state()).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
         }
