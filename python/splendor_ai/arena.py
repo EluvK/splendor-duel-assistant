@@ -41,7 +41,7 @@ class Arena:
         self.agent1_name = agent1_name
 
     def play_game(
-        self, seed: int, player0: Agent, player1: Agent, max_steps: int = 1500
+        self, seed: int, player0: Agent, player1: Agent, max_steps: int = 400
     ) -> Tuple[Optional[int], int]:
         """单局对抗 (返回 winner: 0 或 1, 对局步数)."""
         env = SplendorDuelEnv(seed=seed, max_steps=max_steps)

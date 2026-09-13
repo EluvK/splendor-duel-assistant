@@ -3,6 +3,7 @@ use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
 
 use crate::ai::heuristic_ai::HeuristicAI;
+use crate::ai::mcts::RustMCTS;
 use crate::bridge::encode::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
@@ -39,7 +40,7 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
         steps += 1;
         if steps > 1500 {
-            return None; // 极端保护
+            return None;
         }
 
         let acting_player = game.current_player;
@@ -80,11 +81,104 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     })
 }
 
-/// 并行采样 N 局启发式对决数据
+/// 并行采样 N 局启发式对决数据 (8 线程全速)
 pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> CompactBatchSamples {
     let trajectories: Vec<SingleGameTrajectory> = (0..num_games)
         .into_par_iter()
         .filter_map(|idx| simulate_single_heuristic_game(start_seed + idx as u64))
+        .collect();
+
+    let total_steps: usize = trajectories.iter().map(|t| t.steps).sum();
+
+    let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
+    let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_actions = Vec::with_capacity(total_steps);
+    let mut all_values = Vec::with_capacity(total_steps);
+
+    for t in trajectories {
+        all_obs.extend(t.obs);
+        all_masks.extend(t.masks);
+        all_actions.extend(t.actions);
+        all_values.extend(t.values);
+    }
+
+    CompactBatchSamples {
+        total_steps,
+        obs: all_obs,
+        masks: all_masks,
+        actions: all_actions,
+        values: all_values,
+    }
+}
+
+fn simulate_single_mcts_game(
+    mcts: &RustMCTS,
+    num_sims: usize,
+    seed: u64,
+) -> Option<SingleGameTrajectory> {
+    let mut game = GameState::new_game(seed);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+    let mut raw_obs = Vec::with_capacity(200 * OBS_SIZE);
+    let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
+    let mut raw_actions = Vec::with_capacity(200);
+    let mut raw_players = Vec::with_capacity(200);
+    let mut steps = 0;
+
+    while !matches!(game.phase, TurnPhase::GameOver(_)) {
+        steps += 1;
+        if steps > 1500 {
+            return None;
+        }
+
+        let acting_player = game.current_player;
+        let obs = encode_state(&game);
+        let mask = action_mask(&game);
+
+        let action = mcts.search(&game, num_sims, &mut rng)?;
+        let action_id = action_to_id(&action);
+        if action_id >= ACTION_SIZE {
+            return None;
+        }
+
+        raw_obs.extend_from_slice(&obs);
+        for &b in mask.iter() {
+            raw_masks.push(if b { 1 } else { 0 });
+        }
+        raw_actions.push(action_id as u8);
+        raw_players.push(acting_player);
+
+        if GameEngine::step(&mut game, &action).is_err() {
+            return None;
+        }
+    }
+
+    let winner = game.winner.map(|(w, _)| w)?;
+
+    let mut values = Vec::with_capacity(steps);
+    for &p in raw_players.iter() {
+        values.push(if p == winner { 1.0 } else { -1.0 });
+    }
+
+    Some(SingleGameTrajectory {
+        obs: raw_obs,
+        masks: raw_masks,
+        actions: raw_actions,
+        values,
+        steps,
+    })
+}
+
+/// 并行采样 N 局带 MCTS 深度推演的自博弈对局 (8 线程全速并发)
+pub fn sample_mcts_games_parallel(
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+) -> CompactBatchSamples {
+    let mcts = RustMCTS::default();
+    let trajectories: Vec<SingleGameTrajectory> = (0..num_games)
+        .into_par_iter()
+        .filter_map(|idx| simulate_single_mcts_game(&mcts, num_sims, start_seed + idx as u64))
         .collect();
 
     let total_steps: usize = trajectories.iter().map(|t| t.steps).sum();

@@ -15,4 +15,6 @@ pub use replay::{
     action_category, format_action, CardDto, DecisionDto, PlayerDto, PlayerType, ReplaySession,
     ReplayStep, RoyalDto, ScoredActionDto, StateDto,
 };
-pub use sampling::{sample_heuristic_games_parallel, CompactBatchSamples};
+pub use sampling::{
+    sample_heuristic_games_parallel, sample_mcts_games_parallel, CompactBatchSamples,
+};

@@ -1,4 +1,4 @@
-"""Tests for MCTS tree search and Arena evaluation."""
+"""Tests for MCTS agents and Arena evaluation."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,6 @@ import torch
 from splendor_ai import (
     Arena,
     HeuristicAgent,
-    MCTS,
     MCTSAgent,
     PolicyNetAgent,
     RandomAgent,
@@ -16,24 +15,18 @@ from splendor_ai import (
 )
 
 
-def test_mcts_search_basic():
-    net = SplendorNet(spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64)
-    device = torch.device("cpu")
-    mcts = MCTS(net, device, c_puct=1.5)
-
+def test_mcts_agent_action():
     env = SplendorDuelEnv(seed=42)
-    obs, info = env.reset()
+    env.reset()
 
-    pi, action = mcts.search(env, num_simulations=20, add_noise=True, temperature=1.0)
+    agent = MCTSAgent(num_sims=20)
+    action = agent.select_action(env)
 
-    assert isinstance(pi, np.ndarray)
-    assert pi.shape == (256,)
-    assert np.isclose(pi.sum(), 1.0, atol=1e-5)
+    assert isinstance(action, int)
     assert action in env.legal_actions
 
 
 def test_arena_paired_match():
-    # 测试成对种子对战
     agent0 = RandomAgent()
     agent1 = RandomAgent()
 
@@ -45,13 +38,13 @@ def test_arena_paired_match():
     assert res.avg_steps > 0
 
 
-def test_mcts_agent_play():
-    net = SplendorNet(spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64)
-    device = torch.device("cpu")
-    agent_mcts = MCTSAgent(net, device, num_sims=5, temperature=0.0)
+def test_mcts_vs_random_arena():
+    agent_mcts = MCTSAgent(num_sims=20)
     agent_rand = RandomAgent()
 
     arena = Arena(agent_mcts, agent_rand, agent0_name="MCTS", agent1_name="Rand")
-    res = arena.play_match(num_pairs=1, base_seed=999)
+    res = arena.play_match(num_pairs=2, base_seed=999)
 
-    assert res.total_games == 2
+    assert res.total_games == 4
+    # MCTS 对战纯随机 AI 应该取得压倒性胜利
+    assert res.agent0_wins >= 3

@@ -42,8 +42,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_agent(agent_type: str, model_path: Optional[str], sims: int, device: torch.device) -> Tuple[Agent, str]:
-    if agent_type == "rust_mcts":
-        return RustMCTSAgent(num_sims=sims), f"RustMCTS-{sims}"
+    if agent_type in ["mcts", "rust_mcts"]:
+        return MCTSAgent(num_sims=sims), f"MCTS-{sims}"
     elif agent_type == "heuristic":
         return HeuristicAgent(), "HeuristicAI"
     elif agent_type == "random":
@@ -61,7 +61,7 @@ def load_agent(agent_type: str, model_path: Optional[str], sims: int, device: to
         print(f"⚠️ 权重文件 {model_path} 不存在，使用随机初始网络。")
 
     if agent_type == "mcts":
-        return MCTSAgent(net, device, num_sims=sims, temperature=0.0), f"MCTS-{sims}({name})"
+        return MCTSAgent(num_sims=sims), f"MCTS-{sims}({name})"
     else:
         return PolicyNetAgent(net, device), f"Policy({name})"
 

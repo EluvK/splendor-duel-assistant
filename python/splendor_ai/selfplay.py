@@ -4,10 +4,9 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-from splendor_ai._engine import generate_heuristic_samples
+from splendor_ai._engine import generate_heuristic_samples, generate_mcts_samples
 from splendor_ai.dataset import CompactBatch
 from splendor_ai.env import SplendorDuelEnv
-from splendor_ai.mcts import MCTS
 from splendor_ai.net import SplendorNet
 
 
@@ -28,58 +27,21 @@ def generate_heuristic_compact_batch(
 
 
 def generate_mcts_selfplay_compact_batch(
-    mcts: MCTS,
-    num_games: int,
+    num_games: int = 100,
     num_simulations: int = 30,
     start_seed: int = 42,
-    temperature_moves: int = 15,
 ) -> CompactBatch:
-    """使用真实的 MCTS 树搜索生成超越纯网络直觉的高质量自对弈样本."""
-    all_obs: List[np.ndarray] = []
-    all_masks: List[np.ndarray] = []
-    all_actions: List[int] = []
-    all_values: List[float] = []
+    """全速调用底层 Rust 8 线程并行 MCTS 深度推演，秒级产出高质量自博弈样本."""
+    raw_obs, raw_masks, raw_actions, raw_values, total_steps = generate_mcts_samples(
+        num_games, num_simulations, start_seed
+    )
 
-    for g in range(num_games):
-        env = SplendorDuelEnv(seed=start_seed + g * 37)
-        obs, info = env.reset()
+    obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
+    masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
+    actions = np.asarray(raw_actions, dtype=np.int64)
+    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 1)
 
-        raw_trajectory = []
-        step = 0
-
-        while not env.is_done:
-            step += 1
-            acting_player = env.current_player
-            mask = info["action_mask"]
-
-            # 前若干步开启探索噪声与温度采样，中后期贪心
-            add_noise = (step <= temperature_moves)
-            temp = 1.0 if step <= temperature_moves else 0.0
-
-            pi, action = mcts.search(
-                env, num_simulations=num_simulations, add_noise=add_noise, temperature=temp
-            )
-
-            raw_trajectory.append((obs, mask, action, acting_player))
-            obs, reward, terminated, truncated, info = env.step(action)
-            if truncated:
-                break
-
-        winner = info.get("winner")
-        if winner is not None:
-            for obs_s, mask_s, act_s, ply_s in raw_trajectory:
-                all_obs.append(obs_s)
-                all_masks.append(mask_s)
-                all_actions.append(act_s)
-                all_values.append(1.0 if ply_s == winner else -1.0)
-
-    total_steps = len(all_actions)
-    obs_arr = np.array(all_obs, dtype=np.float32) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32)
-    masks_arr = np.array(all_masks, dtype=bool) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool)
-    actions_arr = np.array(all_actions, dtype=np.int64)
-    values_arr = np.array(all_values, dtype=np.float32).reshape(-1, 1)
-
-    return CompactBatch(obs=obs_arr, mask=masks_arr, action=actions_arr, value=values_arr)
+    return CompactBatch(obs=obs, mask=masks, action=actions, value=values)
 
 
 def generate_selfplay_compact_batch(
@@ -90,8 +52,6 @@ def generate_selfplay_compact_batch(
     temperature: float = 1.0,
 ) -> CompactBatch:
     """使用当前神经网络直觉概率进行快速自博弈 (不跑 MCTS，用于超快速粗糙探索)."""
-    mcts = MCTS(net, device)
-    # 当 num_simulations=0 时退化为纯网络前向
     all_obs: List[np.ndarray] = []
     all_masks: List[np.ndarray] = []
     all_actions: List[int] = []

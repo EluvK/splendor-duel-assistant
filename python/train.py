@@ -7,7 +7,7 @@ import torch
 
 from splendor_ai.arena import Arena
 from splendor_ai.dataset import FastTensorLoader, ShardedBuffer
-from splendor_ai.mcts import MCTS, MCTSAgent, PolicyNetAgent
+from splendor_ai.mcts import MCTSAgent, PolicyNetAgent
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
@@ -205,18 +205,16 @@ def train_selfplay(args: argparse.Namespace) -> None:
         print(f"🔄 [AlphaZero 迭代轮次 {it}/{args.iterations}]")
         print("=" * 80)
 
-        # (A) MCTS 深度推演自对弈采样
+        # (A) MCTS 深度推演自对弈采样 (Rust 8 线程并发)
         t0 = time.time()
-        mcts = MCTS(baseline_net, device)
-        print(f"1. 正在由基准模型驱动 MCTS 深度推演自对弈 {args.games_per_iter} 局 (每次决策 {args.mcts_sims} 次搜索)...")
+        print(f"1. 正在由 Rust 8 线程并行驱动 MCTS 深度推演自对弈 {args.games_per_iter} 局 (每次决策 {args.mcts_sims} 次推演)...")
         batch = generate_mcts_selfplay_compact_batch(
-            mcts=mcts,
             num_games=args.games_per_iter,
             num_simulations=args.mcts_sims,
             start_seed=int(time.time()) + it * 1009,
         )
         gen_time = time.time() - t0
-        print(f"   ✅ 自博弈采样完成！共生成 {batch.num_samples} 紧凑搜索样本 (耗时: {gen_time:.1f}s)")
+        print(f"   ✅ 自博弈采样完成！共生成 {batch.num_samples} 紧凑搜索样本 (耗时: {gen_time:.2f}s | 吞吐: {batch.num_samples/max(gen_time, 1e-6):.0f} 步/秒)")
 
         if batch.num_samples == 0:
             print("   ⚠️ 样本采集为空，跳过本轮训练。")
