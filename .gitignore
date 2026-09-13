@@ -34,5 +34,8 @@ checkpoints/
 data/games/
 logs/
 
+# Reference (外部只读参考)
+reference/
+
 # Local
 .env
