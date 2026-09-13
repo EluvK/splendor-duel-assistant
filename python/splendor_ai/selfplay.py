@@ -4,7 +4,11 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-from splendor_ai._engine import generate_heuristic_samples, generate_mcts_samples
+from splendor_ai._engine import (
+    generate_heuristic_samples,
+    generate_mcts_samples,
+    generate_neural_mcts_samples,
+)
 from splendor_ai.dataset import CompactBatch
 from splendor_ai.env import SplendorDuelEnv
 from splendor_ai.mcts import NeuralMCTS
@@ -38,6 +42,35 @@ def generate_mcts_selfplay_compact_batch(
 ) -> CompactBatch:
     """全速调用底层 Rust 8 线程并行 MCTS 深度推演，秒级产出高质量带 AlphaZero 探索的自博弈样本."""
     raw_obs, raw_masks, raw_actions, raw_values, total_steps = generate_mcts_samples(
+        num_games,
+        num_simulations,
+        start_seed,
+        temp_steps,
+        dirichlet_alpha,
+        dirichlet_eps,
+    )
+
+    obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
+    masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
+    actions = np.asarray(raw_actions, dtype=np.int64)
+    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 1)
+
+    return CompactBatch(obs=obs, mask=masks, action=actions, value=values)
+
+
+def generate_rust_neural_mcts_compact_batch(
+    net: SplendorNet,
+    num_games: int = 100,
+    num_simulations: int = 30,
+    start_seed: int = 42,
+    temp_steps: int = 12,
+    dirichlet_alpha: float = 0.3,
+    dirichlet_eps: float = 0.25,
+) -> CompactBatch:
+    """全速调用底层 Rust 8 线程并行 ONNX 纯神经网络 MCTS，秒级产出正统 AlphaZero 自博弈样本."""
+    onnx_bytes = net.export_onnx_bytes()
+    raw_obs, raw_masks, raw_actions, raw_values, total_steps = generate_neural_mcts_samples(
+        onnx_bytes,
         num_games,
         num_simulations,
         start_seed,

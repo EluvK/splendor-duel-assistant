@@ -13,6 +13,7 @@ from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
     generate_mcts_selfplay_compact_batch,
     generate_neural_mcts_selfplay_compact_batch,
+    generate_rust_neural_mcts_compact_batch,
 )
 from splendor_ai.trainer import Trainer, TrainerConfig
 
@@ -41,9 +42,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--selfplay-backend",
         type=str,
-        choices=["rust", "neural"],
+        choices=["rust", "rust_heuristic", "neural"],
         default="rust",
-        help="Self-play backend: 'rust' (Rust 8-thread full-speed MCTS with Dirichlet noise & temperature, recommended) or 'neural' (Python Neural-MCTS)",
+        help="Self-play backend: 'rust' (Rust 8-thread full-speed ONNX Neural-MCTS, recommended), 'rust_heuristic' (legacy heuristic MCTS), or 'neural' (Python Neural-MCTS)",
     )
     parser.add_argument("--buffer-size", type=int, default=100000, help="Max sample capacity for replay buffer")
     parser.add_argument("--temp-steps", type=int, default=12, help="Opening steps with temperature=1.0 + Dirichlet noise")
@@ -263,7 +264,21 @@ def train_selfplay(args: argparse.Namespace) -> None:
         t0 = time.time()
         if args.selfplay_backend == "rust":
             print(
-                f"1. 启动 Rust 8 线程并行驱动 MCTS 深度推演自对弈 {args.games_per_iter} 局 "
+                f"1. 启动 Rust 8 线程并行 ONNX 纯神经网络 MCTS 自对弈 {args.games_per_iter} 局 "
+                f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
+            )
+            batch = generate_rust_neural_mcts_compact_batch(
+                net=baseline_net,
+                num_games=args.games_per_iter,
+                num_simulations=args.mcts_sims,
+                start_seed=int(time.time()) + it * 1009,
+                temp_steps=args.temp_steps,
+                dirichlet_alpha=args.dirichlet_alpha,
+                dirichlet_eps=args.dirichlet_eps,
+            )
+        elif args.selfplay_backend == "rust_heuristic":
+            print(
+                f"1. 启动 Rust 8 线程并行启发式 MCTS 自对弈 {args.games_per_iter} 局 "
                 f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
             )
             batch = generate_mcts_selfplay_compact_batch(

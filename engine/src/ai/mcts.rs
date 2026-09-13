@@ -2,6 +2,8 @@ use rand::prelude::*;
 use rand_distr::multi::{Dirichlet, MultiDistribution};
 
 use crate::ai::heuristic_ai::HeuristicAI;
+use crate::ai::neural_evaluator::TractNeuralEvaluator;
+use crate::bridge::{action_to_id, encode_state, ACTION_SIZE};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
@@ -206,6 +208,199 @@ impl RustMCTS {
             }
             root_edges.last().map(|e| e.action.clone())
         }
+    }
+
+    /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索 (完全脱离启发式打分与模拟)
+    pub fn search_neural_with_exploration<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        evaluator: &TractNeuralEvaluator,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<Action> {
+        let legals = RuleEngine::legal_actions(state);
+        if legals.is_empty() {
+            return None;
+        }
+        if legals.len() == 1 {
+            return Some(legals[0].clone());
+        }
+
+        let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
+        let root_idx = 0;
+        let is_term = matches!(state.phase, TurnPhase::GameOver(_));
+
+        let (mut root_edges, _root_v_mover) =
+            Self::create_edges_with_neural_priors(state, legals, evaluator).ok()?;
+
+        if add_dirichlet && root_edges.len() >= 2 {
+            let alphas = vec![dirichlet_alpha; root_edges.len()];
+            if let Ok(dir) = Dirichlet::new(&alphas) {
+                let mut noise = vec![0.0f32; root_edges.len()];
+                dir.sample_to_slice(rng, &mut noise);
+                let mut sum = 0.0f32;
+                for (i, edge) in root_edges.iter_mut().enumerate() {
+                    edge.prior = (1.0 - dirichlet_eps) * edge.prior + dirichlet_eps * noise[i];
+                    sum += edge.prior;
+                }
+                if sum > 1e-6 {
+                    for edge in root_edges.iter_mut() {
+                        edge.prior /= sum;
+                    }
+                }
+            }
+        }
+
+        nodes.push(Node {
+            player: state.current_player,
+            visits: 1,
+            edges: root_edges,
+            is_terminal: is_term,
+        });
+
+        // 根节点如果也是游戏结束状态则直接返回
+        if is_term {
+            return None;
+        }
+
+        for _ in 0..num_simulations {
+            let mut sim_state = state.clone();
+            let mut curr_node_idx = root_idx;
+            let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
+
+            // 1. Selection
+            while !nodes[curr_node_idx].is_terminal && !nodes[curr_node_idx].edges.is_empty() {
+                let best_edge_idx = self.select_best_edge(&nodes[curr_node_idx]);
+                path.push((curr_node_idx, best_edge_idx));
+
+                let action = nodes[curr_node_idx].edges[best_edge_idx].action.clone();
+                let _ = GameEngine::step(&mut sim_state, &action);
+
+                if let Some(child_idx) = nodes[curr_node_idx].edges[best_edge_idx].child_idx {
+                    curr_node_idx = child_idx;
+                } else {
+                    break;
+                }
+            }
+
+            if path.is_empty() {
+                break;
+            }
+
+            // 2. Expansion & Evaluation
+            let &(last_node_idx, last_edge_idx) = path.last().unwrap();
+            let next_is_term = matches!(sim_state.phase, TurnPhase::GameOver(_));
+            let new_node_idx = nodes.len();
+
+            let (next_edges, v_p0) = if next_is_term {
+                let win_v = match sim_state.winner.map(|(w, _)| w) {
+                    Some(0) => 1.0,
+                    Some(1) => -1.0,
+                    _ => 0.0,
+                };
+                (Vec::new(), win_v)
+            } else {
+                let next_legals = RuleEngine::legal_actions(&sim_state);
+                if next_legals.is_empty() {
+                    (Vec::new(), 0.0)
+                } else {
+                    match Self::create_edges_with_neural_priors(&sim_state, next_legals, evaluator) {
+                        Ok((edges, v_mover)) => {
+                            let vp0 = if sim_state.current_player == 0 {
+                                v_mover
+                            } else {
+                                -v_mover
+                            };
+                            (edges, vp0)
+                        }
+                        Err(_) => (Vec::new(), 0.0),
+                    }
+                }
+            };
+
+            nodes.push(Node {
+                player: sim_state.current_player,
+                visits: 1,
+                edges: next_edges,
+                is_terminal: next_is_term,
+            });
+            nodes[last_node_idx].edges[last_edge_idx].child_idx = Some(new_node_idx);
+
+            // 3. Backup
+            for &(n_idx, e_idx) in path.iter() {
+                nodes[n_idx].visits += 1;
+                nodes[n_idx].edges[e_idx].visits += 1;
+                nodes[n_idx].edges[e_idx].w_p0 += v_p0;
+            }
+        }
+
+        // 根据温度参数进行动作选取
+        if temperature <= 0.01 {
+            let best_edge = nodes[root_idx].edges.iter().max_by_key(|e| e.visits);
+            best_edge.map(|e| e.action.clone())
+        } else {
+            let root_edges = &nodes[root_idx].edges;
+            let inv_temp = 1.0 / temperature;
+            let mut exp_visits = Vec::with_capacity(root_edges.len());
+            let mut sum_v = 0.0f32;
+            for edge in root_edges.iter() {
+                let v = (edge.visits as f32).powf(inv_temp);
+                exp_visits.push(v);
+                sum_v += v;
+            }
+            if sum_v <= 1e-6 {
+                return nodes[root_idx].edges.first().map(|e| e.action.clone());
+            }
+            let mut pick = rng.random_range(0.0..sum_v);
+            for (i, &v) in exp_visits.iter().enumerate() {
+                if pick <= v {
+                    return Some(root_edges[i].action.clone());
+                }
+                pick -= v;
+            }
+            root_edges.last().map(|e| e.action.clone())
+        }
+    }
+
+    /// 使用神经网络提供先验概率与状态估值
+    fn create_edges_with_neural_priors(
+        state: &GameState,
+        legals: Vec<Action>,
+        evaluator: &TractNeuralEvaluator,
+    ) -> Result<(Vec<Edge>, f32), String> {
+        let obs = encode_state(state);
+        let (logits, value) = evaluator.evaluate(&obs)?;
+
+        let mut scores = Vec::with_capacity(legals.len());
+        let mut max_logit = f32::NEG_INFINITY;
+
+        for act in legals.iter() {
+            let id = action_to_id(act);
+            let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
+            max_logit = max_logit.max(logit);
+            scores.push(logit);
+        }
+
+        let exp_scores: Vec<f32> = scores.iter().map(|&s| (s - max_logit).exp()).collect();
+        let sum_exp: f32 = exp_scores.iter().sum::<f32>().max(1e-6);
+
+        let edges = legals
+            .into_iter()
+            .enumerate()
+            .map(|(i, action)| Edge {
+                action,
+                prior: exp_scores[i] / sum_exp,
+                visits: 0,
+                w_p0: 0.0,
+                child_idx: None,
+            })
+            .collect();
+
+        Ok((edges, value))
     }
 
     /// 使用先验打分并做平滑 Softmax 归一化初始化分支

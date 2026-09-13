@@ -241,3 +241,41 @@ pub fn generate_mcts_samples<'py>(
 
     Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
 }
+
+#[pyfunction]
+#[pyo3(signature = (model_bytes, num_games=100, num_sims=30, start_seed=42, temp_steps=12, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
+pub fn generate_neural_mcts_samples<'py>(
+    py: Python<'py>,
+    model_bytes: &[u8],
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+    temp_steps: usize,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
+) -> PyResult<(
+    Bound<'py, numpy::PyArray1<f32>>,
+    Bound<'py, numpy::PyArray1<u8>>,
+    Bound<'py, numpy::PyArray1<i32>>,
+    Bound<'py, numpy::PyArray1<f32>>,
+    usize,
+)> {
+    let batch = crate::ai::sample_neural_mcts_games_parallel(
+        model_bytes,
+        num_games,
+        num_sims,
+        start_seed,
+        temp_steps,
+        dirichlet_alpha,
+        dirichlet_eps,
+    )
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+
+    let total_steps = batch.total_steps;
+    let obs_arr = numpy::PyArray1::from_vec(py, batch.obs);
+    let mask_arr = numpy::PyArray1::from_vec(py, batch.masks);
+    let action_arr = numpy::PyArray1::from_vec(py, batch.actions);
+    let value_arr = numpy::PyArray1::from_vec(py, batch.values);
+
+    Ok((obs_arr, mask_arr, action_arr, value_arr, total_steps))
+}

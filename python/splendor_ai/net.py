@@ -60,7 +60,7 @@ class SplendorNet(nn.Module):
         self.board_res_blocks = nn.ModuleList(
             [ResidualBlock2D(spatial_channels) for _ in range(num_res_blocks)]
         )
-        self.board_pool = nn.AdaptiveAvgPool2d((2, 2))
+        self.board_pool = nn.AvgPool2d(kernel_size=3, stride=2)
         board_out_dim = spatial_channels * 2 * 2  # 64 * 4 = 256
 
         # 2. 上下文标量特征 MLP 骨干
@@ -171,3 +171,38 @@ class SplendorNet(nn.Module):
             probs = F.softmax(logits / temperature, dim=-1)
 
         return probs, value
+
+    def export_onnx_bytes(self) -> bytes:
+        """将当前模型导出为 ONNX 二进制字节流 (供 Rust tract-onnx 引擎极速推理)."""
+        import io
+
+        was_training = self.training
+        self.eval()
+
+        orig_device = next(self.parameters()).device
+        cpu_model = self if orig_device.type == "cpu" else self.cpu()
+
+        dummy_obs = torch.zeros(1, self.OBS_SIZE, dtype=torch.float32)
+        buf = io.BytesIO()
+
+        torch.onnx.export(
+            cpu_model,
+            dummy_obs,
+            buf,
+            input_names=["obs"],
+            output_names=["policy_logits", "value"],
+            dynamic_axes={
+                "obs": {0: "batch_size"},
+                "policy_logits": {0: "batch_size"},
+                "value": {0: "batch_size"},
+            },
+            opset_version=17,
+            do_constant_folding=True,
+        )
+
+        if orig_device.type != "cpu":
+            self.to(orig_device)
+        if was_training:
+            self.train()
+
+        return buf.getvalue()

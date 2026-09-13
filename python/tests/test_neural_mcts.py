@@ -12,7 +12,10 @@ from splendor_ai import (
     SplendorDuelEnv,
     SplendorNet,
 )
-from splendor_ai.selfplay import generate_neural_mcts_selfplay_compact_batch
+from splendor_ai.selfplay import (
+    generate_neural_mcts_selfplay_compact_batch,
+    generate_rust_neural_mcts_compact_batch,
+)
 
 
 def test_neural_mcts_search():
@@ -107,4 +110,22 @@ def test_generate_neural_mcts_selfplay():
     assert len(batch.action) == batch.num_samples
     assert batch.value.shape == (batch.num_samples, 1)
     # 胜负值应在 {-1.0, 1.0} 中
+
+
+def test_generate_rust_neural_mcts_selfplay():
+    net = SplendorNet()
+    batch = generate_rust_neural_mcts_compact_batch(
+        net=net,
+        num_games=1,
+        num_simulations=5,
+        start_seed=123,
+        temp_steps=4,
+    )
+
+    assert batch.num_samples > 0
+    assert batch.obs.shape[1] == SplendorDuelEnv.OBS_SIZE
+    assert batch.mask.shape[1] == SplendorDuelEnv.ACTION_SIZE
+    assert len(batch.action) == batch.num_samples
+    assert batch.value.shape == (batch.num_samples, 1)
+    assert np.all(np.isin(batch.value, [-1.0, 1.0]))
     assert set(np.unique(batch.value)).issubset({-1.0, 1.0})
