@@ -141,10 +141,10 @@
     main {
       flex: 1;
       display: grid;
-      grid-template-columns: 280px minmax(420px, 1.1fr) minmax(560px, 1.5fr);
+      grid-template-columns: 280px minmax(400px, 1.05fr) minmax(620px, 1.6fr);
       gap: 14px;
       padding: 14px 18px;
-      max-width: 1840px;
+      max-width: 1920px;
       margin: 0 auto;
       width: 100%;
     }
@@ -257,7 +257,7 @@
       background-size: cover;
       background-position: center;
       box-shadow: 0 3px 6px rgba(0,0,0,0.3);
-      transition: transform 0.15s;
+      transition: transform 0.15s, box-shadow 0.15s;
     }
     .card-item:hover {
       transform: translateY(-2px);
@@ -441,22 +441,105 @@
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
-      min-height: 40px;
+      min-height: 36px;
       align-items: center;
     }
     .card-item.compact {
-      width: 76px;
-      height: 106px;
+      width: 74px;
+      height: 102px;
       padding: 4px;
     }
     .card-item.compact .card-points { font-size: 0.9rem; }
     .card-item.compact .card-crowns { font-size: 0.7rem; }
     .card-item.compact .cost-item { font-size: 0.6rem; padding: 1px 2px; }
 
+    /* 已购买卡牌矩阵 (Tableau) 与迷你卡片样式 */
+    .card-item.mini {
+      width: 64px;
+      height: 90px;
+      padding: 4px;
+      border-radius: 5px;
+      font-size: 0.7rem;
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.15s, box-shadow 0.15s, z-index 0.15s;
+    }
+    .card-item.mini:hover {
+      transform: scale(1.18);
+      z-index: 25;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.75);
+      border-color: var(--accent-gold);
+    }
+    .card-item.mini .card-points { font-size: 0.88rem; }
+    .card-item.mini .card-crowns { font-size: 0.65rem; }
+    .card-item.mini .card-ability-badge {
+      font-size: 0.56rem;
+      padding: 1px 3px;
+      border-radius: 2px;
+    }
+    .card-mini-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0,0,0,0.65);
+      padding: 1px 3px;
+      border-radius: 3px;
+      font-size: 0.58rem;
+      font-weight: 700;
+    }
+    .mini-tier { color: var(--accent-gold); }
+    .mini-bonus { color: #38bdf8; text-transform: capitalize; }
+
+    .purchased-cards-container {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      max-height: 195px;
+      min-height: 48px;
+      overflow-y: auto;
+      padding: 6px;
+      background: #121622;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.06);
+      align-content: flex-start;
+    }
+    .purchased-cards-container::-webkit-scrollbar,
+    .log-panel::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    .purchased-cards-container::-webkit-scrollbar-thumb,
+    .log-panel::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+
+    .royals-mini-container {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-height: 28px;
+      align-items: center;
+    }
+    .royal-item.mini {
+      width: 58px;
+      height: 78px;
+      padding: 4px;
+      border-radius: 5px;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      transition: transform 0.15s;
+    }
+    .royal-item.mini:hover {
+      transform: scale(1.15);
+      z-index: 25;
+      border-color: #fff;
+    }
+
     /* 底部日志面板：平稳滚动、不跳动 */
     .log-panel {
       grid-column: 1 / -1;
-      height: 130px;
+      height: 125px;
       overflow-y: auto;
       background: #0b0e14;
       border: 1px solid var(--border-color);
@@ -484,7 +567,7 @@
     }
 
     /* 响应式调整 */
-    @media (max-width: 1360px) {
+    @media (max-width: 1400px) {
       main {
         grid-template-columns: 260px 1fr;
       }
@@ -610,6 +693,17 @@
           <div class="token-chips" id="p0Bonuses"></div>
           <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p0ReservedCount">0</span>/3):</div>
           <div class="reserved-cards-container" id="p0ReservedCards"></div>
+
+          <!-- 已获王室赞助卡 -->
+          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p0RoyalCount">0</span>):</div>
+          <div class="royals-mini-container" id="p0RoyalCards"></div>
+
+          <!-- 已购买卡牌矩阵 (Tableau) -->
+          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
+            <span>已购卡牌 (<span id="p0PurchasedCount">0</span> 张):</span>
+            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
+          </div>
+          <div class="purchased-cards-container" id="p0PurchasedCards"></div>
         </div>
 
         <!-- Player 1 -->
@@ -641,6 +735,17 @@
           <div class="token-chips" id="p1Bonuses"></div>
           <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p1ReservedCount">0</span>/3):</div>
           <div class="reserved-cards-container" id="p1ReservedCards"></div>
+
+          <!-- 已获王室赞助卡 -->
+          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p1RoyalCount">0</span>):</div>
+          <div class="royals-mini-container" id="p1RoyalCards"></div>
+
+          <!-- 已购买卡牌矩阵 (Tableau) -->
+          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
+            <span>已购卡牌 (<span id="p1PurchasedCount">0</span> 张):</span>
+            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
+          </div>
+          <div class="purchased-cards-container" id="p1PurchasedCards"></div>
         </div>
       </div>
     </div>
@@ -966,6 +1071,63 @@
       });
     }
 
+    // 渲染玩家已购买的卡牌 (Tableau)
+    function renderPurchasedCards(cards, container) {
+      container.innerHTML = '';
+      if (!cards || cards.length === 0) {
+        container.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:4px;">暂无已购卡牌</span>';
+        return;
+      }
+
+      cards.forEach(c => {
+        const el = document.createElement('div');
+        el.className = 'card-item mini';
+        const plateColor = (c.color === 'points' || c.color === 'joker') ? 'joker' : c.color;
+        el.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.65)), url('assets/cards/plates/level-${c.tier}-${plateColor}.webp')`;
+
+        let bonusText = '';
+        if (c.bonus > 0 && c.color && c.color !== 'points' && c.color !== 'joker') {
+          bonusText = `+${c.bonus} ${c.color}`;
+        }
+
+        const titleDetail = `【等级 ${c.tier} 卡牌】\n颜色: ${c.color}\n声望点: ${c.points}⭐\n王冠: ${c.crowns}👑\n永久减免: +${c.bonus}\n技能: ${c.ability || '无特殊技能'}`;
+        el.title = titleDetail;
+
+        el.innerHTML = `
+          <div class="card-top">
+            <span class="card-points">${c.points > 0 ? c.points : ''}</span>
+            <span class="card-crowns">${c.crowns > 0 ? '👑'.repeat(c.crowns) : ''}</span>
+          </div>
+          ${c.ability ? `<div class="card-ability-badge" title="${c.ability}">${c.ability}</div>` : ''}
+          <div class="card-mini-bottom">
+            <span class="mini-tier">L${c.tier}</span>
+            ${bonusText ? `<span class="mini-bonus">${bonusText}</span>` : ''}
+          </div>
+        `;
+        container.appendChild(el);
+      });
+    }
+
+    // 渲染玩家已获得的王室赞助卡
+    function renderPlayerRoyals(royals, container) {
+      container.innerHTML = '';
+      if (!royals || royals.length === 0) {
+        container.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:2px;">暂无王室赞助</span>';
+        return;
+      }
+      royals.forEach(r => {
+        const el = document.createElement('div');
+        el.className = 'royal-item mini';
+        el.style.backgroundImage = `url('assets/cards/royals/royal-${r.id}.webp')`;
+        el.title = `【王室赞助卡 #${r.id}】\n声望: ${r.points}⭐\n能力: ${r.ability || '荣誉赞助'}`;
+        el.innerHTML = `
+          <div style="font-size:0.92rem; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;">${r.points}⭐</div>
+          <div style="font-size:0.58rem; background:rgba(0,0,0,0.75); padding:1px 3px; border-radius:3px; color:#fbbf24; text-align:center;">${r.ability || '赞助'}</div>
+        `;
+        container.appendChild(el);
+      });
+    }
+
     function renderPlayer(p, cardEl, isActive, prefix) {
       if (isActive) cardEl.classList.add('active');
       else cardEl.classList.remove('active');
@@ -1025,6 +1187,16 @@
       } else {
         renderCardsList(p.reserved_cards, resContainer, true);
       }
+
+      // 已获王室卡
+      const royalCards = p.royal_cards || [];
+      document.getElementById(`${prefix}RoyalCount`).innerText = royalCards.length;
+      renderPlayerRoyals(royalCards, document.getElementById(`${prefix}RoyalCards`));
+
+      // 已购买卡牌
+      const purchasedCards = p.purchased_cards || [];
+      document.getElementById(`${prefix}PurchasedCount`).innerText = purchasedCards.length;
+      renderPurchasedCards(purchasedCards, document.getElementById(`${prefix}PurchasedCards`));
     }
 
     // 自动播放与调速控制器

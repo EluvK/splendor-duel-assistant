@@ -13,6 +13,7 @@ ALLOWED_PREFIXES=(
     engine
     docs
     python
+    web
     bugfix
     perf
     refactor

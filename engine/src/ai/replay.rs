@@ -111,6 +111,7 @@ pub struct PlayerDto {
     pub privileges: u8,
     pub reserved_cards: Vec<CardDto>,
     pub cards_count: usize,
+    pub purchased_cards: Vec<CardDto>,
     pub royal_cards: Vec<RoyalDto>,
 }
 
@@ -127,6 +128,7 @@ impl From<&PlayerState> for PlayerDto {
             privileges: p.privileges,
             reserved_cards: p.reserved_cards.iter().map(CardDto::from).collect(),
             cards_count: p.cards.len(),
+            purchased_cards: p.cards.iter().map(CardDto::from).collect(),
             royal_cards: p.royal_cards.iter().map(RoyalDto::from).collect(),
         }
     }

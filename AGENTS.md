@@ -20,7 +20,7 @@
 ## Git 提交规范
 
 - 格式：`<prefix1>[,<prefix2>...]: <description>`（例：`engine,docs: xxxxxxxxx`）
-- 允许前缀：`engine`, `docs`, `python`, `bugfix`, `perf`, `refactor`, `reference`, `chore`
+- 允许前缀：`engine`, `docs`, `python`, `web`, `bugfix`, `perf`, `refactor`, `reference`, `chore`
 
 ## Agent 工作准则
 
