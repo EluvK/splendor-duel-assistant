@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>璀璨宝石：对决 (Splendor Duel) - 对局回放视窗</title>
+  <style>
+    :root {
+      --bg-main: #12151c;
+      --bg-panel: #1a1f2c;
+      --bg-card: #232a3b;
+      --border-color: #333d54;
+      --text-main: #f0f3fa;
+      --text-muted: #8c9bb5;
+      --accent-gold: #f59e0b;
+      --accent-blue: #38bdf8;
+      --accent-green: #22c55e;
+      --accent-red: #ef4444;
+      --accent-white: #e2e8f0;
+      --accent-black: #64748b;
+      --accent-pearl: #f472b6;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 顶部导航与控制栏 */
+    header {
+      background-color: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .title-group h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent-gold);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-badge {
+      font-size: 0.85rem;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button {
+      background-color: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover { background-color: var(--primary-hover); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-secondary {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+    }
+    .btn-secondary:hover { background-color: #2e374d; }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    input[type="range"] {
+      width: 160px;
+      cursor: pointer;
+    }
+
+    /* 主体布局 */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 320px 1fr 340px;
+      gap: 16px;
+      padding: 16px;
+      max-width: 1720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .panel {
+      background-color: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .panel-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* 5x5 棋盘 */
+    .board-container {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      background-color: #151821;
+      padding: 12px;
+      border-radius: 8px;
+      border: 2px solid var(--border-color);
+    }
+
+    .board-cell {
+      aspect-ratio: 1;
+      background-color: #1e2433;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      border: 1px dashed #3a4663;
+      transition: all 0.2s;
+    }
+
+    .token {
+      width: 82%;
+      height: 82%;
+      border-radius: 50%;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.4), inset 0 2px 4px rgba(255,255,255,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.75rem;
+    }
+
+    .token-white { background: radial-gradient(circle at 30% 30%, #ffffff, #cbd5e1); color: #1e293b; border: 1px solid #94a3b8; }
+    .token-blue  { background: radial-gradient(circle at 30% 30%, #38bdf8, #0284c7); color: #fff; }
+    .token-green { background: radial-gradient(circle at 30% 30%, #4ade80, #16a34a); color: #fff; }
+    .token-red   { background: radial-gradient(circle at 30% 30%, #f87171, #dc2626); color: #fff; }
+    .token-black { background: radial-gradient(circle at 30% 30%, #475569, #0f172a); color: #cbd5e1; border: 1px solid #334155; }
+    .token-pearl { background: radial-gradient(circle at 30% 30%, #fbcfe8, #db2777); color: #fff; }
+    .token-gold  { background: radial-gradient(circle at 30% 30%, #fde047, #d97706); color: #78350f; border: 1px solid #fbbf24; }
+
+    /* 中央金字塔与王室卡 */
+    .pyramid-section {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .tier-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .tier-header {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--accent-gold);
+    }
+
+    .cards-flex {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .card-item {
+      width: 108px;
+      height: 152px;
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      background-size: cover;
+      background-position: center;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      font-weight: 800;
+    }
+    .card-points {
+      font-size: 1.25rem;
+      color: #fff;
+      text-shadow: 0 2px 4px #000;
+    }
+    .card-crowns {
+      color: #fbbf24;
+      font-size: 0.9rem;
+      text-shadow: 0 1px 2px #000;
+    }
+    .card-ability-badge {
+      align-self: center;
+      background: rgba(0,0,0,0.7);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #38bdf8;
+    }
+    .card-cost {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      background: rgba(0,0,0,0.6);
+      padding: 4px;
+      border-radius: 6px;
+    }
+    .cost-item {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    /* 王室卡展示栏 */
+    .royals-row {
+      display: flex;
+      gap: 10px;
+      background: #151821;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+    .royal-item {
+      width: 90px;
+      height: 120px;
+      border-radius: 6px;
+      background-size: cover;
+      background-position: center;
+      position: relative;
+      border: 1px solid #fbbf24;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* 玩家状态 */
+    .player-card {
+      background: #1e2435;
+      border-radius: 8px;
+      padding: 12px;
+      border: 2px solid transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .player-card.active {
+      border-color: var(--primary);
+      box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
+    }
+
+    .player-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .player-name {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .victory-progress {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.75rem;
+    }
+    .progress-bar {
+      height: 6px;
+      background: #334155;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent-gold);
+      transition: width 0.3s ease;
+    }
+
+    .token-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      padding: 2px 7px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* 底部日志 */
+    .log-panel {
+      grid-column: 1 / -1;
+      max-height: 150px;
+      overflow-y: auto;
+      background: #0d1017;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 0.8rem;
+    }
+    .log-item {
+      padding: 3px 0;
+      border-bottom: 1px solid #1c2230;
+      display: flex;
+      gap: 12px;
+      cursor: pointer;
+    }
+    .log-item:hover { background: #161c28; }
+    .log-item.active-step { color: var(--accent-gold); font-weight: 700; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="title-group">
+      <h1>💎 璀璨宝石：对决 (Splendor Duel) 回放视窗</h1>
+      <span class="status-badge" id="gamePhase">正在初始化...</span>
+    </div>
+
+    <div class="controls">
+      <div class="slider-container">
+        <span style="font-size:0.85rem;">第 <b id="currentStepText">0</b> 步 / 共 <b id="totalStepsText">0</b> 步</span>
+        <input type="range" id="stepSlider" min="0" max="0" value="0">
+      </div>
+      <button class="btn-secondary" id="btnPrev">◀ 上一步</button>
+      <button id="btnNext">下一步 ▶</button>
+      <button class="btn-secondary" id="btnPlay">自动播放 ⏯</button>
+      <button class="btn-secondary" id="btnReset">重置对局 🔄</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- 左侧：5x5 棋盘 -->
+    <div class="panel">
+      <div class="panel-title">
+        <span>5×5 棋盘矩阵</span>
+        <span id="boardTokensCount" style="font-size:0.8rem;">25 标记</span>
+      </div>
+
+      <div class="board-container" id="boardGrid">
+        <!-- 动态生成 25 个格子 -->
+      </div>
+
+      <div style="display:flex; justify-content:space-between; font-size:0.85rem; padding-top:8px;">
+        <span>📜 特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
+        <span>🎒 布袋剩余: <b id="bagCount">0</b></span>
+      </div>
+    </div>
+
+    <!-- 中间：王室卡与 3 级金字塔卡牌 -->
+    <div class="panel pyramid-section">
+      <div class="panel-title">王室卡池</div>
+      <div class="royals-row" id="royalsContainer">
+        <!-- 4 张王室卡 -->
+      </div>
+
+      <div class="panel-title">金字塔明牌</div>
+      <div class="tier-row">
+        <div class="tier-header">等级 3 (牌堆剩余: <span id="deck3Count">0</span>)</div>
+        <div class="cards-flex" id="tier3Cards"></div>
+      </div>
+
+      <div class="tier-row">
+        <div class="tier-header">等级 2 (牌堆剩余: <span id="deck2Count">0</span>)</div>
+        <div class="cards-flex" id="tier2Cards"></div>
+      </div>
+
+      <div class="tier-row">
+        <div class="tier-header">等级 1 (牌堆剩余: <span id="deck1Count">0</span>)</div>
+        <div class="cards-flex" id="tier1Cards"></div>
+      </div>
+    </div>
+
+    <!-- 右侧：双人状态 -->
+    <div class="panel">
+      <div class="panel-title">玩家仪表盘</div>
+
+      <!-- Player 0 -->
+      <div class="player-card" id="player0Card">
+        <div class="player-header">
+          <span class="player-name">👤 Player 0</span>
+          <span id="p0Privileges">📜 0</span>
+        </div>
+        <div class="victory-progress">
+          <div>声望分数: <b id="p0Points">0</b> / 20</div>
+          <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
+          <div>王冠总数: <b id="p0Crowns">0</b> / 10</div>
+          <div class="progress-bar"><div class="progress-fill" id="p0CrownsBar" style="width: 0%"></div></div>
+          <div>最高单色声望: <b id="p0MaxColor">0</b> / 10</div>
+          <div class="progress-bar"><div class="progress-fill" id="p0ColorBar" style="width: 0%"></div></div>
+        </div>
+        <div style="font-size:0.8rem; font-weight:700; margin-top:4px;">手中标记 (<span id="p0TokenTotal">0</span>/10):</div>
+        <div class="token-chips" id="p0Tokens"></div>
+        <div style="font-size:0.8rem; font-weight:700; margin-top:4px;">永久减免 Bonus:</div>
+        <div class="token-chips" id="p0Bonuses"></div>
+        <div style="font-size:0.8rem; font-weight:700; margin-top:4px;">预留卡 (<span id="p0ReservedCount">0</span>/3):</div>
+        <div class="cards-flex" id="p0ReservedCards"></div>
+      </div>
+
+      <!-- Player 1 -->
+      <div class="player-card" id="player1Card">
+        <div class="player-header">
+          <span class="player-name">👤 Player 1</span>
+          <span id="p1Privileges">📜 1</span>
+        </div>
+        <div class="victory-progress">
+          <div>声望分数: <b id="p1Points">0</b> / 20</div>
+          <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
+          <div>王冠总数: <b id="p1Crowns">0</b> / 10</div>
+          <div class="progress-bar"><div class="progress-fill" id="p1CrownsBar" style="width: 0%"></div></div>
+          <div>最高单色声望: <b id="p1MaxColor">0</b> / 10</div>
+          <div class="progress-bar"><div class="progress-fill" id="p1ColorBar" style="width: 0%"></div></div>
+        </div>
+        <div style="font-size:0.8rem; font-weight:700; margin-top:4px;">手中标记 (<span id="p1TokenTotal">0</span>/10):</div>
+        <div class="token-chips" id="p1Tokens"></div>
+        <div style="font-size:0.8rem; font-weight:700; margin-top:4px;">永久减免 Bonus:</div>
+        <div class="token-chips" id="p1Bonuses"></div>
+        <div style="font-size:0.8rem; font-weight:700; margin-top:4px;">预留卡 (<span id="p1ReservedCount">0</span>/3):</div>
+        <div class="cards-flex" id="p1ReservedCards"></div>
+      </div>
+    </div>
+
+    <!-- 底部：步骤历史列表 -->
+    <div class="log-panel" id="logContainer">
+      <!-- 动态填充步骤记录 -->
+    </div>
+  </main>
+
+  <script>
+    let currentStep = 0;
+    let totalSteps = 0;
+    let isPlaying = false;
+    let playInterval = null;
+
+    const COLOR_CLASSES = {
+      white: 'token-white',
+      blue: 'token-blue',
+      green: 'token-green',
+      red: 'token-red',
+      black: 'token-black',
+      pearl: 'token-pearl',
+      gold: 'token-gold'
+    };
+
+    const COLOR_NAMES = ['白', '蓝', '绿', '红', '黑', '珍珠', '黄金'];
+
+    async function fetchStatus() {
+      const res = await fetch('/api/status');
+      const state = await res.json();
+      renderState(state);
+      await fetchHistory();
+    }
+
+    async function fetchStep(index) {
+      const res = await fetch(`/api/step?index=${index}`);
+      if (res.ok) {
+        const step = await res.json();
+        currentStep = index;
+        renderState(step.state);
+        updateControlUI();
+      }
+    }
+
+    async function stepNext() {
+      if (currentStep < totalSteps - 1) {
+        await fetchStep(currentStep + 1);
+        return;
+      }
+      const res = await fetch('/api/step', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        totalSteps = data.total_steps;
+        currentStep = totalSteps - 1;
+        renderState(data.step.state);
+        await fetchHistory();
+        updateControlUI();
+      }
+    }
+
+    async function stepPrev() {
+      if (currentStep > 0) {
+        await fetchStep(currentStep - 1);
+      }
+    }
+
+    async function resetGame() {
+      const seed = Math.floor(Math.random() * 10000);
+      const res = await fetch(`/api/reset?seed=${seed}`, { method: 'POST' });
+      if (res.ok) {
+        currentStep = 0;
+        totalSteps = 1;
+        await fetchStatus();
+      }
+    }
+
+    async function fetchHistory() {
+      const res = await fetch('/api/history');
+      if (res.ok) {
+        const data = await res.json();
+        totalSteps = data.total_steps;
+        renderLog(data.steps);
+        updateControlUI();
+      }
+    }
+
+    function updateControlUI() {
+      document.getElementById('currentStepText').innerText = currentStep;
+      document.getElementById('totalStepsText').innerText = Math.max(0, totalSteps - 1);
+      const slider = document.getElementById('stepSlider');
+      slider.max = Math.max(0, totalSteps - 1);
+      slider.value = currentStep;
+      document.getElementById('btnPrev').disabled = (currentStep === 0);
+    }
+
+    function renderState(state) {
+      // 头部阶段
+      const phaseEl = document.getElementById('gamePhase');
+      phaseEl.innerText = state.winner ? `🏆 胜者: ${state.winner}` : `第 ${state.turn_number} 回合 | 阶段: ${state.phase}`;
+      if (state.winner) {
+        phaseEl.style.backgroundColor = '#dc2626';
+      } else {
+        phaseEl.style.backgroundColor = 'var(--bg-card)';
+      }
+
+      // 5x5 棋盘
+      const boardGrid = document.getElementById('boardGrid');
+      boardGrid.innerHTML = '';
+      let countTokens = 0;
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 5; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'board-cell';
+          const gem = state.board[r][c];
+          if (gem) {
+            countTokens++;
+            const tok = document.createElement('div');
+            tok.className = `token ${COLOR_CLASSES[gem]}`;
+            tok.innerText = gem[0].toUpperCase();
+            cell.appendChild(tok);
+          }
+          boardGrid.appendChild(cell);
+        }
+      }
+      document.getElementById('boardTokensCount').innerText = `${countTokens} 标记`;
+      document.getElementById('privilegePool').innerText = state.privilege_pool;
+      document.getElementById('bagCount').innerText = state.bag_count;
+
+      // 王室卡
+      const royalsRow = document.getElementById('royalsContainer');
+      royalsRow.innerHTML = '';
+      state.royal_cards.forEach(r => {
+        const el = document.createElement('div');
+        el.className = 'royal-item';
+        el.style.backgroundImage = `url('assets/cards/royals/royal-${r.id}.webp')`;
+        el.innerHTML = `
+          <div style="font-size:1.1rem; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;">${r.points}⭐</div>
+          <div style="font-size:0.7rem; background:rgba(0,0,0,0.7); padding:2px 4px; border-radius:3px; color:#fbbf24;">${r.ability || '无特殊能力'}</div>
+        `;
+        royalsRow.appendChild(el);
+      });
+
+      // 金字塔卡牌
+      renderCardsList(state.pyramid[2], document.getElementById('tier3Cards'));
+      renderCardsList(state.pyramid[1], document.getElementById('tier2Cards'));
+      renderCardsList(state.pyramid[0], document.getElementById('tier1Cards'));
+
+      document.getElementById('deck3Count').innerText = state.decks_count[2];
+      document.getElementById('deck2Count').innerText = state.decks_count[1];
+      document.getElementById('deck1Count').innerText = state.decks_count[0];
+
+      // 玩家
+      renderPlayer(state.players[0], document.getElementById('player0Card'), state.current_player === 0, 'p0');
+      renderPlayer(state.players[1], document.getElementById('player1Card'), state.current_player === 1, 'p1');
+    }
+
+    function renderCardsList(cards, container) {
+      container.innerHTML = '';
+      cards.forEach(c => {
+        const el = document.createElement('div');
+        el.className = 'card-item';
+        const plateColor = (c.color === 'points' || c.color === 'joker') ? 'joker' : c.color;
+        el.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0.6)), url('assets/cards/plates/level-${c.tier}-${plateColor}.webp')`;
+
+        let costHtml = '';
+        const costItems = [
+          { k: '白', v: c.cost.white, c: 'var(--accent-white)', bg: '#334155' },
+          { k: '蓝', v: c.cost.blue, c: '#fff', bg: '#0284c7' },
+          { k: '绿', v: c.cost.green, c: '#fff', bg: '#16a34a' },
+          { k: '红', v: c.cost.red, c: '#fff', bg: '#dc2626' },
+          { k: '黑', v: c.cost.black, c: '#cbd5e1', bg: '#0f172a' },
+          { k: '珠', v: c.cost.pearl, c: '#fff', bg: '#db2777' },
+        ];
+        costItems.forEach(ci => {
+          if (ci.v > 0) {
+            costHtml += `<span class="cost-item" style="color:${ci.c}; background:${ci.bg};">${ci.k}${ci.v}</span>`;
+          }
+        });
+
+        el.innerHTML = `
+          <div class="card-top">
+            <span class="card-points">${c.points > 0 ? c.points : ''}</span>
+            <span class="card-crowns">${c.crowns > 0 ? '👑'.repeat(c.crowns) : ''}</span>
+          </div>
+          ${c.ability ? `<div class="card-ability-badge">${c.ability}</div>` : ''}
+          <div class="card-cost">${costHtml}</div>
+        `;
+        container.appendChild(el);
+      });
+    }
+
+    function renderPlayer(p, cardEl, isActive, prefix) {
+      if (isActive) cardEl.classList.add('active');
+      else cardEl.classList.remove('active');
+
+      document.getElementById(`${prefix}Privileges`).innerText = `📜 ${p.privileges}`;
+      document.getElementById(`${prefix}Points`).innerText = p.total_points;
+      document.getElementById(`${prefix}PointsBar`).style.width = `${Math.min(100, (p.total_points / 20) * 100)}%`;
+
+      document.getElementById(`${prefix}Crowns`).innerText = p.total_crowns;
+      document.getElementById(`${prefix}CrownsBar`).style.width = `${Math.min(100, (p.total_crowns / 10) * 100)}%`;
+
+      const maxColor = Math.max(...p.color_points);
+      document.getElementById(`${prefix}MaxColor`).innerText = maxColor;
+      document.getElementById(`${prefix}ColorBar`).style.width = `${Math.min(100, (maxColor / 10) * 100)}%`;
+
+      document.getElementById(`${prefix}TokenTotal`).innerText = p.token_total;
+
+      // 标记
+      const tokenContainer = document.getElementById(`${prefix}Tokens`);
+      tokenContainer.innerHTML = '';
+      p.tokens.forEach((count, idx) => {
+        if (count > 0) {
+          const chip = document.createElement('span');
+          chip.className = `chip ${COLOR_CLASSES[Object.keys(COLOR_CLASSES)[idx]]}`;
+          chip.innerText = `${COLOR_NAMES[idx]}: ${count}`;
+          tokenContainer.appendChild(chip);
+        }
+      });
+
+      // Bonuses
+      const bonusContainer = document.getElementById(`${prefix}Bonuses`);
+      bonusContainer.innerHTML = '';
+      p.bonuses.forEach((count, idx) => {
+        if (count > 0) {
+          const chip = document.createElement('span');
+          chip.className = `chip ${COLOR_CLASSES[Object.keys(COLOR_CLASSES)[idx]]}`;
+          chip.innerText = `${COLOR_NAMES[idx]}: +${count}`;
+          bonusContainer.appendChild(chip);
+        }
+      });
+
+      // 预留卡
+      document.getElementById(`${prefix}ReservedCount`).innerText = p.reserved_cards.length;
+      renderCardsList(p.reserved_cards, document.getElementById(`${prefix}ReservedCards`));
+    }
+
+    function renderLog(steps) {
+      const container = document.getElementById('logContainer');
+      container.innerHTML = '';
+      steps.forEach((s, idx) => {
+        const item = document.createElement('div');
+        item.className = `log-item ${idx === currentStep ? 'active-step' : ''}`;
+        item.innerHTML = `
+          <span style="color:#64748b;">#${s.index}</span>
+          <span style="color:${s.player === 0 ? '#38bdf8' : '#f472b6'};">P${s.player}</span>
+          <span>${s.action}</span>
+          <span style="color:#64748b; margin-left:auto;">${s.phase}</span>
+        `;
+        item.onclick = () => fetchStep(idx);
+        container.appendChild(item);
+      });
+      // 自动滚到当前高亮项
+      const activeEl = container.querySelector('.active-step');
+      if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    }
+
+    // 绑定事件
+    document.getElementById('btnNext').onclick = stepNext;
+    document.getElementById('btnPrev').onclick = stepPrev;
+    document.getElementById('btnReset').onclick = resetGame;
+
+    document.getElementById('btnPlay').onclick = () => {
+      isPlaying = !isPlaying;
+      document.getElementById('btnPlay').innerText = isPlaying ? '暂停 ⏸' : '自动播放 ⏯';
+      if (isPlaying) {
+        playInterval = setInterval(async () => {
+          await stepNext();
+        }, 500);
+      } else {
+        clearInterval(playInterval);
+      }
+    };
+
+    document.getElementById('stepSlider').oninput = (e) => {
+      const targetStep = parseInt(e.target.value);
+      fetchStep(targetStep);
+    };
+
+    // 启动拉取
+    fetchStatus();
+  </script>
+</body>
+</html>

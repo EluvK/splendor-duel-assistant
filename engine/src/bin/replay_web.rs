@@ -1,0 +1,239 @@
+use _engine::ReplaySession;
+use serde::Serialize;
+use std::env;
+use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+
+#[derive(Serialize)]
+struct StepSummary {
+    index: usize,
+    player: usize,
+    action: String,
+    phase: String,
+}
+
+#[derive(Serialize)]
+struct HistoryResponse {
+    seed: u64,
+    total_steps: usize,
+    steps: Vec<StepSummary>,
+}
+
+fn respond(stream: &mut TcpStream, status: &str, body: &[u8], content_type: &str) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(body);
+}
+
+fn find_web_root() -> PathBuf {
+    let candidates = [
+        PathBuf::from("engine/web"),
+        PathBuf::from("web"),
+        PathBuf::from("../engine/web"),
+    ];
+    for c in candidates {
+        if c.exists() && c.join("index.html").exists() {
+            return c;
+        }
+    }
+    PathBuf::from("engine/web")
+}
+
+fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, web_root: &Path) {
+    let mut buffer = [0u8; 4096];
+    let bytes_read = match stream.read(&mut buffer) {
+        Ok(n) if n > 0 => n,
+        _ => return,
+    };
+
+    let request_str = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let first_line = request_str.lines().next().unwrap_or("");
+    let parts: Vec<&str> = first_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        respond(&mut stream, "400 Bad Request", b"bad request", "text/plain");
+        return;
+    }
+
+    let method = parts[0];
+    let raw_url = parts[1];
+    let (path, query) = if let Some(idx) = raw_url.find('?') {
+        (&raw_url[..idx], &raw_url[idx + 1..])
+    } else {
+        (raw_url, "")
+    };
+
+    match (method, path) {
+        // API: 获取最新状态
+        ("GET", "/api/status") => {
+            let sess = session.read().unwrap();
+            let json = serde_json::to_vec(&sess.current_state()).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // API: 单步推进
+        ("POST", "/api/step") | ("GET", "/api/step_next") => {
+            let mut sess = session.write().unwrap();
+            match sess.step() {
+                Ok(advanced) => {
+                    let last_step = sess.history.last().unwrap().clone();
+                    #[derive(Serialize)]
+                    struct StepResult {
+                        advanced: bool,
+                        total_steps: usize,
+                        step: _engine::ReplayStep,
+                    }
+                    let res = StepResult {
+                        advanced,
+                        total_steps: sess.history.len(),
+                        step: last_step,
+                    };
+                    let json = serde_json::to_vec(&res).unwrap();
+                    respond(&mut stream, "200 OK", &json, "application/json");
+                }
+                Err(e) => {
+                    let err_json = serde_json::to_vec(&serde_json::json!({ "error": e })).unwrap();
+                    respond(&mut stream, "400 Bad Request", &err_json, "application/json");
+                }
+            }
+        }
+
+        // API: 重置对局
+        ("POST", "/api/reset") | ("GET", "/api/reset") => {
+            let mut seed: u64 = 42;
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "seed" {
+                        seed = v.parse::<u64>().unwrap_or(42);
+                    }
+                }
+            }
+
+            let mut sess = session.write().unwrap();
+            sess.reset(seed);
+            let json = serde_json::to_vec(&sess.current_state()).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // API: 获取指定步数快照
+        ("GET", "/api/step") => {
+            let mut index = 0;
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "index" {
+                        index = v.parse::<usize>().unwrap_or(0);
+                    }
+                }
+            }
+
+            let sess = session.read().unwrap();
+            if let Some(step) = sess.get_step(index) {
+                let json = serde_json::to_vec(step).unwrap();
+                respond(&mut stream, "200 OK", &json, "application/json");
+            } else {
+                respond(&mut stream, "404 Not Found", b"Step not found", "text/plain");
+            }
+        }
+
+        // API: 获取历史列表
+        ("GET", "/api/history") => {
+            let sess = session.read().unwrap();
+            let steps: Vec<_> = sess
+                .history
+                .iter()
+                .map(|s| StepSummary {
+                    index: s.step_index,
+                    player: s.player,
+                    action: s.action_desc.clone(),
+                    phase: s.phase.clone(),
+                })
+                .collect();
+            let res = HistoryResponse {
+                seed: sess.seed,
+                total_steps: sess.history.len(),
+                steps,
+            };
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // 静态文件服务
+        ("GET", _) => {
+            let rel_path = if path == "/" || path == "/index.html" {
+                "index.html"
+            } else {
+                path.trim_start_matches('/')
+            };
+
+            let file_path = web_root.join(rel_path);
+            if file_path.is_file() {
+                let ext = file_path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                let content_type = match ext {
+                    "html" => "text/html; charset=utf-8",
+                    "js" => "application/javascript; charset=utf-8",
+                    "css" => "text/css; charset=utf-8",
+                    "webp" => "image/webp",
+                    "png" => "image/png",
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "svg" => "image/svg+xml",
+                    "json" => "application/json",
+                    _ => "application/octet-stream",
+                };
+
+                if let Ok(content) = fs::read(&file_path) {
+                    respond(&mut stream, "200 OK", &content, content_type);
+                } else {
+                    respond(&mut stream, "500 Internal Error", b"read failed", "text/plain");
+                }
+            } else {
+                respond(&mut stream, "404 Not Found", b"File not found", "text/plain");
+            }
+        }
+
+        _ => {
+            respond(&mut stream, "405 Method Not Allowed", b"not allowed", "text/plain");
+        }
+    }
+}
+
+fn main() {
+    let port = env::args()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(8080);
+    let addr = format!("127.0.0.1:{port}");
+
+    let listener = TcpListener::bind(&addr).unwrap_or_else(|e| {
+        eprintln!("无法绑定地址 {addr}: {e}");
+        std::process::exit(1);
+    });
+
+    let web_root = find_web_root();
+    println!("==================================================");
+    println!("✨ 璀璨宝石：对决 (Splendor Duel) 可视化对局回放服务已启动！");
+    println!("🌐 本地访问地址: http://{addr}");
+    println!("📁 静态网页目录: {}", web_root.display());
+    println!("==================================================");
+
+    let session = Arc::new(RwLock::new(ReplaySession::new(42)));
+
+    for stream in listener.incoming() {
+        if let Ok(stream) = stream {
+            let session = Arc::clone(&session);
+            let web_root = web_root.clone();
+            std::thread::spawn(move || {
+                handle_client(stream, &session, &web_root);
+            });
+        }
+    }
+}

@@ -3,7 +3,7 @@ pub mod game_state;
 pub mod gameplay;
 pub mod model;
 
-pub use ai::RandomAI;
+pub use ai::{CardDto, PlayerDto, RandomAI, ReplaySession, ReplayStep, RoyalDto, StateDto};
 pub use game_state::{Board, GameState, PlayerState, TurnPhase, VictoryReason};
 pub use gameplay::{check_victory, compute_card_payment, GameEngine, RuleEngine};
 pub use model::{
