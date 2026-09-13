@@ -22,13 +22,20 @@
   }
 
   function normalizedBonusColor(card) {
-    const bonus = card && Array.isArray(card.bonuses) ? card.bonuses[0] : null;
-    if (!bonus) return 'joker';
-    return String(bonus).toLowerCase();
+    if (!card) return 'joker';
+    if (Array.isArray(card.bonuses) && card.bonuses.length > 0) {
+      const b = String(card.bonuses[0]).toLowerCase();
+      return GEM_COLORS.includes(b) ? b : 'joker';
+    }
+    if (card.color) {
+      const c = String(card.color).toLowerCase();
+      return GEM_COLORS.includes(c) ? c : 'joker';
+    }
+    return 'joker';
   }
 
   function developmentPlatePath(card) {
-    const level = cardLevelNumber(card.level);
+    const level = cardLevelNumber(card.level ?? card.tier);
     const color = normalizedBonusColor(card);
     return `assets/cards/plates/level-${level}-${color}.webp`;
   }

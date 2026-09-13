@@ -59,6 +59,36 @@ impl NeuralAI {
         false
     }
 
+    /// 获取当前神经网络微服务的详细状态（epoch, mtime, device 等）
+    pub fn get_status() -> Option<serde_json::Value> {
+        let addr: SocketAddr = Self::DEFAULT_ADDR.parse().ok()?;
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
+        let req = "GET /health HTTP/1.1\r\nHost: 127.0.0.1:8088\r\nConnection: close\r\n\r\n";
+        stream.write_all(req.as_bytes()).ok()?;
+        let mut buf = Vec::with_capacity(1024);
+        stream.read_to_end(&mut buf).ok()?;
+        let resp_str = String::from_utf8_lossy(&buf);
+        let body = resp_str.find("\r\n\r\n").map(|idx| &resp_str[idx + 4..])?;
+        serde_json::from_str(body).ok()
+    }
+
+    /// 向推理服务发送指令重载权重
+    pub fn reload_checkpoint() -> Result<serde_json::Value, String> {
+        let addr: SocketAddr = Self::DEFAULT_ADDR
+            .parse::<SocketAddr>()
+            .map_err(|e| format!("Addr parse failed: {e}"))?;
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(1000))
+            .map_err(|e| format!("Connect failed: {e}"))?;
+        let req = "POST /reload HTTP/1.1\r\nHost: 127.0.0.1:8088\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+        let mut buf = Vec::with_capacity(1024);
+        stream.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        let resp_str = String::from_utf8_lossy(&buf);
+        let body = resp_str.find("\r\n\r\n").map(|idx| &resp_str[idx + 4..])
+            .ok_or_else(|| "Invalid HTTP response".to_string())?;
+        serde_json::from_str(body).map_err(|e| format!("Parse failed: {e}"))
+    }
+
     /// 向推理服务请求预测动作与胜率评估
     pub fn predict_action(
         state: &GameState,

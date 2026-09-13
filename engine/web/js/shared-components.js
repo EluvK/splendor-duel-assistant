@@ -16,6 +16,35 @@ export const COLOR_CLASSES = {
 export const COLOR_KEYS = ['white', 'blue', 'green', 'red', 'black', 'pearl', 'gold'];
 export const COLOR_NAMES = ['白', '蓝', '绿', '红', '黑', '珍珠', '黄金'];
 
+export const ABILITY_DISPLAY_NAMES = {
+  ExtraTurn: '额外回合 🔁',
+  TakePrivilege: '拿特权 📜',
+  TakeSameColor: '拿同色 💎',
+  StealToken: '偷标记 🤏',
+  ColorCopy: '变色绑定 🎨',
+  ColorCopyAndExtraTurn: '变色+回合 🔁',
+};
+
+export const ROYAL_ABILITY_DISPLAY_NAMES = {
+  ExtraTurn: '额外回合 🔁',
+  TakePrivilege: '拿特权 📜',
+  StealToken: '偷标记 🤏',
+};
+
+/**
+ * 获取卡牌对应的底板图片相对路径
+ * @param {Object} card 卡牌 DTO
+ * @returns {string} 图片路径，如 'assets/cards/plates/level-1-blue.webp'
+ */
+export function getCardPlatePath(card) {
+  if (!card) return 'assets/cards/plates/level-1-joker.webp';
+  const tier = card.tier || 1;
+  const rawColor = (card.color || '').toLowerCase();
+  const validColors = ['white', 'blue', 'green', 'red', 'black'];
+  const color = validColors.includes(rawColor) ? rawColor : 'joker';
+  return `assets/cards/plates/level-${tier}-${color}.webp`;
+}
+
 /**
  * 渲染 5x5 棋盘
  * @param {Array<Array<string|null>>} boardData 5x5 二维矩阵
@@ -79,9 +108,10 @@ export function renderCardsList(cards, container, options = {}) {
   const fromReserved = options.fromReserved || false;
 
   cards.forEach(c => {
+    if (!c) return;
     const el = document.createElement('div');
     el.className = `card-item ${isCompact ? 'compact' : ''}`;
-    el.style.backgroundImage = `url('plates/level-${c.tier}-${c.color}.webp')`;
+    el.style.backgroundImage = `url('${getCardPlatePath(c)}')`;
 
     const canAfford = affordableSet.has(c.id);
     if (canAfford) {
@@ -95,7 +125,8 @@ export function renderCardsList(cards, container, options = {}) {
 
     const pointsHtml = c.points > 0 ? `<span class="card-points">${c.points}⭐</span>` : '<span></span>';
     const crownsHtml = c.crowns > 0 ? `<span class="card-crowns">${'👑'.repeat(c.crowns)}</span>` : '';
-    const abilityHtml = c.ability ? `<div class="card-ability-badge">${c.ability}</div>` : '';
+    const abilityLabel = c.ability ? (ABILITY_DISPLAY_NAMES[c.ability] || c.ability) : '';
+    const abilityHtml = abilityLabel ? `<div class="card-ability-badge">${abilityLabel}</div>` : '';
 
     el.innerHTML = `
       <div class="card-top">
@@ -153,21 +184,25 @@ export function renderPurchasedCards(cards, container) {
   }
 
   cards.forEach(c => {
+    if (!c) return;
     const el = document.createElement('div');
     el.className = 'card-item mini';
-    el.style.backgroundImage = `url('plates/level-${c.tier}-${c.color}.webp')`;
+    el.style.backgroundImage = `url('${getCardPlatePath(c)}')`;
 
-    const bonusText = c.bonus ? `${c.bonus.color}+${c.bonus.amount}` : '';
+    const bonusText = typeof c.bonus === 'object' && c.bonus !== null
+      ? `${c.bonus.color}+${c.bonus.amount}`
+      : (c.bonus > 0 ? `${c.color}+${c.bonus}` : '');
     const costsDetail = Object.entries(c.cost)
       .filter(([_, amount]) => amount > 0)
       .map(([color, amount]) => `${color}:${amount}`)
       .join(', ');
 
-    el.title = `【卡牌 #${c.id}】L${c.tier} ${c.color}\n声望: ${c.points}⭐ | 王冠: ${c.crowns}👑\n永久加成: ${bonusText || '无'}\n能力: ${c.ability || '无'}\n花费: ${costsDetail || '免费'}`;
+    const abilityLabel = c.ability ? (ABILITY_DISPLAY_NAMES[c.ability] || c.ability) : '';
+    el.title = `【卡牌 #${c.id}】L${c.tier} ${c.color}\n声望: ${c.points}⭐ | 王冠: ${c.crowns}👑\n永久加成: ${bonusText || '无'}\n能力: ${abilityLabel || '无'}\n花费: ${costsDetail || '免费'}`;
 
     const pointsHtml = c.points > 0 ? `<span class="card-points">${c.points}⭐</span>` : '<span></span>';
     const crownsHtml = c.crowns > 0 ? `<span class="card-crowns">${'👑'.repeat(c.crowns)}</span>` : '';
-    const abilityHtml = c.ability ? `<div class="card-ability-badge">${c.ability}</div>` : '';
+    const abilityHtml = abilityLabel ? `<div class="card-ability-badge">${abilityLabel}</div>` : '';
 
     el.innerHTML = `
       <div class="card-top">
@@ -197,10 +232,11 @@ export function renderPlayerRoyals(royals, container) {
     const el = document.createElement('div');
     el.className = 'royal-item mini';
     el.style.backgroundImage = `url('assets/cards/royals/royal-${r.id}.webp')`;
-    el.title = `【王室赞助卡 #${r.id}】\n声望: ${r.points}⭐\n能力: ${r.ability || '荣誉赞助'}`;
+    const abilityText = r.ability ? (ROYAL_ABILITY_DISPLAY_NAMES[r.ability] || r.ability) : '荣誉赞助';
+    el.title = `【王室赞助卡 #${r.id}】\n声望: ${r.points}⭐\n能力: ${abilityText}`;
     el.innerHTML = `
       <div style="font-size:0.92rem; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;">${r.points}⭐</div>
-      <div style="font-size:0.58rem; background:rgba(0,0,0,0.75); padding:1px 3px; border-radius:3px; color:#fbbf24; text-align:center;">${r.ability || '赞助'}</div>
+      <div style="font-size:0.58rem; background:rgba(0,0,0,0.75); padding:1px 3px; border-radius:3px; color:#fbbf24; text-align:center;">${abilityText}</div>
     `;
     container.appendChild(el);
   });
@@ -220,9 +256,10 @@ export function renderRoyalsPool(royals, container, options = {}) {
     const el = document.createElement('div');
     el.className = 'royal-item';
     el.style.backgroundImage = `url('assets/cards/royals/royal-${r.id}.webp')`;
+    const abilityText = r.ability ? (ROYAL_ABILITY_DISPLAY_NAMES[r.ability] || r.ability) : '荣誉赞助';
     el.innerHTML = `
       <div style="font-size:1.05rem; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;">${r.points}⭐</div>
-      <div style="font-size:0.65rem; background:rgba(0,0,0,0.75); padding:2px 4px; border-radius:3px; color:#fbbf24; text-align:center;">${r.ability || '荣誉赞助'}</div>
+      <div style="font-size:0.65rem; background:rgba(0,0,0,0.75); padding:2px 4px; border-radius:3px; color:#fbbf24; text-align:center;">${abilityText}</div>
     `;
 
     if (options.selectable) {

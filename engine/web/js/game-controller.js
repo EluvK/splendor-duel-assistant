@@ -53,6 +53,64 @@ export class GameController {
     document.getElementById('btnToReplay').onclick = () => this.toReplay();
     document.getElementById('p0KindSelect').onchange = () => this.startNewGame();
     document.getElementById('p1KindSelect').onchange = () => this.startNewGame();
+
+    const badge = document.getElementById('neuralModelBadge');
+    if (badge) {
+      badge.onclick = () => this.reloadNeuralModel();
+    }
+
+    this.checkNeuralStatus();
+    // 每 5 秒静默同步一次神经网络状态
+    setInterval(() => this.checkNeuralStatus(), 5000);
+  }
+
+  async checkNeuralStatus() {
+    try {
+      const res = await fetch('/api/neural_status');
+      if (res.ok) {
+        const data = await res.json();
+        const dot = document.getElementById('neuralStatusDot');
+        const badge = document.getElementById('neuralModelBadge');
+        const text = document.getElementById('neuralModelText');
+
+        if (data.available) {
+          if (dot) {
+            dot.style.color = '#22c55e';
+            dot.title = '神经网络推理微服务已连接 (127.0.0.1:8088)';
+          }
+          if (badge && text && data.details) {
+            badge.style.display = 'inline-flex';
+            text.innerText = `Epoch ${data.details.epoch ?? '--'}`;
+          }
+        } else {
+          if (dot) {
+            dot.style.color = '#ef4444';
+            dot.title = '神经网络未就绪，使用启发式 AI 兜底';
+          }
+          if (badge) badge.style.display = 'none';
+        }
+      }
+    } catch (e) {
+      // 静默忽略网络探测异常
+    }
+  }
+
+  async reloadNeuralModel() {
+    const text = document.getElementById('neuralModelText');
+    if (text) text.innerText = '重载中...';
+    try {
+      const res = await fetch('/api/neural_reload', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (text) text.innerText = `Epoch ${data.epoch ?? '--'}`;
+        alert(`✅ 神经网络权重已成功重载！最新版本: Epoch ${data.epoch}`);
+      } else {
+        alert('❌ 重载神经网络失败，请检查服务日志');
+      }
+    } catch (e) {
+      alert(`❌ 重载网络请求失败: ${e.message}`);
+    }
+    this.checkNeuralStatus();
   }
 
   async startNewGame() {

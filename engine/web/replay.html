@@ -34,6 +34,10 @@
           <option value="random">🎲 随机 AI</option>
         </select>
         <span id="neuralStatusDot" style="font-size:0.75rem; color:#22c55e;" title="神经网络服务状态">●</span>
+        <span id="neuralModelBadge" style="font-size:0.72rem; color:#a1a1aa; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); cursor:pointer; display:none; align-items:center; gap:3px;" title="点击可手动热重载 best.pt 权重">
+          <span id="neuralModelText">Epoch: --</span>
+          <span style="font-size:0.68rem; color:#38bdf8;">🔄</span>
+        </span>
       </div>
 
       <div class="slider-container">
@@ -698,24 +702,57 @@
       }
     });
 
-    setInterval(async () => {
+    const modelBadge = document.getElementById('neuralModelBadge');
+    if (modelBadge) {
+      modelBadge.onclick = async () => {
+        const text = document.getElementById('neuralModelText');
+        if (text) text.innerText = '重载中...';
+        try {
+          const res = await fetch('/api/neural_reload', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            if (text) text.innerText = `Epoch ${data.epoch ?? '--'}`;
+            alert(`✅ 神经网络权重已成功重载！最新版本: Epoch ${data.epoch}`);
+          } else {
+            alert('❌ 重载神经网络失败，请检查服务日志');
+          }
+        } catch (e) {
+          alert('重载失败: ' + e.message);
+        }
+      };
+    }
+
+    async function syncNeuralStatus() {
       try {
         const res = await fetch('/api/neural_status');
         if (res.ok) {
           const data = await res.json();
           const dot = document.getElementById('neuralStatusDot');
+          const badge = document.getElementById('neuralModelBadge');
+          const text = document.getElementById('neuralModelText');
           if (dot) {
             if (data.available) {
               dot.style.color = '#22c55e';
-              dot.title = `神经网络推理服务在线 (${data.device || 'CUDA'})`;
+              dot.title = `神经网络推理服务在线`;
             } else {
               dot.style.color = '#94a3b8';
               dot.title = '神经网络推理微服务未连接';
             }
           }
+          if (badge && text) {
+            if (data.available && data.details) {
+              badge.style.display = 'inline-flex';
+              text.innerText = `Epoch ${data.details.epoch ?? '--'}`;
+            } else {
+              badge.style.display = 'none';
+            }
+          }
         }
       } catch(e) {}
-    }, 5000);
+    }
+
+    setInterval(syncNeuralStatus, 5000);
+    syncNeuralStatus();
 
     fetchStatus();
   </script>

@@ -8,7 +8,10 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::process::Child;
+use std::sync::{Arc, Mutex, RwLock};
+
+static NEURAL_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 #[derive(Serialize)]
 struct StepSummary {
@@ -61,6 +64,13 @@ fn respond(stream: &mut TcpStream, status: &str, body: &[u8], content_type: &str
         body.len()
     );
     let _ = stream.write_all(body);
+}
+
+fn respond_headers_only(stream: &mut TcpStream, status: &str, length: usize, content_type: &str) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {length}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+    );
 }
 
 fn find_web_root() -> PathBuf {
@@ -288,9 +298,27 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
 
         ("GET", "/api/neural_status") => {
             let available = NeuralAI::is_available();
-            let res = serde_json::json!({ "available": available });
+            let details = if available { NeuralAI::get_status() } else { None };
+            let res = serde_json::json!({
+                "available": available,
+                "details": details,
+            });
             let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        ("POST", "/api/neural_reload") | ("GET", "/api/neural_reload") => {
+            match NeuralAI::reload_checkpoint() {
+                Ok(val) => {
+                    let json = serde_json::to_vec(&val).unwrap();
+                    respond(&mut stream, "200 OK", &json, "application/json");
+                }
+                Err(e) => {
+                    let err = serde_json::json!({ "ok": false, "error": e });
+                    let json = serde_json::to_vec(&err).unwrap();
+                    respond(&mut stream, "500 Internal Error", &json, "application/json");
+                }
+            }
         }
 
         ("POST", "/api/step") | ("GET", "/api/step_next") => {
@@ -473,20 +501,24 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
         }
 
         // ================= 静态文件服务 =================
-        ("GET", _) => {
+        ("GET", _) | ("HEAD", _) => {
+            let clean_path = path.trim_start_matches('/');
             let rel_path = if path == "/" || path == "/index.html" || path == "/play" || path == "/play.html" {
                 if web_root.join("play.html").exists() {
-                    "play.html"
+                    "play.html".to_string()
                 } else {
-                    "index.html"
+                    "index.html".to_string()
                 }
             } else if path == "/replay" {
-                "replay.html"
+                "replay.html".to_string()
+            } else if let Some(sub) = clean_path.strip_prefix("plates/") {
+                // 兼容旧的 /plates/ 访问路径映射至 assets/cards/plates/
+                format!("assets/cards/plates/{}", sub)
             } else {
-                path.trim_start_matches('/')
+                clean_path.to_string()
             };
 
-            let file_path = web_root.join(rel_path);
+            let file_path = web_root.join(&rel_path);
             if file_path.is_file() {
                 let ext = file_path
                     .extension()
@@ -505,7 +537,11 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 };
 
                 if let Ok(content) = fs::read(&file_path) {
-                    respond(&mut stream, "200 OK", &content, content_type);
+                    if method == "HEAD" {
+                        respond_headers_only(&mut stream, "200 OK", content.len(), content_type);
+                    } else {
+                        respond(&mut stream, "200 OK", &content, content_type);
+                    }
                 } else {
                     respond(&mut stream, "500 Internal Error", b"read failed", "text/plain");
                 }
@@ -571,6 +607,7 @@ fn ensure_neural_server_running() {
         "../python/splendor_ai/server.py"
     };
 
+    let current_pid = std::process::id();
     let mut spawn_cmd = std::process::Command::new(py_cmd);
     spawn_cmd.args([
         server_script,
@@ -578,6 +615,8 @@ fn ensure_neural_server_running() {
         "8088",
         "--checkpoint",
         checkpoint.to_str().unwrap(),
+        "--parent-pid",
+        &current_pid.to_string(),
     ]);
 
     #[cfg(windows)]
@@ -588,8 +627,11 @@ fn ensure_neural_server_running() {
     }
 
     match spawn_cmd.spawn() {
-        Ok(_) => {
-            println!("⏳ 等待神经网络推理微服务启动...");
+        Ok(child) => {
+            if let Ok(mut guard) = NEURAL_CHILD.lock() {
+                *guard = Some(child);
+            }
+            println!("⏳ 等待神经网络推理微服务启动 (已绑定父进程 PID: {current_pid})...");
             for _ in 0..40 {
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 if NeuralAI::is_available() {
@@ -606,6 +648,18 @@ fn ensure_neural_server_running() {
 }
 
 fn main() {
+    // 捕获 Ctrl+C，在主服务退出时优雅终止关联的 Python 推理微服务
+    ctrlc::set_handler(move || {
+        println!("\n🛑 收到退出信号，正在停止 replay_web 服务...");
+        if let Ok(mut guard) = NEURAL_CHILD.lock() {
+            if let Some(mut child) = guard.take() {
+                println!("🛑 正在终止关联的 Python 神经网络推理子进程...");
+                let _ = child.kill();
+            }
+        }
+        std::process::exit(0);
+    }).expect("Error setting Ctrl-C handler");
+
     let args: Vec<String> = env::args().collect();
     let port = args.get(1).and_then(|p| p.parse().ok()).unwrap_or(8080);
     let addr = format!("127.0.0.1:{port}");
