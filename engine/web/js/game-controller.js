@@ -116,6 +116,8 @@ export class GameController {
   async startNewGame() {
     this.clearModal();
     this.selectedBoardPositions = [];
+    const winnerBanner = document.getElementById('winnerBanner');
+    if (winnerBanner) winnerBanner.style.display = 'none';
     const p0 = document.getElementById('p0KindSelect').value;
     const p1 = document.getElementById('p1KindSelect').value;
     const seed = Math.floor(Math.random() * 100000);
@@ -527,12 +529,21 @@ export class GameController {
 
   renderGuideBanner() {
     this.actionBarButtons.innerHTML = '';
+    const winnerBanner = document.getElementById('winnerBanner');
 
     if (this.state.winner) {
+      if (winnerBanner) {
+        winnerBanner.style.display = 'flex';
+        winnerBanner.innerHTML = `<span>🏆 <b>对局结束</b> — 获胜者: <span style="color:#fbbf24; font-size:1.06rem; margin-left:4px;">${this.state.winner}</span></span>`;
+      }
       this.guideBadge.innerText = '🏆 胜负已分';
       this.guideBadge.style.backgroundColor = '#dc2626';
       this.guideText.innerHTML = `<span style="color:#ef4444; font-weight:800;">${this.state.winner}！</span> 点击右侧按钮可一键将本局对战转入复盘分析。`;
       return;
+    }
+
+    if (winnerBanner) {
+      winnerBanner.style.display = 'none';
     }
 
     if (!this.isHuman) {

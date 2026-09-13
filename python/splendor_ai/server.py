@@ -18,6 +18,7 @@ WORKSPACE_ROOT = os.path.dirname(PROJECT_ROOT)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from splendor_ai.env import SplendorDuelEnv
 from splendor_ai.net import SplendorNet
 
 

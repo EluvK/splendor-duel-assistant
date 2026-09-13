@@ -17,7 +17,7 @@
         <a href="play.html" class="nav-tab active">🎮 实时对战</a>
         <a href="replay.html" class="nav-tab">🎬 复盘分析</a>
       </div>
-      <span class="status-badge" id="gameTurnBadge">对局准备中</span>
+      <span id="gameTurnBadge" style="display:none;"></span>
     </div>
 
     <div class="controls">
@@ -53,6 +53,11 @@
       <button class="btn-success" id="btnToReplay" title="将本局对战转入复盘系统逐帧分析">转入复盘分析 🎬</button>
     </div>
   </header>
+
+  <!-- 独立获胜者专属通栏 (独立一行，置于 header 导航栏下方、正式版图上方) -->
+  <div class="phase-strip">
+    <div id="winnerBanner" class="winner-banner" style="display: none;"></div>
+  </div>
 
   <!-- 顶部操作指引条 -->
   <div style="padding: 6px 14px 0 14px;">
@@ -95,16 +100,8 @@
       </div>
     </div>
 
-    <!-- 中间：王室赞助池 + 3 级金字塔卡牌 -->
+    <!-- 中间：3 级金字塔卡牌 + 王室赞助池 (王室置于金字塔下方且居中) -->
     <div class="panel pyramid-section">
-      <div class="panel-title">
-        <span>王室赞助池</span>
-        <span style="font-size:0.7rem; color:var(--text-muted);">满 3 / 6 王冠自动触发认领</span>
-      </div>
-      <div class="royals-row" id="royalsContainer">
-        <!-- 4 张王室卡 -->
-      </div>
-
       <div class="panel-title">金字塔珠宝展示区</div>
       
       <!-- Tier 3 -->
@@ -141,6 +138,15 @@
           </div>
         </div>
         <div class="cards-flex" id="tier1Cards"></div>
+      </div>
+
+      <!-- 王室赞助池 (置于金字塔下方) -->
+      <div class="panel-title" style="margin-top: 6px;">
+        <span>王室赞助池</span>
+        <span style="font-size:0.7rem; color:var(--text-muted);">满 3 / 6 王冠自动触发认领</span>
+      </div>
+      <div class="royals-row" id="royalsContainer">
+        <!-- 4 张王室卡 (居中排布) -->
       </div>
     </div>
 

@@ -19,6 +19,11 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 body {
   background-color: var(--bg-main);
   color: var(--text-main);
@@ -195,10 +200,56 @@ input[type="range"] {
   cursor: pointer;
 }
 
-/* 主视窗三栏并排网格 */
+/* 顶部与版图之间的独立通栏：阶段指示与独立获胜者专属横幅 */
+.phase-strip {
+  padding: 6px 14px 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.winner-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.12) 0%, rgba(234, 179, 8, 0.32) 50%, rgba(234, 179, 8, 0.12) 100%);
+  border: 1.5px solid var(--accent-gold);
+  border-radius: 6px;
+  padding: 8px 18px;
+  color: #fff;
+  font-size: 0.96rem;
+  font-weight: 800;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+  box-shadow: 0 0 16px rgba(234, 179, 8, 0.3);
+  animation: pulse-winner 2.2s infinite ease-in-out;
+}
+
+@keyframes pulse-winner {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(234, 179, 8, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(234, 179, 8, 0.65);
+  }
+}
+
+.phase-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #141824;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  color: var(--text-main);
+}
+
+/* 主视窗三栏并排网格 (优化后：金字塔区域拓宽至 670px 确保单行容纳 6 张卡牌) */
 main {
   display: grid;
-  grid-template-columns: 290px 480px 1fr;
+  grid-template-columns: 270px 670px 1fr;
   gap: 12px;
   padding: 10px 14px;
   flex: 1;
@@ -227,16 +278,19 @@ main {
   padding-bottom: 4px;
 }
 
-/* 5x5 棋盘布局 (BGA 羊皮纸螺旋棋盘原画风格) */
+/* 5x5 棋盘布局 (BGA 羊皮纸螺旋棋盘原画风格，尺寸固定 270x270px 杜绝空列坍塌) */
 .left-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 270px;
+  flex-shrink: 0;
 }
 
 .board-container {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
   gap: 6px;
   background-image: url('../assets/images/board.jpg');
   background-size: 100% 100%;
@@ -246,7 +300,9 @@ main {
   border-radius: 10px;
   border: 2px solid #573f1d;
   box-shadow: inset 0 0 25px rgba(0, 0, 0, 0.85), 0 8px 20px rgba(0, 0, 0, 0.6);
-  aspect-ratio: 1 / 1;
+  width: 270px;
+  height: 270px;
+  box-sizing: border-box;
 }
 
 .board-cell {
@@ -258,6 +314,12 @@ main {
   align-items: center;
   position: relative;
   transition: all 0.15s;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  aspect-ratio: 1 / 1;
 }
 
 .board-cell:hover {
@@ -274,6 +336,8 @@ main {
   border-radius: 6px;
   border: 1px solid var(--border-color);
   font-size: 0.78rem;
+  width: 270px;
+  box-sizing: border-box;
 }
 
 .privilege-icon {
@@ -298,10 +362,10 @@ main {
   margin-right: 4px;
 }
 
-/* 标记样式 (BGA 原版 3D 浮雕筹码) */
+/* 标记样式 (BGA 原版 3D 浮雕筹码，尺寸精准适配圆形格槽) */
 .token {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
@@ -314,6 +378,7 @@ main {
   user-select: none;
   transition: transform 0.15s, box-shadow 0.15s;
   cursor: default;
+  flex-shrink: 0;
 }
 
 .token:hover {
@@ -412,13 +477,15 @@ main {
 .cards-flex {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .card-item {
-  width: 102px;
-  height: 154px;
+  width: 98px;
+  height: 148px;
   background-color: #1a1714;
   background-repeat: no-repeat;
   border: 1.5px solid #4a3b2c;
@@ -432,6 +499,7 @@ main {
   transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
   overflow: hidden;
   cursor: default;
+  flex-shrink: 0;
 }
 
 .card-item:hover {
@@ -483,11 +551,22 @@ main {
   box-shadow: 0 2px 5px rgba(0,0,0,0.7);
 }
 
-/* 王室卡展示 (BGA 原版实物风格) */
+/* 金字塔视觉层级阶梯对齐 (牌库左侧竖直对齐，明牌区域向右偏移以中心对称) */
+#tier3Cards .deck-pile + .card-item {
+  margin-left: 104px;
+}
+
+#tier2Cards .deck-pile + .card-item {
+  margin-left: 52px;
+}
+
+/* 王室卡展示 (BGA 原版实物风格，居中排布) */
 .royals-row {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
+  justify-content: center;
+  padding: 4px 0;
 }
 
 .royal-item {
@@ -891,10 +970,10 @@ main {
   font-weight: 800;
 }
 
-/* 响应式调整 */
+/* 响应式调整 (小屏时中间金字塔自适应，玩家面板折行置底) */
 @media (max-width: 1400px) {
   main {
-    grid-template-columns: 290px 1fr;
+    grid-template-columns: 270px 1fr;
   }
   .player-panel {
     grid-column: 1 / -1;

@@ -15,7 +15,7 @@
         <a href="play.html" class="nav-tab">🎮 实时对战</a>
         <a href="replay.html" class="nav-tab active">🎬 复盘分析</a>
       </div>
-      <span class="status-badge" id="gamePhase">正在初始化...</span>
+      <span id="gamePhase" style="display:none;"></span>
     </div>
 
     <div class="controls">
@@ -59,6 +59,15 @@
     </div>
   </header>
 
+  <!-- 顶部状态栏与独立获胜者专属横幅 (独立一行，置于 header 下方、版图上方) -->
+  <div class="phase-strip">
+    <div id="winnerBanner" class="winner-banner" style="display: none;"></div>
+    <div id="phaseBar" class="phase-bar">
+      <span id="phaseBarText">正在初始化...</span>
+      <span id="phaseBarSub" style="font-size: 0.74rem; color: var(--text-muted);"></span>
+    </div>
+  </div>
+
   <main>
     <!-- 左侧：5x5 棋盘 + 特权/布袋 + 下方对局步骤日志 -->
     <div class="panel left-panel">
@@ -86,13 +95,8 @@
       </div>
     </div>
 
-    <!-- 中间：王室卡与 3 级金字塔卡牌 -->
+    <!-- 中间：3 级金字塔卡牌 + 王室赞助池 (王室置于金字塔下方且居中) -->
     <div class="panel pyramid-section">
-      <div class="panel-title">王室赞助池</div>
-      <div class="royals-row" id="royalsContainer">
-        <!-- 4 张王室卡 -->
-      </div>
-
       <div class="panel-title">金字塔明牌展示区</div>
       <div class="tier-row">
         <div class="tier-header">
@@ -116,6 +120,12 @@
           <span>牌堆剩余: <b id="deck1Count">0</b></span>
         </div>
         <div class="cards-flex" id="tier1Cards"></div>
+      </div>
+
+      <!-- 王室赞助池 (置于金字塔下方) -->
+      <div class="panel-title" style="margin-top: 6px;">王室赞助池</div>
+      <div class="royals-row" id="royalsContainer">
+        <!-- 4 张王室卡 (居中排布) -->
       </div>
     </div>
 
@@ -608,19 +618,32 @@
       const nextPlayer = state.current_player;
 
       const phaseEl = document.getElementById('gamePhase');
+      const winnerBanner = document.getElementById('winnerBanner');
+      const phaseBar = document.getElementById('phaseBar');
+      const phaseBarText = document.getElementById('phaseBarText');
+      const phaseBarSub = document.getElementById('phaseBarSub');
+
       if (state.winner) {
         phaseEl.innerText = `🏆 获胜者: ${state.winner}`;
-        phaseEl.style.backgroundColor = '#dc2626';
-        phaseEl.style.color = '#fff';
-      } else if (step && step.step_index > 0) {
-        const turnTip = (actor !== nextPlayer) ? `(下次回合由 P${nextPlayer} 接手)` : `(持续行动)`;
-        phaseEl.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase} ${turnTip}`;
-        phaseEl.style.backgroundColor = 'var(--bg-card)';
-        phaseEl.style.color = 'var(--text-main)';
+        if (winnerBanner) {
+          winnerBanner.style.display = 'flex';
+          winnerBanner.innerHTML = `<span>🏆 <b>对局结束</b> — 获胜者: <span style="color:#fbbf24; font-size:1.06rem; margin-left:4px;">${state.winner}</span></span>`;
+        }
+        if (phaseBar) phaseBar.style.display = 'none';
       } else {
-        phaseEl.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
-        phaseEl.style.backgroundColor = 'var(--bg-card)';
-        phaseEl.style.color = 'var(--text-main)';
+        if (winnerBanner) winnerBanner.style.display = 'none';
+        if (phaseBar) phaseBar.style.display = 'flex';
+
+        if (step && step.step_index > 0) {
+          const turnTip = (actor !== nextPlayer) ? `(下次回合由 P${nextPlayer} 接手)` : `(持续行动)`;
+          phaseEl.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase}`;
+          if (phaseBarText) phaseBarText.innerText = `第 ${state.turn_number} 回合 | P${actor} 执行动作 | 阶段: ${state.phase}`;
+          if (phaseBarSub) phaseBarSub.innerText = turnTip;
+        } else {
+          phaseEl.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
+          if (phaseBarText) phaseBarText.innerText = `第 ${state.turn_number} 回合 | 先手行动: P${state.current_player} | 阶段: ${state.phase}`;
+          if (phaseBarSub) phaseBarSub.innerText = '初始准备就绪';
+        }
       }
 
       // 5x5 棋盘

@@ -462,8 +462,10 @@ export function renderPlayerDashboard(p, cardEl, isActing, isNext, prefix, optio
       if (count > 0) {
         hasBonus = true;
         const chip = document.createElement('span');
-        chip.className = `chip ${COLOR_CLASSES[COLOR_KEYS[idx]]}`;
-        chip.innerText = `${COLOR_NAMES[idx]}: +${count}`;
+        const colKey = COLOR_KEYS[idx];
+        chip.className = `chip ${COLOR_CLASSES[colKey]}`;
+        chip.innerHTML = `<span class="chip-token-icon token-${colKey}"></span> <span><b>${COLOR_NAMES[idx]}</b>: +${count}</span>`;
+        chip.title = `${COLOR_NAMES[idx]}宝石永久减免 +${count}`;
         bonusContainer.appendChild(chip);
       }
     });
