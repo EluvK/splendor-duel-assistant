@@ -382,17 +382,23 @@ pub struct ParallelMatchResult {
     pub reasons_20_pts: usize,
     pub reasons_10_crowns: usize,
     pub reasons_10_color: usize,
+    pub p0_seat_wins: usize,
+    pub p1_seat_wins: usize,
 }
 
-/// 纯 Rust 多线程 8 核并发进行严格换座的 PolicyNet 门禁对抗评测 (0.1 秒秒杀 20 局对决)
+/// 纯 Rust 多线程 8 核并发进行严格换座的对抗评测 (支持纯 PolicyNet 或 Neural MCTS，支持模型间对战或模型对战启发式)
 pub fn evaluate_neural_match_parallel(
     bytes0: &[u8],
-    bytes1: &[u8],
+    bytes1: Option<&[u8]>,
     num_pairs: usize,
     base_seed: u64,
+    num_sims: usize,
 ) -> Result<ParallelMatchResult, String> {
     let eval0 = TractNeuralEvaluator::from_bytes(bytes0)?;
-    let eval1 = TractNeuralEvaluator::from_bytes(bytes1)?;
+    let eval1 = match bytes1 {
+        Some(b) if !b.is_empty() => Some(TractNeuralEvaluator::from_bytes(b)?),
+        _ => None,
+    };
 
     let total_games = num_pairs * 2;
     let mut tasks = Vec::with_capacity(total_games);
@@ -406,6 +412,8 @@ pub fn evaluate_neural_match_parallel(
         .into_par_iter()
         .map(|(seed, is_swap)| {
             let mut game = GameState::new_game(seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mcts = RustMCTS::default();
             let mut steps = 0;
             while !matches!(game.phase, TurnPhase::GameOver(_)) && steps < 400 {
                 steps += 1;
@@ -425,25 +433,81 @@ pub fn evaluate_neural_match_parallel(
                     continue;
                 }
 
-                let obs = encode_state(&game);
-                let eval = if is_agent0 { &eval0 } else { &eval1 };
-                let (logits, _) = match eval.evaluate(&obs) {
-                    Ok(r) => r,
-                    Err(_) => break,
+                let chosen_act = if is_agent0 {
+                    if num_sims == 0 {
+                        let obs = encode_state(&game);
+                        let (logits, _) = match eval0.evaluate(&obs) {
+                            Ok(r) => r,
+                            Err(_) => break,
+                        };
+                        let mut best_score = f32::NEG_INFINITY;
+                        let mut best_act = legals[0].clone();
+                        for act in legals {
+                            let id = action_to_id(&act);
+                            let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
+                            if logit > best_score {
+                                best_score = logit;
+                                best_act = act;
+                            }
+                        }
+                        best_act
+                    } else {
+                        match mcts.search_neural_with_exploration(
+                            &game,
+                            &eval0,
+                            num_sims,
+                            false,
+                            0.0,
+                            0.0,
+                            0.0,
+                            &mut rng,
+                        ) {
+                            Some(act) => act,
+                            None => legals[0].clone(),
+                        }
+                    }
+                } else if let Some(ref eval1) = eval1 {
+                    if num_sims == 0 {
+                        let obs = encode_state(&game);
+                        let (logits, _) = match eval1.evaluate(&obs) {
+                            Ok(r) => r,
+                            Err(_) => break,
+                        };
+                        let mut best_score = f32::NEG_INFINITY;
+                        let mut best_act = legals[0].clone();
+                        for act in legals {
+                            let id = action_to_id(&act);
+                            let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
+                            if logit > best_score {
+                                best_score = logit;
+                                best_act = act;
+                            }
+                        }
+                        best_act
+                    } else {
+                        match mcts.search_neural_with_exploration(
+                            &game,
+                            eval1,
+                            num_sims,
+                            false,
+                            0.0,
+                            0.0,
+                            0.0,
+                            &mut rng,
+                        ) {
+                            Some(act) => act,
+                            None => legals[0].clone(),
+                        }
+                    }
+                } else {
+                    // 对战内置 HeuristicAI
+                    match HeuristicAI::select_action(&game, &mut rng) {
+                        Some(act) => act,
+                        None => legals[0].clone(),
+                    }
                 };
 
-                let mut best_score = f32::NEG_INFINITY;
-                let mut best_act = legals[0].clone();
-                for act in legals {
-                    let id = action_to_id(&act);
-                    let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
-                    if logit > best_score {
-                        best_score = logit;
-                        best_act = act;
-                    }
-                }
-
-                if GameEngine::step(&mut game, &best_act).is_err() {
+                if GameEngine::step(&mut game, &chosen_act).is_err() {
                     break;
                 }
             }
@@ -468,6 +532,11 @@ pub fn evaluate_neural_match_parallel(
                     res.agent0_wins += 1;
                 } else {
                     res.agent1_wins += 1;
+                }
+                if w == 0 {
+                    res.p0_seat_wins += 1;
+                } else {
+                    res.p1_seat_wins += 1;
                 }
                 if let Some(r) = reason {
                     match r {

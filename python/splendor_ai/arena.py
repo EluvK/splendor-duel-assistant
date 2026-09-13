@@ -74,7 +74,7 @@ class Arena:
         env.reset()
         steps = 0
 
-        while not env.is_done:
+        while not env.is_done and steps < max_steps:
             steps += 1
             curr_mover = env.current_player
             agent = player0 if curr_mover == 0 else player1

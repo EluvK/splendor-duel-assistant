@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from splendor_ai.arena import Arena
-from splendor_ai.mcts import HeuristicAgent, MCTSAgent, PolicyNetAgent
+from splendor_ai.mcts import HeuristicAgent, MCTSAgent, NeuralMCTSAgent, PolicyNetAgent
 from splendor_ai.net import SplendorNet
 
 
@@ -112,12 +112,12 @@ def run_benchmark(
         print(f"   • 模仿学习最后指标: loss={info['meta']['train'].get('loss', 0):.4f}")
 
     # 构造评测 Agent
-    agent_desc = f"MCTS-{mcts_sims}" if use_mcts else "PolicyNet"
+    agent_desc = f"NeuralMCTS-{mcts_sims}" if use_mcts else "PolicyNet"
     agent_eval1 = (
-        MCTSAgent(num_sims=mcts_sims) if use_mcts else PolicyNetAgent(net, device)
+        NeuralMCTSAgent(net, device, num_sims=mcts_sims) if use_mcts else PolicyNetAgent(net, device)
     )
     agent_eval2 = (
-        MCTSAgent(num_sims=mcts_sims) if use_mcts else PolicyNetAgent(net, device)
+        NeuralMCTSAgent(net, device, num_sims=mcts_sims) if use_mcts else PolicyNetAgent(net, device)
     )
 
     print("-" * 80)

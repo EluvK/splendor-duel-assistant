@@ -113,10 +113,11 @@ def test_generate_neural_mcts_selfplay():
 
 
 def test_generate_rust_neural_mcts_selfplay():
+    torch.manual_seed(42)
     net = SplendorNet()
     batch = generate_rust_neural_mcts_compact_batch(
         net=net,
-        num_games=1,
+        num_games=2,
         num_simulations=10,
         start_seed=42,
         temp_steps=4,
@@ -129,3 +130,27 @@ def test_generate_rust_neural_mcts_selfplay():
     assert batch.value.shape == (batch.num_samples, 1)
     assert np.all(np.isin(batch.value, [-1.0, 1.0]))
     assert set(np.unique(batch.value)).issubset({-1.0, 1.0})
+
+
+def test_evaluate_neural_match_with_mcts():
+    from splendor_ai._engine import evaluate_neural_match
+
+    torch.manual_seed(42)
+    net = SplendorNet()
+    bytes0 = net.export_onnx_bytes()
+
+    # 1. 神经模型 vs 启发式 AI (带 MCTS)
+    total, a0, a1, draws, reasons = evaluate_neural_match(
+        bytes0, None, num_pairs=1, base_seed=42, num_sims=5
+    )
+    assert total == 2
+    assert a0 + a1 + draws == 2
+    assert "p0_seat_wins" in reasons
+
+    # 2. 神经模型 vs 神经模型 (带 MCTS)
+    total, a0, a1, draws, reasons = evaluate_neural_match(
+        bytes0, bytes0, num_pairs=1, base_seed=42, num_sims=5
+    )
+    assert total == 2
+    assert a0 + a1 + draws == 2
+

@@ -296,15 +296,18 @@ pub fn generate_neural_mcts_samples(
     Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
 }
 
-/// 纯 Rust 多线程 8 核并发成对严格换座对抗评测 (0.05 秒极速完成 20 局门禁对抗，零 Python/CUDA 开销)
+/// 纯 Rust 多线程 8 核并发成对严格换座对抗评测 (秒级极速完成门禁对抗，零 Python/CUDA 开销)
+/// - model_bytes_1: None 或空字节时，对抗内置 HeuristicAI
+/// - num_sims: 0 为极速纯直觉 PolicyNet 对决；> 0 时开启纯神经网络 MCTS 树搜索对抗
 #[pyfunction]
-#[pyo3(signature = (model_bytes_0, model_bytes_1, num_pairs=10, base_seed=1000))]
+#[pyo3(signature = (model_bytes_0, model_bytes_1=None, num_pairs=10, base_seed=1000, num_sims=0))]
 pub fn evaluate_neural_match(
     py: Python<'_>,
     model_bytes_0: &[u8],
-    model_bytes_1: &[u8],
+    model_bytes_1: Option<&[u8]>,
     num_pairs: usize,
     base_seed: u64,
+    num_sims: usize,
 ) -> PyResult<(usize, usize, usize, usize, HashMap<String, usize>)> {
     let res = py
         .detach(|| {
@@ -313,6 +316,7 @@ pub fn evaluate_neural_match(
                 model_bytes_1,
                 num_pairs,
                 base_seed,
+                num_sims,
             )
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
@@ -322,6 +326,8 @@ pub fn evaluate_neural_match(
     reasons.insert("10_crowns".to_string(), res.reasons_10_crowns);
     reasons.insert("10_color_points".to_string(), res.reasons_10_color);
     reasons.insert("draw".to_string(), res.draws);
+    reasons.insert("p0_seat_wins".to_string(), res.p0_seat_wins);
+    reasons.insert("p1_seat_wins".to_string(), res.p1_seat_wins);
 
     Ok((
         res.total_games,

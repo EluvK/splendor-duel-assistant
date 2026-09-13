@@ -107,7 +107,7 @@ class SplendorDuelEnv:
 
     @property
     def is_done(self) -> bool:
-        return self.game.is_done()
+        return self.game.is_done() or self.step_count >= self.max_steps
 
     @property
     def scores(self) -> Tuple[int, int]:
@@ -119,9 +119,10 @@ class SplendorDuelEnv:
         """双方当前王冠总数 (p0_crowns, p1_crowns)."""
         return self.game.crowns()
 
-    def heuristic_action(self, seed: int = 42) -> Optional[int]:
+    def heuristic_action(self, seed: Optional[int] = None) -> Optional[int]:
         """获取启发式 AI 推荐的动作 ID."""
-        return self.game.heuristic_action_id(seed)
+        actual_seed = seed if seed is not None else int(np.random.randint(0, 2**31 - 1))
+        return self.game.heuristic_action_id(actual_seed)
 
     def rust_mcts_action(
         self,
