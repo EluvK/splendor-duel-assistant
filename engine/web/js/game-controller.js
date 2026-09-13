@@ -632,6 +632,11 @@ export class GameController {
 
     if (!this.isHuman && this.autoStepAi) {
       this.scheduleAiStep();
+    } else if (this.isHuman && this.state.phase === 'OptionalActions') {
+      // 若无可操作的可选行动（无特权且不可补盘），自动跳过进入强制行动阶段
+      if (this.legalActions.length === 1 && this.legalActions[0].category === 'skip_optional') {
+        this.submitAction('SkipOptional');
+      }
     }
   }
 

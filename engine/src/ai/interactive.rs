@@ -83,12 +83,39 @@ impl InteractiveSession {
             decision: None,
         };
 
-        Self {
+        let mut sess = Self {
             seed,
             player_kinds,
             game,
             rng: ChaCha8Rng::seed_from_u64(seed),
             history: vec![initial_step],
+        };
+        sess.maybe_auto_skip_optional();
+        sess
+    }
+
+    /// 如果处于可选阶段且没有任何可执行的可选操作（无特权且不可补盘），自动跳过进入强制行动阶段
+    pub fn maybe_auto_skip_optional(&mut self) {
+        while self.game.phase == TurnPhase::OptionalActions {
+            let legals = RuleEngine::legal_actions(&self.game);
+            if legals.len() == 1 && legals[0] == Action::SkipOptional {
+                let player = self.game.current_player;
+                if GameEngine::step(&mut self.game, &Action::SkipOptional).is_ok() {
+                    let next_step = ReplayStep {
+                        step_index: self.history.len(),
+                        player,
+                        action_desc: "Skip Optional (Auto)".to_string(),
+                        phase: "OptionalActions".to_string(),
+                        state: StateDto::from(&self.game),
+                        decision: None,
+                    };
+                    self.history.push(next_step);
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -160,6 +187,7 @@ impl InteractiveSession {
         };
 
         self.history.push(next_step.clone());
+        self.maybe_auto_skip_optional();
         Ok(next_step)
     }
 
@@ -272,6 +300,7 @@ impl InteractiveSession {
             };
 
             self.history.push(next_step.clone());
+            self.maybe_auto_skip_optional();
             Ok(Some(next_step))
         } else {
             Err("No legal action for AI".to_string())
