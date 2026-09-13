@@ -18,4 +18,8 @@ extra-index-url = ["https://download.pytorch.org/whl/cu124"]
 python-source = "python"
 module-name = "splendor_ai._engine"
 manifest-path = "engine/Cargo.toml"
-features = ["pyo3/extension-module"]
+features = ["python"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+norecursedirs = ["reference", ".venv", "target", "engine"]

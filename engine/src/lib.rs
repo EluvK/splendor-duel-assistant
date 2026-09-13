@@ -6,6 +6,8 @@ pub mod model;
 
 pub use ai::{CardDto, PlayerDto, RandomAI, ReplaySession, ReplayStep, RoyalDto, StateDto};
 pub use bridge::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
+#[cfg(feature = "python")]
+pub use bridge::PyGameState;
 pub use game_state::{Board, GameState, PlayerState, TurnPhase, VictoryReason};
 pub use gameplay::{check_victory, compute_card_payment, GameEngine, RuleEngine};
 pub use model::{
@@ -18,6 +20,7 @@ use pyo3::prelude::*;
 
 #[cfg(feature = "python")]
 #[pymodule]
-fn _engine(_py: Python<'_>, _m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _engine(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<bridge::PyGameState>()?;
     Ok(())
 }
