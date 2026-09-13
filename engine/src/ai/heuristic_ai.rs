@@ -12,30 +12,45 @@ pub struct HeuristicAI;
 impl HeuristicAI {
     /// 评估所有合法动作并挑选综合得分最高者（带微小随机扰动避免死板对决）
     pub fn select_action<R: Rng + ?Sized>(state: &GameState, rng: &mut R) -> Option<Action> {
+        Self::evaluate_and_select(state, rng).map(|(act, _, _)| act)
+    }
+
+    /// 评估所有合法动作，返回 (选中的最佳动作, 基础评分, 全部候选动作基础评分降序列表)
+    pub fn evaluate_and_select<R: Rng + ?Sized>(
+        state: &GameState,
+        rng: &mut R,
+    ) -> Option<(Action, f32, Vec<(Action, f32)>)> {
         let legals = RuleEngine::legal_actions(state);
         if legals.is_empty() {
             return None;
         }
 
+        let mut scored_actions: Vec<(Action, f32)> = Vec::with_capacity(legals.len());
         let mut best_action = legals[0].clone();
-        let mut best_score = f32::NEG_INFINITY;
+        let mut best_noisy_score = f32::NEG_INFINITY;
+        let mut best_base_score = f32::NEG_INFINITY;
 
         for act in legals {
             let base_score = Self::evaluate_action(state, &act);
             // 注入微弱噪声 [-0.5, 0.5] 打破平局
             let noise: f32 = rng.random_range(-0.5..0.5);
-            let total = base_score + noise;
+            let noisy_total = base_score + noise;
 
-            if total > best_score {
-                best_score = total;
-                best_action = act;
+            if noisy_total > best_noisy_score {
+                best_noisy_score = noisy_total;
+                best_action = act.clone();
+                best_base_score = base_score;
             }
+            scored_actions.push((act, base_score));
         }
 
-        Some(best_action)
+        // 按基础得分降序排序
+        scored_actions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        Some((best_action, best_base_score, scored_actions))
     }
 
-    fn evaluate_action(state: &GameState, action: &Action) -> f32 {
+    pub fn evaluate_action(state: &GameState, action: &Action) -> f32 {
         let cp = state.current_player;
         let p = &state.players[cp];
 

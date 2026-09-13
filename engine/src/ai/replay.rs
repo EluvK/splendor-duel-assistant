@@ -2,6 +2,7 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
+use super::heuristic_ai::HeuristicAI;
 use super::random_ai::RandomAI;
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::player::PlayerState;
@@ -211,6 +212,49 @@ impl From<&GameState> for StateDto {
     }
 }
 
+/// 玩家 AI 类型枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerType {
+    Heuristic,
+    Random,
+    Neural, // 预留未来通过 Python 桥接的模型推断
+}
+
+impl PlayerType {
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().trim() {
+            "random" => PlayerType::Random,
+            "neural" => PlayerType::Neural,
+            _ => PlayerType::Heuristic,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PlayerType::Heuristic => "heuristic",
+            PlayerType::Random => "random",
+            PlayerType::Neural => "neural",
+        }
+    }
+}
+
+/// 启发式打分项 DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoredActionDto {
+    pub action_desc: String,
+    pub score: f32,
+    pub is_chosen: bool,
+}
+
+/// 单步 AI 思考与评分决策详情
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionDto {
+    pub ai_type: String,
+    pub chosen_score: Option<f32>,
+    pub top_candidates: Vec<ScoredActionDto>,
+}
+
 /// 单步历史记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayStep {
@@ -219,11 +263,13 @@ pub struct ReplayStep {
     pub action_desc: String,
     pub phase: String,
     pub state: StateDto,
+    pub decision: Option<DecisionDto>,
 }
 
 /// 对局回放会话
 pub struct ReplaySession {
     pub seed: u64,
+    pub player_types: [PlayerType; 2],
     pub live_game: GameState,
     pub rng: ChaCha8Rng,
     pub history: Vec<ReplayStep>,
@@ -231,6 +277,10 @@ pub struct ReplaySession {
 
 impl ReplaySession {
     pub fn new(seed: u64) -> Self {
+        Self::new_with_players(seed, [PlayerType::Heuristic, PlayerType::Heuristic])
+    }
+
+    pub fn new_with_players(seed: u64, player_types: [PlayerType; 2]) -> Self {
         let game = GameState::new_game(seed);
         let initial_dto = StateDto::from(&game);
 
@@ -240,19 +290,34 @@ impl ReplaySession {
             action_desc: "Game Started".to_string(),
             phase: initial_dto.phase.clone(),
             state: initial_dto,
+            decision: None,
         };
 
         Self {
             seed,
+            player_types,
             live_game: game,
             rng: ChaCha8Rng::seed_from_u64(seed),
             history: vec![initial_step],
         }
     }
 
-    /// 重置对局
+    /// 重置对局（保持当前玩家类型配置）
     pub fn reset(&mut self, seed: u64) {
-        *self = Self::new(seed);
+        let types = self.player_types;
+        *self = Self::new_with_players(seed, types);
+    }
+
+    /// 使用指定玩家类型配置重置对局
+    pub fn reset_with_players(&mut self, seed: u64, player_types: [PlayerType; 2]) {
+        *self = Self::new_with_players(seed, player_types);
+    }
+
+    /// 动态修改玩家 AI 类型
+    pub fn set_player_type(&mut self, player_idx: usize, p_type: PlayerType) {
+        if player_idx < 2 {
+            self.player_types[player_idx] = p_type;
+        }
     }
 
     /// 批量推进 N 步，返回实际推进的步数
@@ -276,16 +341,78 @@ impl ReplaySession {
         self.step_n(max_steps)
     }
 
-    /// 执行一步随机/策略动作并记录快照
+    /// 执行一步动作并记录快照与启发式评分决策
     pub fn step(&mut self) -> Result<bool, String> {
         if matches!(self.live_game.phase, TurnPhase::GameOver(_)) {
             return Ok(false); // 已结束
         }
 
         let player = self.live_game.current_player;
+        let ai_type = self.player_types[player];
         let phase_desc = format!("{:?}", self.live_game.phase);
 
-        if let Some(action) = RandomAI::select_action(&self.live_game, &mut self.rng) {
+        let (action, decision) = match ai_type {
+            PlayerType::Heuristic => {
+                if let Some((best_act, score, scored_list)) =
+                    HeuristicAI::evaluate_and_select(&self.live_game, &mut self.rng)
+                {
+                    let top_candidates: Vec<ScoredActionDto> = scored_list
+                        .iter()
+                        .take(8)
+                        .map(|(act, s)| ScoredActionDto {
+                            action_desc: format_action(act),
+                            score: *s,
+                            is_chosen: act == &best_act,
+                        })
+                        .collect();
+
+                    let decision = DecisionDto {
+                        ai_type: "heuristic".to_string(),
+                        chosen_score: Some(score),
+                        top_candidates,
+                    };
+                    (Some(best_act), Some(decision))
+                } else {
+                    (None, None)
+                }
+            }
+            PlayerType::Random => {
+                let act = RandomAI::select_action(&self.live_game, &mut self.rng);
+                let decision = DecisionDto {
+                    ai_type: "random".to_string(),
+                    chosen_score: None,
+                    top_candidates: vec![],
+                };
+                (act, Some(decision))
+            }
+            PlayerType::Neural => {
+                // 预留给未来的神经网络 Player，当前暂未接 python 进程时，回退到启发式评估
+                if let Some((best_act, score, scored_list)) =
+                    HeuristicAI::evaluate_and_select(&self.live_game, &mut self.rng)
+                {
+                    let top_candidates: Vec<ScoredActionDto> = scored_list
+                        .iter()
+                        .take(8)
+                        .map(|(act, s)| ScoredActionDto {
+                            action_desc: format_action(act),
+                            score: *s,
+                            is_chosen: act == &best_act,
+                        })
+                        .collect();
+
+                    let decision = DecisionDto {
+                        ai_type: "neural (heuristic fallback)".to_string(),
+                        chosen_score: Some(score),
+                        top_candidates,
+                    };
+                    (Some(best_act), Some(decision))
+                } else {
+                    (None, None)
+                }
+            }
+        };
+
+        if let Some(action) = action {
             let action_desc = format_action(&action);
             GameEngine::step(&mut self.live_game, &action)?;
 
@@ -296,6 +423,7 @@ impl ReplaySession {
                 action_desc,
                 phase: phase_desc,
                 state: state_dto,
+                decision,
             };
             self.history.push(next_step);
             Ok(true)

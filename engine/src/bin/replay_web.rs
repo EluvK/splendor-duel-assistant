@@ -1,4 +1,4 @@
-use _engine::ReplaySession;
+use _engine::{PlayerType, ReplaySession};
 use serde::Serialize;
 use std::env;
 use std::fs;
@@ -13,12 +13,22 @@ struct StepSummary {
     player: usize,
     action: String,
     phase: String,
+    score: Option<f32>,
+    ai_type: Option<String>,
+}
+
+#[derive(Serialize)]
+struct StatusResponse {
+    state: _engine::StateDto,
+    player_types: [String; 2],
+    step: _engine::ReplayStep,
 }
 
 #[derive(Serialize)]
 struct HistoryResponse {
     seed: u64,
     total_steps: usize,
+    player_types: [String; 2],
     steps: Vec<StepSummary>,
 }
 
@@ -72,7 +82,16 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
         // API: 获取最新状态
         ("GET", "/api/status") => {
             let sess = session.read().unwrap();
-            let json = serde_json::to_vec(&sess.current_state()).unwrap();
+            let last_step = sess.history.last().unwrap().clone();
+            let res = StatusResponse {
+                state: sess.current_state(),
+                player_types: [
+                    sess.player_types[0].as_str().to_string(),
+                    sess.player_types[1].as_str().to_string(),
+                ],
+                step: last_step,
+            };
+            let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
@@ -100,6 +119,8 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                             player: s.player,
                             action: s.action_desc.clone(),
                             phase: s.phase.clone(),
+                            score: s.decision.as_ref().and_then(|d| d.chosen_score),
+                            ai_type: s.decision.as_ref().map(|d| d.ai_type.clone()),
                         })
                         .collect();
 
@@ -146,10 +167,36 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
-        // API: 重置对局
+        // API: 动态修改玩家 AI 类型
+        ("POST", "/api/set_players") | ("GET", "/api/set_players") => {
+            let mut sess = session.write().unwrap();
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "p0" {
+                        sess.set_player_type(0, PlayerType::parse(v));
+                    } else if k == "p1" {
+                        sess.set_player_type(1, PlayerType::parse(v));
+                    }
+                }
+            }
+            let res = serde_json::json!({
+                "player_types": [
+                    sess.player_types[0].as_str(),
+                    sess.player_types[1].as_str(),
+                ]
+            });
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // API: 重置对局 (支持设置双方 AI 类型与一键生成全局)
         ("POST", "/api/reset") | ("GET", "/api/reset") => {
             let mut seed: u64 = 42;
             let mut play_to_end = false;
+            let mut p0 = PlayerType::Heuristic;
+            let mut p1 = PlayerType::Heuristic;
+
             for param in query.split('&') {
                 let mut kv = param.split('=');
                 if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
@@ -157,16 +204,29 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                         seed = v.parse::<u64>().unwrap_or(42);
                     } else if k == "play_to_end" {
                         play_to_end = v == "true" || v == "1";
+                    } else if k == "p0" {
+                        p0 = PlayerType::parse(v);
+                    } else if k == "p1" {
+                        p1 = PlayerType::parse(v);
                     }
                 }
             }
 
             let mut sess = session.write().unwrap();
-            sess.reset(seed);
+            sess.reset_with_players(seed, [p0, p1]);
             if play_to_end {
                 let _ = sess.play_to_end(2000);
             }
-            let json = serde_json::to_vec(&sess.current_state()).unwrap();
+            let last_step = sess.history.last().unwrap().clone();
+            let res = StatusResponse {
+                state: sess.current_state(),
+                player_types: [
+                    sess.player_types[0].as_str().to_string(),
+                    sess.player_types[1].as_str().to_string(),
+                ],
+                step: last_step,
+            };
+            let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
         }
 
@@ -202,11 +262,17 @@ fn handle_client(mut stream: TcpStream, session: &Arc<RwLock<ReplaySession>>, we
                     player: s.player,
                     action: s.action_desc.clone(),
                     phase: s.phase.clone(),
+                    score: s.decision.as_ref().and_then(|d| d.chosen_score),
+                    ai_type: s.decision.as_ref().map(|d| d.ai_type.clone()),
                 })
                 .collect();
             let res = HistoryResponse {
                 seed: sess.seed,
                 total_steps: sess.history.len(),
+                player_types: [
+                    sess.player_types[0].as_str().to_string(),
+                    sess.player_types[1].as_str().to_string(),
+                ],
                 steps,
             };
             let json = serde_json::to_vec(&res).unwrap();

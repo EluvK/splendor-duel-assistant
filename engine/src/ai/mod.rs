@@ -4,4 +4,7 @@ pub mod replay;
 
 pub use heuristic_ai::HeuristicAI;
 pub use random_ai::RandomAI;
-pub use replay::{CardDto, PlayerDto, ReplaySession, ReplayStep, RoyalDto, StateDto};
+pub use replay::{
+    CardDto, DecisionDto, PlayerDto, PlayerType, ReplaySession, ReplayStep, RoyalDto,
+    ScoredActionDto, StateDto,
+};
