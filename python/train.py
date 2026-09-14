@@ -7,14 +7,10 @@ import time
 import torch
 
 from splendor_ai._engine import evaluate_neural_match
-from splendor_ai.arena import Arena
 from splendor_ai.dataset import FastTensorLoader, ReplayBuffer, ShardedBuffer
-from splendor_ai.mcts import MCTSAgent, NeuralMCTSAgent, PolicyNetAgent
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
-    generate_mcts_selfplay_compact_batch,
-    generate_neural_mcts_selfplay_compact_batch,
     generate_rust_neural_mcts_compact_batch,
 )
 from splendor_ai.trainer import Trainer, TrainerConfig
@@ -41,13 +37,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=10, help="Number of self-play iterations")
     parser.add_argument("--games-per-iter", type=int, default=100, help="Games to generate per self-play iteration")
     parser.add_argument("--mcts-sims", type=int, default=30, help="MCTS simulation count per move in self-play")
-    parser.add_argument(
-        "--selfplay-backend",
-        type=str,
-        choices=["rust", "rust_heuristic", "neural"],
-        default="rust",
-        help="Self-play backend: 'rust' (Rust 8-thread full-speed ONNX Neural-MCTS, recommended), 'rust_heuristic' (legacy heuristic MCTS), or 'neural' (Python Neural-MCTS)",
-    )
     parser.add_argument("--buffer-size", type=int, default=100000, help="Max sample capacity for replay buffer")
     parser.add_argument("--temp-steps", type=int, default=12, help="Opening steps with temperature=1.0 + Dirichlet noise")
     parser.add_argument("--dirichlet-alpha", type=float, default=0.3, help="Dirichlet noise alpha parameter")
@@ -267,35 +256,21 @@ def train_selfplay(args: argparse.Namespace) -> None:
     def _submit_selfplay_job(it_num: int, model_net: SplendorNet):
         seed = int(time.time()) + it_num * 1009
         t_start = time.time()
-        if args.selfplay_backend == "rust":
-            onnx_bytes = model_net.export_onnx_bytes()
-            fut = executor.submit(
-                generate_rust_neural_mcts_compact_batch,
-                None,
-                onnx_bytes,
-                args.games_per_iter,
-                args.mcts_sims,
-                seed,
-                args.temp_steps,
-                args.dirichlet_alpha,
-                args.dirichlet_eps,
-            )
-            return fut, t_start
-        elif args.selfplay_backend == "rust_heuristic":
-            fut = executor.submit(
-                generate_mcts_selfplay_compact_batch,
-                args.games_per_iter,
-                args.mcts_sims,
-                seed,
-                args.temp_steps,
-                args.dirichlet_alpha,
-                args.dirichlet_eps,
-            )
-            return fut, t_start
-        else:
-            return None, t_start
+        onnx_bytes = model_net.export_onnx_bytes()
+        fut = executor.submit(
+            generate_rust_neural_mcts_compact_batch,
+            None,
+            onnx_bytes,
+            args.games_per_iter,
+            args.mcts_sims,
+            seed,
+            args.temp_steps,
+            args.dirichlet_alpha,
+            args.dirichlet_eps,
+        )
+        return fut, t_start
 
-    active_pipeline = args.pipeline and args.selfplay_backend != "neural"
+    active_pipeline = args.pipeline
     next_batch_fut = None
     next_batch_t0 = 0.0
     if active_pipeline:
@@ -322,49 +297,19 @@ def train_selfplay(args: argparse.Namespace) -> None:
             )
         else:
             t0 = time.time()
-            if args.selfplay_backend == "rust":
-                print(
-                    f"1. 启动 Rust 8 线程并行 ONNX 纯神经网络 MCTS 自对弈 {args.games_per_iter} 局 "
-                    f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
-                )
-                batch = generate_rust_neural_mcts_compact_batch(
-                    net=baseline_net,
-                    num_games=args.games_per_iter,
-                    num_simulations=args.mcts_sims,
-                    start_seed=int(time.time()) + it * 1009,
-                    temp_steps=args.temp_steps,
-                    dirichlet_alpha=args.dirichlet_alpha,
-                    dirichlet_eps=args.dirichlet_eps,
-                )
-            elif args.selfplay_backend == "rust_heuristic":
-                print(
-                    f"1. 启动 Rust 8 线程并行启发式 MCTS 自对弈 {args.games_per_iter} 局 "
-                    f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
-                )
-                batch = generate_mcts_selfplay_compact_batch(
-                    num_games=args.games_per_iter,
-                    num_simulations=args.mcts_sims,
-                    start_seed=int(time.time()) + it * 1009,
-                    temp_steps=args.temp_steps,
-                    dirichlet_alpha=args.dirichlet_alpha,
-                    dirichlet_eps=args.dirichlet_eps,
-                )
-            else:
-                print(
-                    f"1. 启动 Python Neural-MCTS 自博弈采样 {args.games_per_iter} 局 "
-                    f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 噪声与温度采样)..."
-                )
-                batch = generate_neural_mcts_selfplay_compact_batch(
-                    net=baseline_net,
-                    device=device,
-                    num_games=args.games_per_iter,
-                    num_simulations=args.mcts_sims,
-                    start_seed=int(time.time()) + it * 1009,
-                    temp_threshold_steps=args.temp_steps,
-                    dirichlet_alpha=args.dirichlet_alpha,
-                    dirichlet_eps=args.dirichlet_eps,
-                    c_puct=args.c_puct,
-                )
+            print(
+                f"1. 启动 Rust 8 线程并行 ONNX 纯神经网络 MCTS 自对弈 {args.games_per_iter} 局 "
+                f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
+            )
+            batch = generate_rust_neural_mcts_compact_batch(
+                net=baseline_net,
+                num_games=args.games_per_iter,
+                num_simulations=args.mcts_sims,
+                start_seed=int(time.time()) + it * 1009,
+                temp_steps=args.temp_steps,
+                dirichlet_alpha=args.dirichlet_alpha,
+                dirichlet_eps=args.dirichlet_eps,
+            )
             gen_time = time.time() - t0
             print(
                 f"   ✅ 本轮自博弈采样完成！新增 {batch.num_samples} 紧凑搜索样本 "
@@ -395,59 +340,33 @@ def train_selfplay(args: argparse.Namespace) -> None:
             metrics = trainer.train_epoch(loader)
 
         # (C) 竞技场门禁对抗 (Candidate vs Baseline)
-        print(f"3. 竞技场门禁对抗评测 ({args.eval_pairs * 2} 局成对严格换座对抗)...")
+        eval_sims = args.mcts_sims if args.eval_agent == "neural_mcts" else 0
+        eval_mode_desc = f"NeuralMCTS-{args.mcts_sims}" if eval_sims > 0 else "PolicyNet"
+        print(f"3. 竞技场门禁对抗评测 ({args.eval_pairs * 2} 局成对严格换座对抗 | 决策: {eval_mode_desc})...")
         t_arena = time.time()
-        if args.eval_agent == "policy_net" and args.selfplay_backend == "rust":
-            bytes_c = candidate_net.export_onnx_bytes()
-            bytes_b = baseline_net.export_onnx_bytes()
-            total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
-                bytes_c, bytes_b, num_pairs=args.eval_pairs, base_seed=int(time.time()) + it * 503
-            )
-            win_rate = c_wins / max(total_g, 1)
-            arena_elapsed = time.time() - t_arena
+        bytes_c = candidate_net.export_onnx_bytes()
+        bytes_b = baseline_net.export_onnx_bytes()
+        total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
+            bytes_c,
+            bytes_b,
+            num_pairs=args.eval_pairs,
+            base_seed=int(time.time()) + it * 503,
+            num_sims=eval_sims,
+        )
+        win_rate = c_wins / max(total_g, 1)
+        arena_elapsed = time.time() - t_arena
+        print(
+            f"   ⚔️ Rust 并发对决完成 (耗时 {arena_elapsed:.2f}s): 候选胜 {c_wins} 局 | 基准胜 {b_wins} 局 "
+            f"| 平局 {draws} 局 | 候选胜率: {win_rate*100:.1f}%"
+        )
+        if reasons:
             print(
-                f"   ⚔️ Rust 并发对决完成 (耗时 {arena_elapsed:.2f}s): 候选胜 {c_wins} 局 | 基准胜 {b_wins} 局 "
-                f"| 平局 {draws} 局 | 候选胜率: {win_rate*100:.1f}%"
+                f"   🎯 终局胜因: 20声望胜 {reasons.get('20_points', 0)} 局 | "
+                f"10皇冠胜 {reasons.get('10_crowns', 0)} 局 | "
+                f"10单色胜 {reasons.get('10_color_points', 0)} 局"
             )
-            if reasons:
-                print(
-                    f"   🎯 终局胜因: 20声望胜 {reasons.get('20_points', 0)} 局 | "
-                    f"10皇冠胜 {reasons.get('10_crowns', 0)} 局 | "
-                    f"10单色胜 {reasons.get('10_color_points', 0)} 局"
-                )
-            match_agent0_wins = c_wins
-            match_agent1_wins = b_wins
-        else:
-            if args.eval_agent == "neural_mcts":
-                candidate_agent = NeuralMCTSAgent(candidate_net, device, num_sims=args.mcts_sims)
-                baseline_agent = NeuralMCTSAgent(baseline_net, device, num_sims=args.mcts_sims)
-                eval_name = f"NeuralMCTS-{args.mcts_sims}"
-            else:
-                candidate_agent = PolicyNetAgent(candidate_net, device)
-                baseline_agent = PolicyNetAgent(baseline_net, device)
-                eval_name = "PolicyNet"
-
-            arena = Arena(
-                candidate_agent,
-                baseline_agent,
-                agent0_name=f"Candidate-{eval_name}",
-                agent1_name=f"Baseline-{eval_name}",
-            )
-            match_result = arena.play_match(num_pairs=args.eval_pairs, base_seed=int(time.time()) + it * 503)
-            win_rate = match_result.agent0_win_rate
-            arena_elapsed = time.time() - t_arena
-            print(
-                f"   ⚔️ 对决结果 (耗时 {arena_elapsed:.2f}s): 候选胜 {match_result.agent0_wins} 局 | 基准胜 {match_result.agent1_wins} 局 "
-                f"| 平局 {match_result.draws} 局 | 候选胜率: {win_rate*100:.1f}%"
-            )
-            if match_result.reasons:
-                print(
-                    f"   🎯 终局胜因: 20声望胜 {match_result.reasons.get('20_points', 0)} 局 | "
-                    f"10皇冠胜 {match_result.reasons.get('10_crowns', 0)} 局 | "
-                    f"10单色胜 {match_result.reasons.get('10_color_points', 0)} 局"
-                )
-            match_agent0_wins = match_result.agent0_wins
-            match_agent1_wins = match_result.agent1_wins
+        match_agent0_wins = c_wins
+        match_agent1_wins = b_wins
 
         # 晋升判定
         promoted = win_rate >= args.promote_threshold

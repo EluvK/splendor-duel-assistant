@@ -151,9 +151,9 @@ class Arena:
             dev = getattr(ag, "device", None)
             if dev is not None:
                 return dev
-            mcts_obj = getattr(ag, "mcts", None)
-            if mcts_obj is not None:
-                return getattr(mcts_obj, "device", None)
+            net_obj = getattr(ag, "net", None)
+            if net_obj is not None:
+                return getattr(net_obj, "device", None)
             return None
 
         is_cuda = any(

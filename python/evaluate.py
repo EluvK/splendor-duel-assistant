@@ -19,7 +19,6 @@ from splendor_ai.mcts import (
     Agent,
     HeuristicAgent,
     MCTSAgent,
-    NeuralMCTSAgent,
     PolicyNetAgent,
     RandomAgent,
     RustMCTSAgent,
@@ -80,13 +79,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--agent1",
         type=str,
-        choices=["neural_mcts", "net", "rust_mcts", "mcts", "heuristic", "random"],
+        choices=["net", "rust_mcts", "mcts", "heuristic", "random"],
         default=None,
     )
     parser.add_argument(
         "--agent2",
         type=str,
-        choices=["neural_mcts", "net", "rust_mcts", "mcts", "heuristic", "random"],
+        choices=["net", "rust_mcts", "mcts", "heuristic", "random"],
         default=None,
     )
 
@@ -187,17 +186,14 @@ def load_python_agent(
     if agent_type in ["rust_mcts", "mcts"]:
         return MCTSAgent(num_sims=sims), f"HeuristicMCTS-{sims}"
 
-    # 神经网络
+    # 神经网络 (Python 模式仅作为纯直觉网络评估，如需 MCTS 树搜索请使用推荐的 Rust 后端)
     net = SplendorNet().to(device)
     name = Path(model_path).stem if model_path else "Net"
     if model_path and Path(model_path).exists():
         ckpt = torch.load(model_path, map_location=device)
         net.load_state_dict(ckpt["model_state"])
 
-    if agent_type == "net" or (agent_type is None and sims == 0):
-        return PolicyNetAgent(net, device), f"Policy({name})"
-    else:
-        return NeuralMCTSAgent(net, device, num_sims=sims), f"NeuralMCTS-{sims}({name})"
+    return PolicyNetAgent(net, device), f"Policy({name})"
 
 
 def main() -> None:
@@ -220,8 +216,8 @@ def main() -> None:
     device = torch.device(device_str)
 
     # 如果未显式指定 agent 类型且选择 rust 后端，走全速并行 Rust 引擎
-    is_custom_agent = (args.agent1 is not None and args.agent1 not in ["neural_mcts", "net"]) or \
-                      (args.agent2 is not None and args.agent2 not in ["neural_mcts", "net", "heuristic"])
+    is_custom_agent = (args.agent1 is not None and args.agent1 != "net") or \
+                      (args.agent2 is not None and args.agent2 not in ["net", "heuristic"])
     if args.backend == "rust" and not is_custom_agent:
         run_rust_eval(
             model1_path=args.model1,

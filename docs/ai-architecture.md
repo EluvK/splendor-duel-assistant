@@ -30,7 +30,7 @@ python/
 │   ├── __init__.py           # 包导出与 C 扩展桥接
 │   ├── env.py                # Gymnasium 规范强化学习环境 (SplendorDuelEnv)
 │   ├── net.py                # 混合拓扑 Policy-Value 神经网络 (SplendorNet)
-│   ├── mcts.py               # 纯神经网络驱动的 AlphaZero MCTS 智能体
+│   ├── mcts.py               # 智能体接口与策略直觉/MCTS 适配层
 │   ├── dataset.py            # 紧凑样本块 (CompactBatch) 与显存常驻加载器 (FastTensorLoader)
 │   ├── trainer.py            # 混合精度 AMP 训练器与原子性检查点维护 (Trainer)
 │   ├── arena.py              # 成对换座竞技场对抗系统 (Arena)
@@ -42,7 +42,7 @@ python/
     ├── test_net.py           # 神经网络输入输出形状与梯度测试
     ├── test_trainer.py       # 训练步与损失收敛测试
     ├── test_mcts_arena.py    # MCTS 与 Arena 对战测试
-    └── test_neural_mcts.py   # 纯神经网络 MCTS 与 ONNX 交互测试
+    └── test_neural_mcts.py   # Rust 神经网络 MCTS、样本缓存与对战测试
 ```
 
 ---

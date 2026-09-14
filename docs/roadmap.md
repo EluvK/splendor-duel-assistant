@@ -25,7 +25,7 @@
   - 动态 ONNX 字节流导出 (export_onnx_bytes) 与 tract-onnx 纯 Rust 极速推理
 
 [阶段 3: 已完成 ✅] 高性能 MCTS 搜索与自博弈流水线
-  - PUCT 树搜索算法与根节点 Dirichlet 探索噪声注入 (RustMCTS & NeuralMCTS)
+  - PUCT 树搜索算法与根节点 Dirichlet 探索噪声注入 (Rust 原生多线程 RustMCTS)
   - 温度轮盘赌采样破除开局盲区
   - 异步流水线推演机制：GPU 梯度更新与 CPU 自博弈并发重叠
   - 向量化显存常驻批加载器 (FastTensorLoader) 与紧凑样本分片 (CompactBatch)

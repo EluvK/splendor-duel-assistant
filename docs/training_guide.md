@@ -136,7 +136,7 @@ Epoch   Train Loss    Policy Loss   Top-1 Acc     Top-3 Acc     Val Loss
 ### 4.1 启动自博弈闭环 (Rust 8 线程全速原生驱动)
 ```bash
 # 启动 10 轮 Rust 8 线程全速自博弈迭代，每轮自弈 100 局，MCTS 推演 30 次，开启开局探索与经验池
-python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mcts-sims 30 --selfplay-backend rust --temp-steps 12 --dirichlet-eps 0.25 --train-epochs 3 --promote-threshold 0.55
+python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mcts-sims 30 --temp-steps 12 --dirichlet-eps 0.25 --train-epochs 3 --promote-threshold 0.55
 ```
 
 ### 4.2 核心机制运作流程
@@ -155,12 +155,11 @@ python python/train.py --mode selfplay --iterations 10 --games-per-iter 100 --mc
    - 若胜率 $< 55\%$：**晋升失败**，丢弃本次权重，候选网络回滚至 Baseline 状态重新下一轮探索。
 
 ### 4.3 进阶调优参数说明
-- `--selfplay-backend`：自博弈引擎，`rust`（**推荐**，Rust 8 线程原生 MCTS，速度极快）或 `neural`（Python Neural-MCTS）。
 - `--temp-steps`：开局探索步数（默认 12 步），此阶段采用 Softmax 概率轮盘赌，打破固定套路。
 - `--dirichlet-alpha` 与 `--dirichlet-eps`：根节点狄利克雷探索噪声参数（默认 0.3 和 0.25）。
 - `--buffer-size`：经验回放池最大样本容量（默认 50,000 步）。
 - `--mcts-sims`：每步 MCTS 推演次数（推演越深样本质量越高，建议 30 ~ 80）。
-- `--eval-agent`：门禁测试智能体类型（`policy_net` 快速评估，`neural_mcts` 深度推演评测）。
+- `--eval-agent`：门禁测试智能体类型（`policy_net` 快速评估，`neural_mcts` 深度推演评测，均由 Rust 8 核并发全速推演）。
 - `--eval-pairs`：成对门禁评测局数对（默认 5 对 = 10 局）。
 
 ---

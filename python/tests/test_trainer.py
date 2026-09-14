@@ -14,8 +14,6 @@ from splendor_ai import (
     Trainer,
     TrainerConfig,
     generate_heuristic_compact_batch,
-    generate_mcts_selfplay_compact_batch,
-    generate_selfplay_compact_batch,
 )
 
 
@@ -49,7 +47,9 @@ def test_trainer_with_compact_dataset(tmp_path: Path):
     dataset = CompactDataset(batch)
     loader = DataLoader(dataset, batch_size=32, shuffle=True, drop_last=True)
 
-    net = SplendorNet(spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64)
+    net = SplendorNet(
+        spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64
+    )
     cfg = TrainerConfig(
         device="cpu",
         batch_size=32,
@@ -73,15 +73,11 @@ def test_trainer_with_compact_dataset(tmp_path: Path):
     assert ckpt_path.exists()
 
     # 测试加载与元数据保持
-    net2 = SplendorNet(spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64)
+    net2 = SplendorNet(
+        spatial_channels=16, num_res_blocks=1, context_hidden=64, fusion_hidden=64
+    )
     trainer2 = Trainer(net2, cfg)
     meta = trainer2.load_checkpoint(ckpt_path)
     assert trainer2.epoch == 2
     assert meta.get("total_games") == 10
     assert meta.get("total_samples") == batch.num_samples
-
-
-def test_mcts_selfplay_compact_generation():
-    batch = generate_mcts_selfplay_compact_batch(num_games=2, num_simulations=10, start_seed=42)
-    assert batch.num_samples > 0
-    assert batch.obs.shape[1] == 726
