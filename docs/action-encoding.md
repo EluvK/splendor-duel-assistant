@@ -43,11 +43,11 @@
 - 通道 6：`Pearl`（珍珠）
 - 通道 7：`Gold`（黄金）
 
-### 2. 金字塔卡牌张量 (15 槽位 × 23 维 = 345 维)
+### 2. 金字塔卡牌张量 (15 槽位 × 27 维 = 405 维)
 - Level 3：3 个明牌槽位 + 1 个牌堆余量指示槽 (4 槽位)
 - Level 2：4 个明牌槽位 + 1 个牌堆余量指示槽 (5 槽位)
 - Level 1：5 个明牌槽位 + 1 个牌堆余量指示槽 (6 槽位)
-每个卡牌槽位 23 维：
+每个卡牌槽位 27 维：
 - `[0]`: `present` (1.0 或 0.0)
 - `[1..3]`: `tier` (3-way One-Hot: L1, L2, L3)
 - `[4]`: `points / 6.0`
@@ -56,7 +56,7 @@
 - `[12..17]`: `bonus_color` (6-way One-Hot: W, B, G, R, K, None/Joker)
 - `[18]`: `bonus_value / 2.0`
 - `[19..25]`: `ability` (7-way One-Hot: None, ExtraTurn, TakePrivilege, TakeSameColor, StealToken, ColorCopy, ColorCopyAndExtraTurn)
-- `[22]`: `can_afford` (1.0 或 0.0，当前行动方是否立即买得起)
+- `[26]`: `can_afford` (1.0 或 0.0，当前行动方是否立即买得起)
 
 ### 3. 王室卡张量 (4 槽位 × 5 维 = 20 维)
 - `[0]`: `available` (1.0 或 0.0)

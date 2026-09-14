@@ -1,15 +1,5 @@
 """Agents and high-performance MCTS interfaces for Splendor Duel."""
 
-from typing import List, Optional
-import numpy as np
-import torch
-
-from splendor_ai.env import SplendorDuelEnv
-from splendor_ai.net import SplendorNet
-
-
-"""Agents and high-performance MCTS interfaces for Splendor Duel."""
-
 import math
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -227,6 +217,8 @@ class NeuralMCTSAgent(Agent):
         c_puct: float = 1.5,
         temperature: float = 0.0,
     ) -> None:
+        self.net = net.to(device)
+        self.device = device
         self.mcts = NeuralMCTS(net, device, c_puct=c_puct)
         self.num_sims = num_sims
         self.temperature = temperature

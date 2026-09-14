@@ -37,12 +37,12 @@ impl PyGameState {
         self.clone()
     }
 
-    /// 获取当前行动方规范化视角的 725 维状态观察向量
+    /// 获取当前行动方规范化视角的 OBS_SIZE (726) 维状态观察向量
     pub fn observe(&self) -> Vec<f32> {
         encode_state(&self.state).to_vec()
     }
 
-    /// 获取当前状态下的合法动作掩码 (256 维 bool 数组)
+    /// 获取当前状态下的合法动作掩码 (ACTION_SIZE (288) 维 bool 数组)
     pub fn action_mask(&self) -> Vec<bool> {
         action_mask(&self.state).to_vec()
     }
@@ -55,7 +55,7 @@ impl PyGameState {
             .collect()
     }
 
-    /// 执行一个动作 ID (0..255)
+    /// 执行一个动作 ID (0..ACTION_SIZE-1)
     /// 返回元组: (next_obs, done, winner)
     pub fn step(&mut self, action_id: usize) -> PyResult<(Vec<f32>, bool, Option<usize>)> {
         if action_id >= ACTION_SIZE {
@@ -328,6 +328,12 @@ pub fn evaluate_neural_match(
     reasons.insert("draw".to_string(), res.draws);
     reasons.insert("p0_seat_wins".to_string(), res.p0_seat_wins);
     reasons.insert("p1_seat_wins".to_string(), res.p1_seat_wins);
+    reasons.insert("total_steps".to_string(), res.total_steps);
+    reasons.insert("total_rounds".to_string(), res.total_rounds);
+    reasons.insert("agent0_win_steps".to_string(), res.agent0_win_steps);
+    reasons.insert("agent0_win_rounds".to_string(), res.agent0_win_rounds);
+    reasons.insert("agent0_lose_steps".to_string(), res.agent0_lose_steps);
+    reasons.insert("agent0_lose_rounds".to_string(), res.agent0_lose_rounds);
 
     Ok((
         res.total_games,

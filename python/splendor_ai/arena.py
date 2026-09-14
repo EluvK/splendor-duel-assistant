@@ -147,9 +147,18 @@ class Arena:
         }
 
         # 检查是否包含 GPU (CUDA) 模型智能体。PyTorch CUDA 多线程并发调用同一网络极易造成驱动级死锁，CUDA 下使用单线程最稳最快
+        def _get_agent_device(ag):
+            dev = getattr(ag, "device", None)
+            if dev is not None:
+                return dev
+            mcts_obj = getattr(ag, "mcts", None)
+            if mcts_obj is not None:
+                return getattr(mcts_obj, "device", None)
+            return None
+
         is_cuda = any(
-            getattr(agent, "device", None) is not None
-            and getattr(getattr(agent, "device", None), "type", "") == "cuda"
+            _get_agent_device(agent) is not None
+            and getattr(_get_agent_device(agent), "type", "") == "cuda"
             for agent in [self.agent0, self.agent1]
         )
         if is_cuda and workers <= 0:

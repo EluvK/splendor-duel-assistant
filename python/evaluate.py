@@ -150,7 +150,10 @@ def run_rust_eval(
     wr1 = a1_wins / max(total_g, 1)
     wr2 = a2_wins / max(total_g, 1)
 
-    print(f"\n📊 【比赛结果终报】(耗时 {elapsed:.2f}s | 速度: {total_g/max(elapsed, 1e-6):.1f} 局/秒)")
+    avg_steps = reasons.get("total_steps", 0) / max(total_g, 1)
+    avg_rounds = reasons.get("total_rounds", 0) / max(total_g, 1)
+
+    print(f"\n📊 【比赛结果终报】(耗时 {elapsed:.2f}s | 速度: {total_g/max(elapsed, 1e-6):.1f} 局/秒 | 平均: {avg_rounds:.1f} 轮 / {avg_steps:.1f} 步)")
     print("-" * 75)
     print(f"🥇 {agent1_name:<38} 胜场: {a1_wins:>3} 局 ({wr1*100:5.1f}%)")
     print(f"🥈 {agent2_name:<38} 胜场: {a2_wins:>3} 局 ({wr2*100:5.1f}%)")

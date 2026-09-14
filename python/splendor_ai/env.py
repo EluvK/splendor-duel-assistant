@@ -14,8 +14,8 @@ class SplendorDuelEnv:
         obs, reward, terminated, truncated, info = env.step(action_id)
     """
 
-    OBS_SIZE = PyGameState.observation_space_size()  # 725
-    ACTION_SIZE = PyGameState.action_space_size()   # 256
+    OBS_SIZE = PyGameState.observation_space_size()  # 726
+    ACTION_SIZE = PyGameState.action_space_size()   # 288
 
     def __init__(self, seed: Optional[int] = None, max_steps: int = 1500) -> None:
         self.max_steps = max_steps
@@ -40,7 +40,7 @@ class SplendorDuelEnv:
         """执行单步动作.
 
         Args:
-            action_id: 0..255 范围内的离散动作 ID.
+            action_id: 0..287 范围内的离散动作 ID.
 
         Returns:
             (obs, reward, terminated, truncated, info)

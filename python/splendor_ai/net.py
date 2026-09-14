@@ -29,16 +29,16 @@ class ResidualBlock2D(nn.Module):
 class SplendorNet(nn.Module):
     """璀璨宝石：对决 Policy-Value 神经网络.
 
-    输入: 725 维扁平状态观察向量
+    输入: 726 维扁平状态观察向量
       - 前 200 维拆解为 (B, 8, 5, 5) 棋盘空间网格，经由 2D ResNet 提取 3 连相邻几何特征
-      - 后 525 维经由多层感知机 (MLP) 提取卡牌市场、双方手牌与胜负节奏特征
+      - 后 526 维经由多层感知机 (MLP) 提取卡牌市场、双方手牌与胜负节奏特征
     输出:
-      - policy_logits: [B, 256] 动作概率对数
+      - policy_logits: [B, 288] 动作概率对数
       - value: [B, 1] 行动方胜率预测 ([-1.0, 1.0])
     """
 
-    OBS_SIZE = SplendorDuelEnv.OBS_SIZE       # 725
-    ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE # 256
+    OBS_SIZE = SplendorDuelEnv.OBS_SIZE       # 726
+    ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE # 288
     BOARD_CHANNELS = 8
     BOARD_GRID = 5
 

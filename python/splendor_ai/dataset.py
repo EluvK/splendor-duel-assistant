@@ -13,8 +13,8 @@ from torch.utils.data import Dataset
 class CompactBatch:
     """紧凑内存样本块 (零多余对象开销，纯连续扁平数组)."""
 
-    obs: np.ndarray  # [N, 725] float32
-    mask: np.ndarray  # [N, 256] bool
+    obs: np.ndarray  # [N, 726] float32
+    mask: np.ndarray  # [N, 288] bool
     action: np.ndarray  # [N] int64 (标量整数动作 ID)
     value: np.ndarray  # [N, 1] float32
 

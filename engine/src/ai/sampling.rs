@@ -384,6 +384,12 @@ pub struct ParallelMatchResult {
     pub reasons_10_color: usize,
     pub p0_seat_wins: usize,
     pub p1_seat_wins: usize,
+    pub total_steps: usize,
+    pub total_rounds: usize,
+    pub agent0_win_steps: usize,
+    pub agent0_win_rounds: usize,
+    pub agent0_lose_steps: usize,
+    pub agent0_lose_rounds: usize,
 }
 
 /// 纯 Rust 多线程 8 核并发进行严格换座的对抗评测 (支持纯 PolicyNet 或 Neural MCTS，支持模型间对战或模型对战启发式)
@@ -408,7 +414,7 @@ pub fn evaluate_neural_match_parallel(
         tasks.push((seed, true));  // 局 2: agent1 是 P0, agent0 是 P1
     }
 
-    let results: Vec<(Option<usize>, bool, Option<VictoryReason>)> = tasks
+    let results: Vec<(Option<usize>, bool, Option<VictoryReason>, usize, usize)> = tasks
         .into_par_iter()
         .map(|(seed, is_swap)| {
             let mut game = GameState::new_game(seed);
@@ -515,7 +521,8 @@ pub fn evaluate_neural_match_parallel(
             let winner = game.winner.map(|(w, r)| (w, r));
             let w_id = winner.map(|(w, _)| w);
             let reason = winner.map(|(_, r)| r);
-            (w_id, is_swap, reason)
+            let rounds = game.round_number() as usize;
+            (w_id, is_swap, reason, steps, rounds)
         })
         .collect();
 
@@ -524,14 +531,20 @@ pub fn evaluate_neural_match_parallel(
         ..Default::default()
     };
 
-    for (winner, is_swap, reason) in results {
+    for (winner, is_swap, reason, steps, rounds) in results {
+        res.total_steps += steps;
+        res.total_rounds += rounds;
         match winner {
             Some(w) => {
                 let agent0_won = if !is_swap { w == 0 } else { w == 1 };
                 if agent0_won {
                     res.agent0_wins += 1;
+                    res.agent0_win_steps += steps;
+                    res.agent0_win_rounds += rounds;
                 } else {
                     res.agent1_wins += 1;
+                    res.agent0_lose_steps += steps;
+                    res.agent0_lose_rounds += rounds;
                 }
                 if w == 0 {
                     res.p0_seat_wins += 1;
