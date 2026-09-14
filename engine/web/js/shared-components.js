@@ -421,6 +421,32 @@ export function renderPlayerDashboard(p, cardEl, isActing, isNext, prefix, optio
     cardEl.classList.remove('next-turn');
   }
 
+  // 动态渲染席位身份与先后手
+  const nameEl = cardEl.querySelector('.player-name');
+  if (nameEl) {
+    const pIndex = prefix === 'p0' ? 0 : 1;
+    const kind = options.playerKind || (pIndex === 0 ? 'human' : 'neural');
+    const pColor = pIndex === 0 ? '#38bdf8' : '#f472b6';
+    let icon = '👤';
+    let kindName = '人类';
+    if (kind === 'neural') {
+      icon = '🧠';
+      kindName = '神经网络 AI';
+    } else if (kind === 'heuristic') {
+      icon = '🤖';
+      kindName = '启发式 AI';
+    } else if (kind === 'random') {
+      icon = '🎲';
+      kindName = '随机 AI';
+    }
+    const orderTag = pIndex === 0 ? '先手' : '后手';
+    nameEl.innerHTML = `
+      <span style="color:${pColor}; font-weight:700;">${icon} Player ${pIndex} <span style="font-size:0.72rem; font-weight:normal; opacity:0.85;">(${kindName} · ${orderTag})</span></span>
+      <span class="acting-indicator">⚡ 本步行动</span>
+      <span class="next-indicator">⏱ 下步待命</span>
+    `;
+  }
+
   const privEl = document.getElementById(`${prefix}Privileges`);
   if (privEl) privEl.innerHTML = `<span class="privilege-icon"></span> ${p.privileges}`;
 

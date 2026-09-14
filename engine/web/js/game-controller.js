@@ -178,8 +178,14 @@ export class GameController {
       }
     };
     document.getElementById('btnToReplay').onclick = () => this.toReplay();
-    document.getElementById('p0KindSelect').onchange = () => this.startNewGame();
-    document.getElementById('p1KindSelect').onchange = () => this.startNewGame();
+    document.getElementById('p0KindSelect').onchange = () => this.onPlayerKindChange(0);
+    document.getElementById('p1KindSelect').onchange = () => this.onPlayerKindChange(1);
+
+    // 交换先后手
+    const btnSwap = document.getElementById('btnSwapPlayers');
+    if (btnSwap) {
+      btnSwap.onclick = () => this.swapPlayers();
+    }
 
     // 自动滚动控制
     if (this.btnToggleLogAutoScroll) {
@@ -265,6 +271,34 @@ export class GameController {
     this.checkNeuralStatus();
   }
 
+  onPlayerKindChange(slot) {
+    const p0Select = document.getElementById('p0KindSelect');
+    const p1Select = document.getElementById('p1KindSelect');
+    if (!p0Select || !p1Select) return;
+
+    // 若用户修改一方席位，在单人对战人机情境下智能联动，避免误触双 AI
+    if (slot === 0) {
+      if (p0Select.value !== 'human' && p1Select.value !== 'human') {
+        p1Select.value = 'human';
+      }
+    } else {
+      if (p1Select.value !== 'human' && p0Select.value !== 'human') {
+        p0Select.value = 'human';
+      }
+    }
+    this.startNewGame();
+  }
+
+  async swapPlayers() {
+    const p0Select = document.getElementById('p0KindSelect');
+    const p1Select = document.getElementById('p1KindSelect');
+    if (!p0Select || !p1Select) return;
+    const temp = p0Select.value;
+    p0Select.value = p1Select.value;
+    p1Select.value = temp;
+    await this.startNewGame();
+  }
+
   async startNewGame() {
     this.clearModal();
     this.selectedBoardPositions = [];
@@ -302,13 +336,17 @@ export class GameController {
     this.legalActions = data.legal_actions || [];
     this.isHuman = data.is_human;
     this.currentPlayer = data.current_player;
-    this.playerKinds = data.player_kinds || ['human', 'neural'];
+    if (data.player_kinds && Array.isArray(data.player_kinds) && data.player_kinds.length === 2) {
+      this.playerKinds = data.player_kinds;
+    } else if (!this.playerKinds || this.playerKinds.length !== 2) {
+      this.playerKinds = ['human', 'neural'];
+    }
 
     // 同步下拉框
     const p0Select = document.getElementById('p0KindSelect');
     const p1Select = document.getElementById('p1KindSelect');
-    if (p0Select) p0Select.value = this.playerKinds[0];
-    if (p1Select) p1Select.value = this.playerKinds[1];
+    if (p0Select && this.playerKinds[0]) p0Select.value = this.playerKinds[0];
+    if (p1Select && this.playerKinds[1]) p1Select.value = this.playerKinds[1];
 
     this.selectedBoardPositions = [];
 
@@ -854,16 +892,36 @@ export class GameController {
         });
     }
 
-    // 判断暗牌视角掩蔽规则 (若某方为对手，其暗抽预留牌显示为牌背)
-    const p0IsOpponent = (this.playerKinds[0] !== 'human' && this.playerKinds[1] === 'human') ||
-                         (this.playerKinds[0] === 'human' && this.playerKinds[1] === 'human' && this.currentPlayer !== 0);
-    const p1IsOpponent = (this.playerKinds[1] !== 'human' && this.playerKinds[0] === 'human') ||
-                         (this.playerKinds[0] === 'human' && this.playerKinds[1] === 'human' && this.currentPlayer !== 1);
+    // 判断暗牌视角掩蔽规则 (人类永远看清自己的暗抽卡，对手 AI 的暗抽卡为牌背)
+    let p0IsOpponent = false;
+    let p1IsOpponent = false;
+
+    const p0IsHuman = (this.playerKinds[0] === 'human');
+    const p1IsHuman = (this.playerKinds[1] === 'human');
+
+    if (p0IsHuman && p1IsHuman) {
+      // 双人热座：非当前行动方为对手，暗抽牌背
+      p0IsOpponent = (this.currentPlayer !== 0);
+      p1IsOpponent = (this.currentPlayer !== 1);
+    } else if (p0IsHuman && !p1IsHuman) {
+      // P0 为人类，P1 为 AI：人类永远看自己牌，对手 AI 暗抽为牌背
+      p0IsOpponent = false;
+      p1IsOpponent = true;
+    } else if (!p0IsHuman && p1IsHuman) {
+      // P0 为 AI，P1 为人类：人类永远看自己牌，对手 AI 暗抽为牌背
+      p0IsOpponent = true;
+      p1IsOpponent = false;
+    } else {
+      // 双 AI 自博弈：全公开观战
+      p0IsOpponent = false;
+      p1IsOpponent = false;
+    }
 
     // Player 0 配置
     const p0IsActive = (this.currentPlayer === 0);
     const p0Options = {
       isOpponent: p0IsOpponent,
+      playerKind: this.playerKinds[0],
       interactiveReserved: isHumanTurn && p0IsActive && (phase === 'MandatoryAction'),
       affordableReservedIds,
       onPurchaseReserved: (card) => {
@@ -897,6 +955,7 @@ export class GameController {
     const p1IsActive = (this.currentPlayer === 1);
     const p1Options = {
       isOpponent: p1IsOpponent,
+      playerKind: this.playerKinds[1],
       interactiveReserved: isHumanTurn && p1IsActive && (phase === 'MandatoryAction'),
       affordableReservedIds,
       onPurchaseReserved: (card) => {
@@ -951,9 +1010,16 @@ export class GameController {
     }
 
     const curRound = this.state.round_number || this.state.turn_number;
+    const isP0 = (this.currentPlayer === 0);
+    const orderText = isP0 ? '先手' : '后手';
+
     if (!this.isHuman) {
       const aiKindName = this.playerKinds[this.currentPlayer];
-      this.guideBadge.innerText = `🤖 AI 思考中 (第 ${curRound} 轮)`;
+      let aiIcon = '🤖';
+      if (aiKindName === 'neural') aiIcon = '🧠';
+      else if (aiKindName === 'random') aiIcon = '🎲';
+
+      this.guideBadge.innerText = `${aiIcon} AI 思考中 (P${this.currentPlayer} ${orderText} · 第 ${curRound} 轮)`;
       this.guideBadge.style.backgroundColor = '#6366f1';
       this.guideText.innerText = `当前轮到 Player ${this.currentPlayer} (${aiKindName}) 决策...`;
 
@@ -969,8 +1035,8 @@ export class GameController {
 
     // 人类行动阶段
     const phase = this.state.phase;
-    this.guideBadge.innerText = `👤 玩家 P${this.currentPlayer} (第 ${curRound} 轮)`;
-    this.guideBadge.style.backgroundColor = '#059669';
+    this.guideBadge.innerText = `👤 玩家 P${this.currentPlayer} (${orderText} · 第 ${curRound} 轮)`;
+    this.guideBadge.style.backgroundColor = isP0 ? '#0284c7' : '#db2777';
 
     // 检查上一条记录是否为对方 AI 的操作，若是，在指引条提示
     let lastAiHint = '';
@@ -1040,12 +1106,12 @@ export class GameController {
     }
 
     if (phase.startsWith('CardAbilitySameColor')) {
-      this.guideText.innerHTML = `${lastAiHint}【拿取同色宝石】请在左侧 5x5 棋盘中点击一颗发光的同色宝石完成拿取。`;
+      this.guideText.innerHTML = `${lastAiHint}【拿取同色宝石】请在右侧 5x5 棋盘中点击一颗发光的同色宝石完成拿取。`;
       return;
     }
 
     if (phase === 'SelectReserveGold') {
-      this.guideText.innerHTML = `${lastAiHint}【选择黄金】预留卡牌成功！请在左侧 5x5 棋盘中点击选择你要拿取的 1 枚黄金。`;
+      this.guideText.innerHTML = `${lastAiHint}【选择黄金】预留卡牌成功！请在右侧 5x5 棋盘中点击选择你要拿取的 1 枚黄金。`;
       return;
     }
 

@@ -69,71 +69,11 @@
   </div>
 
   <main>
-    <!-- 左侧：5x5 棋盘 + 特权/布袋 + 下方对局步骤日志 -->
-    <div class="panel left-panel">
-      <div class="panel-title">
-        <span>5×5 棋盘矩阵</span>
-        <span id="boardTokensCount" style="font-size:0.75rem; color:var(--accent-gold);">25 标记</span>
-      </div>
-
-      <div class="board-container" id="boardGrid">
-        <!-- 动态生成 25 个格子 -->
-      </div>
-
-      <div class="board-footer">
-        <span><span class="privilege-icon"></span>特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
-        <span><span class="bag-icon"></span>布袋剩余: <b id="bagCount">0</b></span>
-      </div>
-
-      <!-- 对局日志：集成在左侧下方 -->
-      <div class="panel-title" style="margin-top: 2px;">
-        <span>对局操作日志</span>
-        <span style="font-size:0.7rem; color:var(--text-muted);">点击步骤快速跳转</span>
-      </div>
-      <div class="log-panel" id="logContainer">
-        <!-- 动态追加步骤记录 -->
-      </div>
-    </div>
-
-    <!-- 中间：3 级金字塔卡牌 + 王室赞助池 (王室置于金字塔下方且居中) -->
-    <div class="panel pyramid-section">
-      <div class="panel-title">金字塔明牌展示区</div>
-      <div class="tier-row">
-        <div class="tier-header">
-          <span>等级 3</span>
-          <span>牌堆剩余: <b id="deck3Count">0</b></span>
-        </div>
-        <div class="cards-flex" id="tier3Cards"></div>
-      </div>
-
-      <div class="tier-row">
-        <div class="tier-header">
-          <span>等级 2</span>
-          <span>牌堆剩余: <b id="deck2Count">0</b></span>
-        </div>
-        <div class="cards-flex" id="tier2Cards"></div>
-      </div>
-
-      <div class="tier-row">
-        <div class="tier-header">
-          <span>等级 1</span>
-          <span>牌堆剩余: <b id="deck1Count">0</b></span>
-        </div>
-        <div class="cards-flex" id="tier1Cards"></div>
-      </div>
-
-      <!-- 王室赞助池 (置于金字塔下方) -->
-      <div class="panel-title" style="margin-top: 6px;">王室赞助池</div>
-      <div class="royals-row" id="royalsContainer">
-        <!-- 4 张王室卡 (居中排布) -->
-      </div>
-    </div>
-
-    <!-- 右侧：双人平铺玩家仪表盘 + AI 决策与评分分析模块 -->
+    <!-- 左侧：双人平铺玩家仪表盘 -->
     <div class="panel player-panel">
       <div class="panel-title">
         <span>对决玩家仪表盘</span>
-        <span style="font-size:0.75rem; color:var(--text-muted);">双方状态水平并排平铺</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">双方状态一目了然</span>
       </div>
 
       <div class="players-grid">
@@ -223,12 +163,72 @@
           <div class="purchased-cards-container" id="p1PurchasedCards"></div>
         </div>
       </div>
+    </div>
 
-      <!-- 下方模块：AI 决策与动作评分分析 -->
+    <!-- 中间：3 级金字塔卡牌 + 王室赞助池 (王室置于金字塔下方且居中) -->
+    <div class="panel pyramid-section">
+      <div class="panel-title">金字塔明牌展示区</div>
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 3</span>
+          <span>牌堆剩余: <b id="deck3Count">0</b></span>
+        </div>
+        <div class="cards-flex" id="tier3Cards"></div>
+      </div>
+
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 2</span>
+          <span>牌堆剩余: <b id="deck2Count">0</b></span>
+        </div>
+        <div class="cards-flex" id="tier2Cards"></div>
+      </div>
+
+      <div class="tier-row">
+        <div class="tier-header">
+          <span>等级 1</span>
+          <span>牌堆剩余: <b id="deck1Count">0</b></span>
+        </div>
+        <div class="cards-flex" id="tier1Cards"></div>
+      </div>
+
+      <!-- 王室赞助池 (置于金字塔下方) -->
+      <div class="panel-title" style="margin-top: 6px;">王室赞助池</div>
+      <div class="royals-row" id="royalsContainer">
+        <!-- 4 张王室卡 (居中排布) -->
+      </div>
+    </div>
+
+    <!-- 右侧：5x5 棋盘 + 特权/布袋 + 对局步骤日志 + AI 决策与评分分析模块 -->
+    <div class="panel board-panel right-panel">
+      <div class="panel-title">
+        <span>5×5 棋盘矩阵</span>
+        <span id="boardTokensCount" style="font-size:0.75rem; color:var(--accent-gold);">25 标记</span>
+      </div>
+
+      <div class="board-container" id="boardGrid">
+        <!-- 动态生成 25 个格子 -->
+      </div>
+
+      <div class="board-footer">
+        <span><span class="privilege-icon"></span>特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
+        <span><span class="bag-icon"></span>布袋剩余: <b id="bagCount">0</b></span>
+      </div>
+
+      <!-- 对局日志 -->
+      <div class="panel-title" style="margin-top: 2px;">
+        <span>对局操作日志</span>
+        <span style="font-size:0.7rem; color:var(--text-muted);">点击步骤快速跳转</span>
+      </div>
+      <div class="log-panel" id="logContainer" style="min-height: 140px; max-height: 200px;">
+        <!-- 动态追加步骤记录 -->
+      </div>
+
+      <!-- AI 决策与动作评分分析模块 -->
       <div class="ai-decision-panel" id="aiDecisionSection">
         <div class="panel-title" style="margin-top: 2px;">
           <span style="color:var(--accent-gold); display:flex; align-items:center; gap:6px;">
-            🧠 AI 决策与动作估值分析
+            🧠 AI 决策与动作估值
             <span id="decisionStepIndex" style="font-size:0.75rem; color:var(--text-muted);">#0</span>
           </span>
           <span id="decisionAiTypeBadge" class="ai-type-badge">启发式 AI</span>
@@ -243,7 +243,7 @@
             </div>
             <div class="summary-item">
               <span class="summary-label">采纳动作:</span>
-              <b id="decisionAction" style="color:var(--text-main); font-size:0.72rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px;">Game Started</b>
+              <b id="decisionAction" style="color:var(--text-main); font-size:0.72rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:160px;">Game Started</b>
             </div>
             <div class="summary-item">
               <span class="summary-label" id="decisionScoreLabel">估值评估:</span>
@@ -458,6 +458,10 @@
       const p1 = document.getElementById('p1TypeSelect').value;
       try {
         await fetch(`/api/set_players?p0=${p0}&p1=${p1}`, { method: 'POST' });
+        if (stepCache.has(currentStep)) {
+          const s = stepCache.get(currentStep);
+          renderState(s.state, s);
+        }
       } catch (e) {
         console.error("updateAiConfig failed:", e);
       }
@@ -703,8 +707,11 @@
       const p0Next = (step && step.step_index > 0 && actor !== nextPlayer && nextPlayer === 0);
       const p1Next = (step && step.step_index > 0 && actor !== nextPlayer && nextPlayer === 1);
 
-      renderPlayerDashboard(state.players[0], document.getElementById('player0Card'), p0Acting, p0Next, 'p0');
-      renderPlayerDashboard(state.players[1], document.getElementById('player1Card'), p1Acting, p1Next, 'p1');
+      const p0Type = document.getElementById('p0TypeSelect') ? document.getElementById('p0TypeSelect').value : 'heuristic';
+      const p1Type = document.getElementById('p1TypeSelect') ? document.getElementById('p1TypeSelect').value : 'heuristic';
+
+      renderPlayerDashboard(state.players[0], document.getElementById('player0Card'), p0Acting, p0Next, 'p0', { playerKind: p0Type });
+      renderPlayerDashboard(state.players[1], document.getElementById('player1Card'), p1Acting, p1Next, 'p1', { playerKind: p1Type });
     }
 
     function togglePlay(start) {

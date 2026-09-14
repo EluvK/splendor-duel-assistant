@@ -246,13 +246,14 @@ input[type="range"] {
   color: var(--text-main);
 }
 
-/* 主视窗三栏并排网格 (优化后：金字塔区域拓宽至 670px 确保单行容纳 6 张卡牌) */
+/* 主视窗三栏并排网格 (优化后：左侧为玩家仪表盘，中间为金字塔区域，右侧为5x5棋盘与操作历史) */
 main {
   display: grid;
-  grid-template-columns: 270px 670px 1fr;
+  grid-template-columns: minmax(320px, 1fr) 670px 290px;
   gap: 12px;
   padding: 10px 14px;
   flex: 1;
+  min-width: 1300px;
 }
 
 .panel {
@@ -279,11 +280,13 @@ main {
 }
 
 /* 5x5 棋盘布局 (BGA 羊皮纸螺旋棋盘原画风格，尺寸固定 270x270px 杜绝空列坍塌) */
-.left-panel {
+.left-panel,
+.board-panel,
+.right-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 270px;
+  width: 290px;
   flex-shrink: 0;
 }
 
@@ -303,6 +306,7 @@ main {
   width: 270px;
   height: 270px;
   box-sizing: border-box;
+  margin: 0 auto;
 }
 
 .board-cell {
@@ -697,7 +701,7 @@ main {
 
 .players-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 8px;
 }
 
@@ -959,13 +963,13 @@ main {
 
 .decision-content {
   display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .decision-summary {
-  flex: 1;
-  min-width: 220px;
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -973,6 +977,7 @@ main {
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid rgba(255,255,255,0.05);
+  box-sizing: border-box;
 }
 
 .summary-item {
@@ -996,11 +1001,12 @@ main {
 }
 
 .candidates-section {
-  flex: 2;
-  min-width: 320px;
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  box-sizing: border-box;
 }
 
 .candidates-title {
@@ -1067,12 +1073,9 @@ main {
   font-weight: 800;
 }
 
-/* 响应式调整 (小屏时中间金字塔自适应，玩家面板折行置底) */
-@media (max-width: 1400px) {
-  main {
-    grid-template-columns: 270px 1fr;
-  }
-  .player-panel {
-    grid-column: 1 / -1;
+/* 响应式支持：保证三栏在窄屏下不发生重叠变形，开启横向滚动 */
+@media (max-width: 1320px) {
+  body {
+    overflow-x: auto;
   }
 }

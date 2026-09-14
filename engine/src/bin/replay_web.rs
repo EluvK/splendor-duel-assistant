@@ -227,6 +227,10 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                                 "ok": true,
                                 "step": step,
                                 "state": game.current_state(),
+                                "player_kinds": [
+                                    game.player_kinds[0].as_str(),
+                                    game.player_kinds[1].as_str(),
+                                ],
                                 "current_player": game.game.current_player,
                                 "is_human": game.is_current_player_human(),
                                 "legal_actions": game.legal_actions_dto(),
@@ -258,6 +262,10 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                         "ok": true,
                         "step": step,
                         "state": game.current_state(),
+                        "player_kinds": [
+                            game.player_kinds[0].as_str(),
+                            game.player_kinds[1].as_str(),
+                        ],
                         "current_player": game.game.current_player,
                         "is_human": game.is_current_player_human(),
                         "legal_actions": game.legal_actions_dto(),
