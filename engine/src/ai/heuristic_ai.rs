@@ -88,14 +88,37 @@ impl HeuristicAI {
                     }
                 }
 
-                let mut score = 100.0;
-                score += card.points as f32 * 35.0;
-                score += card.crowns as f32 * 30.0;
+                let mut score = 80.0;
+                // 高阶卡牌溢价 (鼓励升级发展与大卡斩杀)
+                match tier {
+                    crate::model::card::CardTier::Tier3 => score += 50.0,
+                    crate::model::card::CardTier::Tier2 => score += 25.0,
+                    crate::model::card::CardTier::Tier1 => {}
+                }
+
+                score += card.points as f32 * 40.0;
+                score += card.crowns as f32 * 55.0; // 显著增强皇冠卡吸引力
                 score += card.bonus as f32 * 15.0;
+
+                // 皇冠冲刺激励：皇冠达到 3 顶或 6 顶王室门槛后，爆发式偏向皇冠卡
+                if p.total_crowns >= 3 && card.crowns > 0 {
+                    score += card.crowns as f32 * 45.0;
+                }
+                if p.total_crowns >= 6 && card.crowns > 0 {
+                    score += card.crowns as f32 * 90.0;
+                }
+
+                // 单色冲刺激励：某单色达到 4 分以上时，全力集火同色高分卡
+                if let Some(gem) = card.color.to_gem_type() {
+                    let col_pts = p.color_points[gem.index()];
+                    if col_pts >= 4 && card.points > 0 {
+                        score += card.points as f32 * (30.0 + col_pts as f32 * 5.0);
+                    }
+                }
 
                 // 逼近胜利时赋予更高紧迫度
                 if p.total_points + card.points >= 16 || p.total_crowns + card.crowns >= 7 {
-                    score += 60.0;
+                    score += 80.0;
                 }
 
                 // 技能加权
@@ -143,8 +166,8 @@ impl HeuristicAI {
                             score -= 40.0;
                         }
 
-                        score += c.points as f32 * 8.0;
-                        score += c.crowns as f32 * 10.0;
+                        score += c.points as f32 * 10.0;
+                        score += c.crowns as f32 * 18.0;
                     }
                 } else {
                     // 盲抽牌堆顶：卡牌不可预测且极易卡死手牌槽，风险极大！

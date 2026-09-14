@@ -13,10 +13,7 @@ use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
 use crate::gameplay::rules::RuleEngine;
 
-/// 回合时间衰减折现因子：鼓励智能体尽快锁定胜局，惩罚拖延回合
-pub const GAMMA_TURN: f32 = 0.98;
-
-/// 单局对弈步数安全上限：防止早期未成熟策略陷入拿放宝石死循环，超过此步数判定为超时平局结算
+/// 单局对弈步数安全上限：防止早期未成熟策略陷入死循环，超过此步数判定为超时平局结算
 pub const MAX_GAME_STEPS: usize = 400;
 
 /// 单局紧凑对弈轨迹
@@ -24,7 +21,8 @@ struct SingleGameTrajectory {
     obs: Vec<f32>,     // steps * OBS_SIZE
     masks: Vec<u8>,    // steps * ACTION_SIZE (0 或 1)
     actions: Vec<i32>, // steps (0..ACTION_SIZE-1)
-    values: Vec<f32>,  // steps 带回合衰减的折现终局估值 ([-1.0, 1.0])
+    values: Vec<f32>,  // steps * 2: [win_value, turns_value]
+    reasons: Vec<i32>, // steps: [0=20_pts, 1=10_crowns, 2=10_color, 3=draw]
     steps: usize,
 }
 
@@ -35,24 +33,38 @@ pub struct CompactBatchSamples {
     pub masks: Vec<u8>,
     pub actions: Vec<i32>,
     pub values: Vec<f32>,
+    pub reasons: Vec<i32>,
 }
 
-/// 计算带有回合时间衰减的折现终局价值序列 (支持常规胜负与超时平局)
 #[inline]
-fn compute_discounted_values(
+fn victory_reason_to_id(reason_opt: Option<VictoryReason>) -> i32 {
+    match reason_opt {
+        Some(VictoryReason::TwentyPrestigePoints) => 0,
+        Some(VictoryReason::TenCrowns) => 1,
+        Some(VictoryReason::TenPointsSameColor(_)) => 2,
+        None => 3, // 超时平局 / 无胜因
+    }
+}
+
+/// 计算多任务目标标签 (纯胜率期望、归一化剩余轮数、终局胜因类别)
+#[inline]
+fn compute_multi_target_labels(
     raw_players: &[usize],
     raw_turns: &[u32],
     winner_opt: Option<usize>,
+    reason_opt: Option<VictoryReason>,
     final_turn: u32,
-) -> Vec<f32> {
+) -> (Vec<f32>, Vec<i32>) {
     let steps = raw_players.len();
-    let mut values = Vec::with_capacity(steps);
+    let mut values = Vec::with_capacity(steps * 2);
+    let mut reasons = Vec::with_capacity(steps);
+    let reason_id = victory_reason_to_id(reason_opt);
+
     for i in 0..steps {
         let p = raw_players[i];
         let turn = raw_turns[i];
-        let rem_turns = final_turn.saturating_sub(turn) as f32;
-        let discount = GAMMA_TURN.powf(rem_turns);
-        let base = match winner_opt {
+        // 1. 纯胜率期望 (不带任何时间折现，消除苟活负折扣漏洞)
+        let win_target = match winner_opt {
             Some(winner) => {
                 if p == winner {
                     1.0
@@ -60,11 +72,17 @@ fn compute_discounted_values(
                     -1.0
                 }
             }
-            None => 0.0, // 超时平局：双方最终基准价值均为 0.0，向网络强化“拖延无益”信号
+            None => 0.0, // 超时平局
         };
-        values.push(base * discount);
+        // 2. 剩余对局轮数归一化 (当前步距离终局的回合数 / 80.0，范围 [0.0, 1.0])
+        let rem_turns = final_turn.saturating_sub(turn) as f32;
+        let turns_target = (rem_turns / 80.0).clamp(0.0, 1.0);
+
+        values.push(win_target);
+        values.push(turns_target);
+        reasons.push(reason_id);
     }
-    values
+    (values, reasons)
 }
 
 fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
@@ -118,14 +136,22 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     }
 
     let winner_opt = game.winner.map(|(w, _)| w);
+    let reason_opt = game.winner.map(|(_, r)| r);
     let final_turn = game.turn_number;
-    let values = compute_discounted_values(&raw_players, &raw_turns, winner_opt, final_turn);
+    let (values, reasons) = compute_multi_target_labels(
+        &raw_players,
+        &raw_turns,
+        winner_opt,
+        reason_opt,
+        final_turn,
+    );
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
         actions: raw_actions,
         values,
+        reasons,
         steps: actual_steps,
     })
 }
@@ -142,13 +168,15 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
     let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
     let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
-    let mut all_values = Vec::with_capacity(total_steps);
+    let mut all_values = Vec::with_capacity(total_steps * 2);
+    let mut all_reasons = Vec::with_capacity(total_steps);
 
     for t in trajectories {
         all_obs.extend(t.obs);
         all_masks.extend(t.masks);
         all_actions.extend(t.actions);
         all_values.extend(t.values);
+        all_reasons.extend(t.reasons);
     }
 
     CompactBatchSamples {
@@ -157,6 +185,7 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
         masks: all_masks,
         actions: all_actions,
         values: all_values,
+        reasons: all_reasons,
     }
 }
 
@@ -233,14 +262,22 @@ fn simulate_single_mcts_game(
     }
 
     let winner_opt = game.winner.map(|(w, _)| w);
+    let reason_opt = game.winner.map(|(_, r)| r);
     let final_turn = game.turn_number;
-    let values = compute_discounted_values(&raw_players, &raw_turns, winner_opt, final_turn);
+    let (values, reasons) = compute_multi_target_labels(
+        &raw_players,
+        &raw_turns,
+        winner_opt,
+        reason_opt,
+        final_turn,
+    );
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
         actions: raw_actions,
         values,
+        reasons,
         steps: actual_steps,
     })
 }
@@ -274,13 +311,15 @@ pub fn sample_mcts_games_parallel_with_config(
     let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
     let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
-    let mut all_values = Vec::with_capacity(total_steps);
+    let mut all_values = Vec::with_capacity(total_steps * 2);
+    let mut all_reasons = Vec::with_capacity(total_steps);
 
     for t in trajectories {
         all_obs.extend(t.obs);
         all_masks.extend(t.masks);
         all_actions.extend(t.actions);
         all_values.extend(t.values);
+        all_reasons.extend(t.reasons);
     }
 
     CompactBatchSamples {
@@ -289,6 +328,7 @@ pub fn sample_mcts_games_parallel_with_config(
         masks: all_masks,
         actions: all_actions,
         values: all_values,
+        reasons: all_reasons,
     }
 }
 
@@ -376,14 +416,22 @@ fn simulate_single_neural_mcts_game(
     }
 
     let winner_opt = game.winner.map(|(w, _)| w);
+    let reason_opt = game.winner.map(|(_, r)| r);
     let final_turn = game.turn_number;
-    let values = compute_discounted_values(&raw_players, &raw_turns, winner_opt, final_turn);
+    let (values, reasons) = compute_multi_target_labels(
+        &raw_players,
+        &raw_turns,
+        winner_opt,
+        reason_opt,
+        final_turn,
+    );
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
         actions: raw_actions,
         values,
+        reasons,
         steps: actual_steps,
     })
 }
@@ -421,13 +469,15 @@ pub fn sample_neural_mcts_games_parallel(
     let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
     let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
-    let mut all_values = Vec::with_capacity(total_steps);
+    let mut all_values = Vec::with_capacity(total_steps * 2);
+    let mut all_reasons = Vec::with_capacity(total_steps);
 
     for t in trajectories {
         all_obs.extend(t.obs);
         all_masks.extend(t.masks);
         all_actions.extend(t.actions);
         all_values.extend(t.values);
+        all_reasons.extend(t.reasons);
     }
 
     Ok(CompactBatchSamples {
@@ -436,6 +486,7 @@ pub fn sample_neural_mcts_games_parallel(
         masks: all_masks,
         actions: all_actions,
         values: all_values,
+        reasons: all_reasons,
     })
 }
 

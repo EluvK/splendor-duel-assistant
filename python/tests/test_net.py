@@ -13,17 +13,23 @@ def test_net_forward_shapes():
 
     # 单样本前向
     single_obs = torch.randn(SplendorNet.OBS_SIZE)
-    logits, value = net(single_obs)
+    logits, win_v, turns_v, reason_logits = net(single_obs)
     assert logits.shape == (1, 288)
-    assert value.shape == (1, 1)
-    assert (-1.0 <= value.item() <= 1.0)
+    assert win_v.shape == (1, 1)
+    assert turns_v.shape == (1, 1)
+    assert reason_logits.shape == (1, 4)
+    assert (-1.0 <= win_v.item() <= 1.0)
+    assert (0.0 <= turns_v.item() <= 1.0)
 
     # 批处理前向 (Batch Size = 8)
     batch_obs = torch.randn(8, SplendorNet.OBS_SIZE)
-    batch_logits, batch_value = net(batch_obs)
-    assert batch_logits.shape == (8, 288)
-    assert batch_value.shape == (8, 1)
-    assert (batch_value >= -1.0).all() and (batch_value <= 1.0).all()
+    b_logits, b_win, b_turns, b_reason = net(batch_obs)
+    assert b_logits.shape == (8, 288)
+    assert b_win.shape == (8, 1)
+    assert b_turns.shape == (8, 1)
+    assert b_reason.shape == (8, 4)
+    assert (b_win >= -1.0).all() and (b_win <= 1.0).all()
+    assert (b_turns >= 0.0).all() and (b_turns <= 1.0).all()
 
 
 def test_net_action_masking():
@@ -34,9 +40,12 @@ def test_net_action_masking():
     obs_t = torch.from_numpy(obs)
     mask_t = torch.from_numpy(info["action_mask"])
 
-    probs, value = net.predict_action_probs(obs_t, mask_t)
+    probs, win_v, turns_v, reason_logits = net.predict_action_probs(obs_t, mask_t)
 
     assert probs.shape == (1, 288)
+    assert win_v.shape == (1, 1)
+    assert turns_v.shape == (1, 1)
+    assert reason_logits.shape == (1, 4)
     probs_np = probs.detach().cpu().numpy()[0]
 
     # 验证非法动作的概率为 0

@@ -195,20 +195,22 @@ pub fn generate_heuristic_samples(
     pyo3::Py<numpy::PyArray1<u8>>,
     pyo3::Py<numpy::PyArray1<i32>>,
     pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<i32>>,
     usize,
 )> {
     let batch = py.detach(|| crate::ai::sample_heuristic_games_parallel(num_games, start_seed));
 
-    let (obs_arr, mask_arr, action_arr, value_arr) = Python::attach(|py| {
+    let (obs_arr, mask_arr, action_arr, value_arr, reason_arr) = Python::attach(|py| {
         (
             numpy::PyArray1::from_vec(py, batch.obs).unbind(),
             numpy::PyArray1::from_vec(py, batch.masks).unbind(),
             numpy::PyArray1::from_vec(py, batch.actions).unbind(),
             numpy::PyArray1::from_vec(py, batch.values).unbind(),
+            numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
         )
     });
 
-    Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
+    Ok((obs_arr, mask_arr, action_arr, value_arr, reason_arr, batch.total_steps))
 }
 
 /// 批量多线程并行生成带 MCTS 深度推演与 AlphaZero 探索机制的自博弈样本 (8 线程全速并发)
@@ -227,6 +229,7 @@ pub fn generate_mcts_samples(
     pyo3::Py<numpy::PyArray1<u8>>,
     pyo3::Py<numpy::PyArray1<i32>>,
     pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<i32>>,
     usize,
 )> {
     let batch = py.detach(|| {
@@ -240,16 +243,17 @@ pub fn generate_mcts_samples(
         )
     });
 
-    let (obs_arr, mask_arr, action_arr, value_arr) = Python::attach(|py| {
+    let (obs_arr, mask_arr, action_arr, value_arr, reason_arr) = Python::attach(|py| {
         (
             numpy::PyArray1::from_vec(py, batch.obs).unbind(),
             numpy::PyArray1::from_vec(py, batch.masks).unbind(),
             numpy::PyArray1::from_vec(py, batch.actions).unbind(),
             numpy::PyArray1::from_vec(py, batch.values).unbind(),
+            numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
         )
     });
 
-    Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
+    Ok((obs_arr, mask_arr, action_arr, value_arr, reason_arr, batch.total_steps))
 }
 
 #[pyfunction]
@@ -268,6 +272,7 @@ pub fn generate_neural_mcts_samples(
     pyo3::Py<numpy::PyArray1<u8>>,
     pyo3::Py<numpy::PyArray1<i32>>,
     pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<i32>>,
     usize,
 )> {
     let batch = py
@@ -284,16 +289,17 @@ pub fn generate_neural_mcts_samples(
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
 
-    let (obs_arr, mask_arr, action_arr, value_arr) = Python::attach(|py| {
+    let (obs_arr, mask_arr, action_arr, value_arr, reason_arr) = Python::attach(|py| {
         (
             numpy::PyArray1::from_vec(py, batch.obs).unbind(),
             numpy::PyArray1::from_vec(py, batch.masks).unbind(),
             numpy::PyArray1::from_vec(py, batch.actions).unbind(),
             numpy::PyArray1::from_vec(py, batch.values).unbind(),
+            numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
         )
     });
 
-    Ok((obs_arr, mask_arr, action_arr, value_arr, batch.total_steps))
+    Ok((obs_arr, mask_arr, action_arr, value_arr, reason_arr, batch.total_steps))
 }
 
 /// 纯 Rust 多线程 8 核并发成对严格换座对抗评测 (秒级极速完成门禁对抗，零 Python/CUDA 开销)

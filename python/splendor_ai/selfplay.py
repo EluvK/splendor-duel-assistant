@@ -20,16 +20,17 @@ def generate_heuristic_compact_batch(
     num_games: int, start_seed: int = 42
 ) -> CompactBatch:
     """全速调用底层 Rust 8 线程并行模拟，生成连续紧凑样本块 (吞吐 > 50 万步/秒)."""
-    raw_obs, raw_masks, raw_actions, raw_values, total_steps = generate_heuristic_samples(
+    raw_obs, raw_masks, raw_actions, raw_values, raw_reasons, total_steps = generate_heuristic_samples(
         num_games, start_seed
     )
 
     obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
     masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     actions = np.asarray(raw_actions, dtype=np.int64)
-    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 1)
+    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
+    reasons = np.asarray(raw_reasons, dtype=np.int64)
 
-    return CompactBatch(obs=obs, mask=masks, action=actions, value=values)
+    return CompactBatch(obs=obs, mask=masks, action=actions, value=values, reason=reasons)
 
 
 def generate_rust_neural_mcts_compact_batch(
@@ -48,7 +49,7 @@ def generate_rust_neural_mcts_compact_batch(
             raise ValueError("Either net or onnx_bytes must be provided")
         onnx_bytes = net.export_onnx_bytes()
 
-    raw_obs, raw_masks, raw_actions, raw_values, total_steps = generate_neural_mcts_samples(
+    raw_obs, raw_masks, raw_actions, raw_values, raw_reasons, total_steps = generate_neural_mcts_samples(
         onnx_bytes,
         num_games,
         num_simulations,
@@ -61,9 +62,10 @@ def generate_rust_neural_mcts_compact_batch(
     obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
     masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     actions = np.asarray(raw_actions, dtype=np.int64)
-    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 1)
+    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
+    reasons = np.asarray(raw_reasons, dtype=np.int64)
 
-    return CompactBatch(obs=obs, mask=masks, action=actions, value=values)
+    return CompactBatch(obs=obs, mask=masks, action=actions, value=values, reason=reasons)
 
 
 def generate_selfplay_compact_batch(
@@ -79,6 +81,7 @@ def generate_selfplay_compact_batch(
     all_masks: List[np.ndarray] = []
     all_actions: List[int] = []
     all_values: List[float] = []
+    all_reasons: List[int] = []
 
     net.eval()
     with torch.no_grad():
@@ -95,7 +98,7 @@ def generate_selfplay_compact_batch(
                 obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
                 mask_t = torch.from_numpy(mask).unsqueeze(0).to(device)
 
-                probs, _ = net.predict_action_probs(obs_t, mask_t, temperature=temperature)
+                probs, _, _, _ = net.predict_action_probs(obs_t, mask_t, temperature=temperature)
                 probs_np = probs.cpu().numpy()[0]
                 action = int(np.random.choice(len(probs_np), p=probs_np))
 
@@ -105,21 +108,33 @@ def generate_selfplay_compact_batch(
                     break
 
             winner = info.get("winner")
-            if winner is not None:
-                final_turn = env.turn_number
-                for obs_s, mask_s, act_s, ply_s, turn_s in raw_trajectory:
-                    all_obs.append(obs_s)
-                    all_masks.append(mask_s)
-                    all_actions.append(act_s)
-                    rem_turns = max(0, final_turn - turn_s)
-                    discount = gamma_turn ** rem_turns
-                    base = 1.0 if ply_s == winner else -1.0
-                    all_values.append(base * discount)
+            final_turn = env.turn_number
+            # 胜因编码
+            reason_str = str(info.get("reason", ""))
+            if "TwentyPrestigePoints" in reason_str:
+                reason_id = 0
+            elif "TenCrowns" in reason_str:
+                reason_id = 1
+            elif "TenPointsSameColor" in reason_str:
+                reason_id = 2
+            else:
+                reason_id = 3
+
+            for obs_s, mask_s, act_s, ply_s, turn_s in raw_trajectory:
+                all_obs.append(obs_s)
+                all_masks.append(mask_s)
+                all_actions.append(act_s)
+                win_target = 1.0 if ply_s == winner else (-1.0 if winner is not None else 0.0)
+                rem_turns = max(0, final_turn - turn_s)
+                turns_target = min(rem_turns / 80.0, 1.0)
+                all_values.extend([win_target, turns_target])
+                all_reasons.append(reason_id)
 
     total_steps = len(all_actions)
     obs_arr = np.array(all_obs, dtype=np.float32) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32)
     masks_arr = np.array(all_masks, dtype=bool) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool)
     actions_arr = np.array(all_actions, dtype=np.int64)
-    values_arr = np.array(all_values, dtype=np.float32).reshape(-1, 1)
+    values_arr = np.array(all_values, dtype=np.float32).reshape(-1, 2) if total_steps > 0 else np.zeros((0, 2), dtype=np.float32)
+    reasons_arr = np.array(all_reasons, dtype=np.int64)
 
-    return CompactBatch(obs=obs_arr, mask=masks_arr, action=actions_arr, value=values_arr)
+    return CompactBatch(obs=obs_arr, mask=masks_arr, action=actions_arr, value=values_arr, reason=reasons_arr)

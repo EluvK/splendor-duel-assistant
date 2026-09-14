@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 
 use crate::ai::heuristic_ai::HeuristicAI;
-use crate::ai::neural_evaluator::TractNeuralEvaluator;
+use crate::ai::neural_evaluator::{NeuralPrediction, TractNeuralEvaluator};
 use crate::bridge::{action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
@@ -49,6 +49,9 @@ struct Node {
     edges: Vec<Edge>,
     is_terminal: bool,
 }
+
+/// MCTS 搜索综合价值中的时间敏感度惩罚系数 (鼓励快速斩杀，惩罚拖延苟活)
+pub const LAMBDA_TURNS: f32 = 0.20;
 
 /// 基于先验剪枝的高性能 AlphaZero 风格 MCTS
 pub struct RustMCTS {
@@ -274,12 +277,12 @@ impl RustMCTS {
         }
 
         let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
-        let mut eval_cache: HashMap<u64, ([f32; ACTION_SIZE], f32)> =
+        let mut eval_cache: HashMap<u64, ([f32; ACTION_SIZE], NeuralPrediction)> =
             HashMap::with_capacity(num_simulations + 1);
         let root_idx = 0;
         let is_term = matches!(state.phase, TurnPhase::GameOver(_));
 
-        let (mut root_edges, _root_v_mover) =
+        let (mut root_edges, _root_pred) =
             Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut eval_cache).ok()?;
 
         if add_dirichlet && root_edges.len() >= 2 {
@@ -360,7 +363,8 @@ impl RustMCTS {
                         evaluator,
                         &mut eval_cache,
                     ) {
-                        Ok((edges, v_mover)) => {
+                        Ok((edges, pred)) => {
+                            let v_mover = pred.combined_value(LAMBDA_TURNS);
                             let vp0 = if sim_state.current_player == 0 {
                                 v_mover
                             } else {
@@ -422,12 +426,12 @@ impl RustMCTS {
         state: &GameState,
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
-        cache: &mut HashMap<u64, ([f32; ACTION_SIZE], f32)>,
-    ) -> Result<(Vec<Edge>, f32), String> {
+        cache: &mut HashMap<u64, ([f32; ACTION_SIZE], NeuralPrediction)>,
+    ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
         let obs = encode_state(state);
         let key = hash_obs(&obs);
 
-        let (logits, value) = if let Some(cached) = cache.get(&key) {
+        let (logits, pred) = if let Some(cached) = cache.get(&key) {
             *cached
         } else {
             let res = evaluator.evaluate(&obs)?;
@@ -460,7 +464,7 @@ impl RustMCTS {
             })
             .collect();
 
-        Ok((edges, value))
+        Ok((edges, pred))
     }
 
     #[allow(dead_code)]
@@ -468,7 +472,7 @@ impl RustMCTS {
         state: &GameState,
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
-    ) -> Result<(Vec<Edge>, f32), String> {
+    ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
         let mut cache = HashMap::new();
         Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut cache)
     }

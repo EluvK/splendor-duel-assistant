@@ -151,9 +151,11 @@ def train_imitation(args: argparse.Namespace) -> None:
         trainer.load_checkpoint(Path(args.resume))
         print(f"🔄 从检查点 {args.resume} 恢复")
 
-    print("\n" + "=" * 80)
-    print(f"{'Epoch':<8}{'Train Loss':<14}{'Policy Loss':<14}{'Top-1 Acc':<14}{'Top-3 Acc':<14}{'Val Loss':<12}")
-    print("=" * 80)
+    print("\n" + "=" * 90)
+    print(
+        f"{'Epoch':<8}{'Train Loss':<12}{'Policy':<10}{'Win Loss':<10}{'Turns Loss':<12}{'Top-1 Acc':<12}{'Val Loss':<10}"
+    )
+    print("=" * 90)
 
     best_val_loss = float("inf")
     for ep in range(1, args.epochs + 1):
@@ -176,11 +178,13 @@ def train_imitation(args: argparse.Namespace) -> None:
         trainer.save_checkpoint("latest.pt", is_best=False, meta=meta)
 
         top1_str = f"{train_metrics['top1_acc']*100:.1f}%"
-        top3_str = f"{train_metrics['top3_acc']*100:.1f}%"
+        win_loss_str = f"{train_metrics.get('win_loss', 0.0):.4f}"
+        turns_loss_str = f"{train_metrics.get('turns_loss', 0.0):.4f}"
         print(
-            f"{ep:<8}{train_metrics['loss']:<14.4f}{train_metrics['policy_loss']:<14.4f}"
-            f"{top1_str:<14}{top3_str:<14}"
-            f"{val_metrics['eval_loss']:<12.4f}{'🌟 (Best)' if is_best else ''}"
+            f"{ep:<8}{train_metrics['loss']:<12.4f}{train_metrics['policy_loss']:<10.4f}"
+            f"{win_loss_str:<10}{turns_loss_str:<12}"
+            f"{top1_str:<12}"
+            f"{val_metrics['eval_loss']:<10.4f}{'🌟 (Best)' if is_best else ''}"
         )
 
     print("=" * 80)
@@ -344,6 +348,12 @@ def train_selfplay(args: argparse.Namespace) -> None:
         loader = FastTensorLoader(train_batch, batch_size=args.batch_size, shuffle=True, device=device)
         for ep in range(args.train_epochs):
             metrics = trainer.train_epoch(loader)
+            if ep == args.train_epochs - 1:
+                print(
+                    f"   📉 拟合损失: Total {metrics['loss']:.4f} | Policy {metrics['policy_loss']:.4f} "
+                    f"| Win {metrics.get('win_loss', 0.0):.4f} | Turns {metrics.get('turns_loss', 0.0):.4f} "
+                    f"| Reason {metrics.get('reason_loss', 0.0):.4f} | Top-1: {metrics['top1_acc']*100:.1f}%"
+                )
 
         # (C) 竞技场门禁对抗 (Candidate vs Baseline)
         eval_sims = args.mcts_sims if args.eval_agent == "neural_mcts" else 0

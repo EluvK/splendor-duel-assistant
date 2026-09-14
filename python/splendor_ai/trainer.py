@@ -22,6 +22,9 @@ class TrainerConfig:
     min_lr: float = 1e-5
     weight_decay: float = 1e-4
     value_loss_coeff: float = 1.0
+    win_loss_coeff: float = 1.0
+    turns_loss_coeff: float = 0.5
+    reason_loss_coeff: float = 0.3
     grad_clip_norm: float = 5.0
     batch_size: int = 256
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -64,6 +67,9 @@ class Trainer:
         total_loss = 0.0
         total_p_loss = 0.0
         total_v_loss = 0.0
+        total_win_loss = 0.0
+        total_turns_loss = 0.0
+        total_reason_loss = 0.0
         correct_top1 = 0
         correct_top3 = 0
         total_samples = 0
@@ -75,16 +81,32 @@ class Trainer:
             mask = batch["mask"].to(self.device, non_blocking=True)
             target_action = batch["action"].to(self.device, non_blocking=True)
             target_value = batch["value"].to(self.device, non_blocking=True)
+            target_reason = batch.get("reason")
+            if target_reason is not None:
+                target_reason = target_reason.to(self.device, non_blocking=True)
+            else:
+                target_reason = torch.zeros(obs.shape[0], dtype=torch.long, device=self.device)
+
+            target_win = target_value[:, 0:1]
+            target_turns = target_value[:, 1:2]
             b_size = obs.shape[0]
 
             self.optimizer.zero_grad()
 
             with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
-                logits, value = self.net(obs)
+                logits, win_v, turns_v, reason_logits = self.net(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
                 policy_loss = F.cross_entropy(masked_logits, target_action)
-                value_loss = F.mse_loss(value, target_value)
+                win_loss = F.mse_loss(win_v, target_win)
+                turns_loss = F.smooth_l1_loss(turns_v, target_turns)
+                reason_loss = F.cross_entropy(reason_logits, target_reason)
+
+                value_loss = (
+                    self.cfg.win_loss_coeff * win_loss
+                    + self.cfg.turns_loss_coeff * turns_loss
+                    + self.cfg.reason_loss_coeff * reason_loss
+                )
                 loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
             self.scaler.scale(loss).backward()
@@ -96,6 +118,9 @@ class Trainer:
             total_loss += loss.item() * b_size
             total_p_loss += policy_loss.item() * b_size
             total_v_loss += value_loss.item() * b_size
+            total_win_loss += win_loss.item() * b_size
+            total_turns_loss += turns_loss.item() * b_size
+            total_reason_loss += reason_loss.item() * b_size
 
             pred_top3 = masked_logits.topk(k=3, dim=-1).indices
             correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
@@ -105,7 +130,7 @@ class Trainer:
             if (step_i + 1) % 10 == 0 or (step_i + 1) == len(dataloader):
                 pbar.update(
                     step_i + 1,
-                    extra=f"loss: {loss.item():.3f} | top1: {correct_top1/total_samples*100:.1f}%",
+                    extra=f"loss: {loss.item():.3f} | win: {win_loss.item():.3f} | top1: {correct_top1/total_samples*100:.1f}%",
                 )
 
         pbar.done(f"loss: {total_loss/total_samples:.4f} | top1: {correct_top1/total_samples*100:.1f}%")
@@ -116,9 +141,13 @@ class Trainer:
             "loss": total_loss / total_samples,
             "policy_loss": total_p_loss / total_samples,
             "value_loss": total_v_loss / total_samples,
+            "win_loss": total_win_loss / total_samples,
+            "turns_loss": total_turns_loss / total_samples,
+            "reason_loss": total_reason_loss / total_samples,
             "top1_acc": correct_top1 / total_samples,
             "top3_acc": correct_top3 / total_samples,
             "lr": self.optimizer.param_groups[0]["lr"],
+            "total_samples": total_samples,
         }
 
     def train_epoch_sharded(
@@ -167,16 +196,32 @@ class Trainer:
                     mask = batch["mask"]
                     target_action = batch["action"]
                     target_value = batch["value"]
+                    target_win = target_value[:, 0:1]
+                    target_turns = target_value[:, 1:2]
+                    target_reason = batch.get("reason")
+                    if target_reason is not None:
+                        target_reason = target_reason.to(self.device, non_blocking=True)
+                    else:
+                        target_reason = torch.zeros(obs.shape[0], dtype=torch.long, device=self.device)
+
                     b_size = obs.shape[0]
 
                     self.optimizer.zero_grad()
 
                     with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
-                        logits, value = self.net(obs)
+                        logits, win_v, turns_v, reason_logits = self.net(obs)
                         masked_logits = SplendorNet.mask_logits(logits, mask)
 
                         policy_loss = F.cross_entropy(masked_logits, target_action)
-                        value_loss = F.mse_loss(value, target_value)
+                        win_loss = F.mse_loss(win_v, target_win)
+                        turns_loss = F.smooth_l1_loss(turns_v, target_turns)
+                        reason_loss = F.cross_entropy(reason_logits, target_reason)
+
+                        value_loss = (
+                            self.cfg.win_loss_coeff * win_loss
+                            + self.cfg.turns_loss_coeff * turns_loss
+                            + self.cfg.reason_loss_coeff * reason_loss
+                        )
                         loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
                     self.scaler.scale(loss).backward()
@@ -234,13 +279,29 @@ class Trainer:
                 mask = batch["mask"].to(self.device, non_blocking=True)
                 target_action = batch["action"].to(self.device, non_blocking=True)
                 target_value = batch["value"].to(self.device, non_blocking=True)
+                target_reason = batch.get("reason")
+                if target_reason is not None:
+                    target_reason = target_reason.to(self.device, non_blocking=True)
+                else:
+                    target_reason = torch.zeros(obs.shape[0], dtype=torch.long, device=self.device)
+
+                target_win = target_value[:, 0:1]
+                target_turns = target_value[:, 1:2]
                 b_size = obs.shape[0]
 
-                logits, value = self.net(obs)
+                logits, win_v, turns_v, reason_logits = self.net(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
                 policy_loss = F.cross_entropy(masked_logits, target_action)
-                value_loss = F.mse_loss(value, target_value)
+                win_loss = F.mse_loss(win_v, target_win)
+                turns_loss = F.smooth_l1_loss(turns_v, target_turns)
+                reason_loss = F.cross_entropy(reason_logits, target_reason)
+
+                value_loss = (
+                    self.cfg.win_loss_coeff * win_loss
+                    + self.cfg.turns_loss_coeff * turns_loss
+                    + self.cfg.reason_loss_coeff * reason_loss
+                )
                 loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
                 total_loss += loss.item() * b_size

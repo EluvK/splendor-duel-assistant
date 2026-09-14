@@ -16,7 +16,8 @@ class CompactBatch:
     obs: np.ndarray  # [N, OBS_SIZE] (742) float32
     mask: np.ndarray  # [N, 288] bool
     action: np.ndarray  # [N] int64 (标量整数动作 ID)
-    value: np.ndarray  # [N, 1] float32
+    value: np.ndarray  # [N, 2] float32 (col 0: 纯胜负期望, col 1: 归一化剩余轮数)
+    reason: np.ndarray  # [N] int64 (0: 20_points, 1: 10_crowns, 2: 10_color, 3: draw)
 
     @property
     def num_samples(self) -> int:
@@ -32,17 +33,34 @@ class CompactBatch:
             mask=self.mask,
             action=self.action,
             value=self.value,
+            reason=self.reason,
         )
 
     @classmethod
     def load_npz(cls, path: Path) -> "CompactBatch":
-        """从分片文件加载样本."""
+        """从分片文件加载样本 (平滑兼容老旧单头分片)."""
         data = np.load(path)
+        raw_val = data["value"]
+        if raw_val.ndim == 1:
+            raw_val = raw_val.reshape(-1, 1)
+        if raw_val.shape[1] == 1:
+            # 兼容老单头样本：补齐剩余轮数默认 0.5
+            turns_pad = np.full_like(raw_val, 0.5, dtype=np.float32)
+            val_2d = np.concatenate([raw_val, turns_pad], axis=1)
+        else:
+            val_2d = raw_val
+
+        if "reason" in data:
+            reason = data["reason"]
+        else:
+            reason = np.zeros(len(data["action"]), dtype=np.int64)
+
         return cls(
             obs=data["obs"],
             mask=data["mask"],
             action=data["action"],
-            value=data["value"],
+            value=val_2d,
+            reason=reason,
         )
 
 
@@ -67,6 +85,7 @@ class FastTensorLoader:
         self.mask = torch.from_numpy(batch.mask).bool()
         self.action = torch.from_numpy(batch.action).long()
         self.value = torch.from_numpy(batch.value).float()
+        self.reason = torch.from_numpy(batch.reason).long()
 
         self.resident_on_device = False
         if device is not None and device.type == "cuda":
@@ -76,6 +95,7 @@ class FastTensorLoader:
                 self.mask = self.mask.to(device)
                 self.action = self.action.to(device)
                 self.value = self.value.to(device)
+                self.reason = self.reason.to(device)
                 self.resident_on_device = True
             except RuntimeError:
                 # 显存不足时自动回退为 CPU 内存驻留
@@ -105,18 +125,21 @@ class FastTensorLoader:
             b_mask = self.mask[idx]
             b_action = self.action[idx]
             b_value = self.value[idx]
+            b_reason = self.reason[idx]
 
             if not self.resident_on_device and self.device is not None:
                 b_obs = b_obs.to(self.device, non_blocking=True)
                 b_mask = b_mask.to(self.device, non_blocking=True)
                 b_action = b_action.to(self.device, non_blocking=True)
                 b_value = b_value.to(self.device, non_blocking=True)
+                b_reason = b_reason.to(self.device, non_blocking=True)
 
             yield {
                 "obs": b_obs,
                 "mask": b_mask,
                 "action": b_action,
                 "value": b_value,
+                "reason": b_reason,
             }
 
 
@@ -128,6 +151,7 @@ class CompactDataset(Dataset):
         self.mask = torch.from_numpy(batch.mask).bool()
         self.action = torch.from_numpy(batch.action).long()
         self.value = torch.from_numpy(batch.value).float()
+        self.reason = torch.from_numpy(batch.reason).long()
 
     def __len__(self) -> int:
         return len(self.action)
@@ -138,6 +162,7 @@ class CompactDataset(Dataset):
             "mask": self.mask[idx],
             "action": self.action[idx],
             "value": self.value[idx],
+            "reason": self.reason[idx],
         }
 
 
@@ -193,6 +218,7 @@ class ReplayBuffer:
         self.mask_list: List[np.ndarray] = []
         self.action_list: List[np.ndarray] = []
         self.value_list: List[np.ndarray] = []
+        self.reason_list: List[np.ndarray] = []
         self.total_samples = 0
 
     def add_batch(self, batch: CompactBatch) -> None:
@@ -203,6 +229,7 @@ class ReplayBuffer:
         self.mask_list.append(batch.mask)
         self.action_list.append(batch.action)
         self.value_list.append(batch.value)
+        self.reason_list.append(batch.reason)
         self.total_samples += batch.num_samples
 
         # 滑动窗口淘汰最老的一批
@@ -212,6 +239,7 @@ class ReplayBuffer:
             self.mask_list.pop(0)
             self.action_list.pop(0)
             self.value_list.pop(0)
+            self.reason_list.pop(0)
             self.total_samples -= removed_count
 
     def get_compact_batch(self) -> CompactBatch:
@@ -221,7 +249,8 @@ class ReplayBuffer:
                 obs=np.zeros((0, 742), dtype=np.float32),
                 mask=np.zeros((0, 288), dtype=bool),
                 action=np.zeros((0,), dtype=np.int64),
-                value=np.zeros((0, 1), dtype=np.float32),
+                value=np.zeros((0, 2), dtype=np.float32),
+                reason=np.zeros((0,), dtype=np.int64),
             )
         if len(self.action_list) == 1:
             return CompactBatch(
@@ -229,18 +258,27 @@ class ReplayBuffer:
                 mask=self.mask_list[0],
                 action=self.action_list[0],
                 value=self.value_list[0],
+                reason=self.reason_list[0],
             )
         obs_all = np.concatenate(self.obs_list, axis=0)
         mask_all = np.concatenate(self.mask_list, axis=0)
         action_all = np.concatenate(self.action_list, axis=0)
         value_all = np.concatenate(self.value_list, axis=0)
-        return CompactBatch(obs=obs_all, mask=mask_all, action=action_all, value=value_all)
+        reason_all = np.concatenate(self.reason_list, axis=0)
+        return CompactBatch(
+            obs=obs_all,
+            mask=mask_all,
+            action=action_all,
+            value=value_all,
+            reason=reason_all,
+        )
 
     def clear(self) -> None:
         self.obs_list.clear()
         self.mask_list.clear()
         self.action_list.clear()
         self.value_list.clear()
+        self.reason_list.clear()
         self.total_samples = 0
 
     def __len__(self) -> int:

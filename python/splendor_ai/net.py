@@ -90,36 +90,53 @@ class SplendorNet(nn.Module):
             nn.ReLU(),
         )
 
-        # 4. 双头输出
-        # Policy Head
+        # 4. 多任务输出头 (解耦策略、胜负、剩余回合与终局胜因)
+        # (1) Policy Head: 288 维合法动作 Logits
         self.policy_head = nn.Sequential(
             nn.Linear(fusion_hidden, fusion_hidden),
             nn.ReLU(),
             nn.Linear(fusion_hidden, self.ACTION_SIZE),
         )
 
-        # Value Head (扩充容量至两层并增加 LayerNorm 正则化)
-        self.value_head = nn.Sequential(
+        # (2) Win Head: 纯胜率预期 [-1.0, 1.0] (不带时间折现，消除负折扣苟活漏洞)
+        self.win_head = nn.Sequential(
             nn.Linear(fusion_hidden, 128),
             nn.LayerNorm(128),
             nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
+            nn.Linear(128, 1),
             nn.Tanh(),
+        )
+
+        # (3) Turns Head: 归一化剩余轮数预期 [0.0, 1.0] (0..80 轮，推动 MCTS 压榨步数速胜)
+        self.turns_head = nn.Sequential(
+            nn.Linear(fusion_hidden, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+            nn.Sigmoid(),
+        )
+
+        # (4) Reason Head: 终局胜因 4 分类 Logits [20_pts, 10_crowns, 10_color, draw]
+        self.reason_head = nn.Sequential(
+            nn.Linear(fusion_hidden, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Linear(128, 4),
         )
 
     def forward(
         self, obs: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """前向传播.
 
         Args:
-            obs: [B, 725] 或 [725] 状态张量.
+            obs: [B, 742] 或 [742] 状态张量.
 
         Returns:
-            policy_logits: [B, 256] 未掩码的动作 logits
-            value: [B, 1] 胜率预测 ([-1.0, 1.0])
+            policy_logits: [B, 288] 未掩码动作 logits
+            win_value: [B, 1] 纯胜率期望 ([-1.0, 1.0])
+            turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
+            reason_logits: [B, 4] 终局胜因 4 分类 logits
         """
         if obs.dim() == 1:
             obs = obs.unsqueeze(0)
@@ -146,11 +163,13 @@ class SplendorNet(nn.Module):
         # 特征融合
         fused = self.fusion(torch.cat([x_board, x_context], dim=-1))
 
-        # 双头输出
-        logits = self.policy_head(fused)
-        value = self.value_head(fused)
+        # 多头输出
+        policy_logits = self.policy_head(fused)
+        win_value = self.win_head(fused)
+        turns_value = self.turns_head(fused)
+        reason_logits = self.reason_head(fused)
 
-        return logits, value
+        return policy_logits, win_value, turns_value, reason_logits
 
     @staticmethod
     def mask_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -161,29 +180,30 @@ class SplendorNet(nn.Module):
 
     def predict_action_probs(
         self, obs: torch.Tensor, mask: Optional[torch.Tensor] = None, temperature: float = 1.0
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """计算合法动作概率分布与胜率评估.
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """计算合法动作概率分布与多目标评估.
 
         Args:
-            obs: [B, 725] 状态
-            mask: [B, 256] 动作掩码 (bool)
+            obs: [B, 742] 状态
+            mask: [B, 288] 动作掩码 (bool)
             temperature: 采样温度 (默认 1.0)
 
         Returns:
-            probs: [B, 256] 合法动作概率分布
-            value: [B, 1] 胜率估计
+            probs: [B, 288] 合法动作概率分布
+            win_value: [B, 1] 纯胜率预期 ([-1.0, 1.0])
+            turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
+            reason_logits: [B, 4] 终局胜因 Logits
         """
-        logits, value = self.forward(obs)
+        policy_logits, win_value, turns_value, reason_logits = self.forward(obs)
         if mask is not None:
-            logits = self.mask_logits(logits, mask)
+            policy_logits = self.mask_logits(policy_logits, mask)
 
         if temperature <= 1e-4:
-            # 贪婪模式 (argmax)
-            probs = F.one_hot(logits.argmax(dim=-1), num_classes=self.ACTION_SIZE).float()
+            probs = F.one_hot(policy_logits.argmax(dim=-1), num_classes=self.ACTION_SIZE).float()
         else:
-            probs = F.softmax(logits / temperature, dim=-1)
+            probs = F.softmax(policy_logits / temperature, dim=-1)
 
-        return probs, value
+        return probs, win_value, turns_value, reason_logits
 
     def export_onnx_bytes(self) -> bytes:
         """将当前模型导出为 ONNX 二进制字节流 (供 Rust tract-onnx 引擎极速推理)."""
@@ -202,11 +222,13 @@ class SplendorNet(nn.Module):
                     dummy_obs,
                     buf,
                     input_names=["obs"],
-                    output_names=["policy_logits", "value"],
+                    output_names=["policy_logits", "win_value", "turns_value", "reason_logits"],
                     dynamic_axes={
                         "obs": {0: "batch_size"},
                         "policy_logits": {0: "batch_size"},
-                        "value": {0: "batch_size"},
+                        "win_value": {0: "batch_size"},
+                        "turns_value": {0: "batch_size"},
+                        "reason_logits": {0: "batch_size"},
                     },
                     opset_version=17,
                     do_constant_folding=True,

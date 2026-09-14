@@ -23,7 +23,8 @@ def test_heuristic_compact_generation():
     assert batch.obs.shape == (batch.num_samples, SplendorNet.OBS_SIZE)
     assert batch.mask.shape == (batch.num_samples, 288)
     assert batch.action.shape == (batch.num_samples,)
-    assert batch.value.shape == (batch.num_samples, 1)
+    assert batch.value.shape == (batch.num_samples, 2)
+    assert batch.reason.shape == (batch.num_samples,)
     assert (batch.action >= 0).all() and (batch.action < 288).all()
 
 
