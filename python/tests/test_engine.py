@@ -13,7 +13,7 @@ def test_py_game_state_basic():
     mask = game.action_mask()
     legals = game.legal_action_ids()
 
-    assert len(obs) == 726
+    assert len(obs) == SplendorDuelEnv.OBS_SIZE
     assert len(mask) == 288
     assert len(legals) >= 1
     assert game.current_player() in [0, 1]
@@ -28,7 +28,7 @@ def test_env_reset_and_info():
     obs, info = env.reset()
 
     assert isinstance(obs, np.ndarray)
-    assert obs.shape == (726,)
+    assert obs.shape == (SplendorDuelEnv.OBS_SIZE,)
     assert obs.dtype == np.float32
     assert "action_mask" in info
     assert "legal_actions" in info
@@ -56,7 +56,7 @@ def test_env_random_playout():
         action = random.choice(legals)
         obs, reward, terminated, truncated, info = env.step(action)
 
-        assert obs.shape == (726,)
+        assert obs.shape == (SplendorDuelEnv.OBS_SIZE,)
         assert not np.isnan(obs).any()
         assert (obs >= 0.0).all() and (obs <= 1.0001).all()
 

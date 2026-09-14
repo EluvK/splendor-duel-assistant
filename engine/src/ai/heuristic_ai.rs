@@ -89,9 +89,14 @@ impl HeuristicAI {
                 }
 
                 let mut score = 100.0;
-                score += card.points as f32 * 30.0;
-                score += card.crowns as f32 * 25.0;
+                score += card.points as f32 * 35.0;
+                score += card.crowns as f32 * 30.0;
                 score += card.bonus as f32 * 15.0;
+
+                // 逼近胜利时赋予更高紧迫度
+                if p.total_points + card.points >= 16 || p.total_crowns + card.crowns >= 7 {
+                    score += 60.0;
+                }
 
                 // 技能加权
                 match card.ability {
@@ -118,15 +123,38 @@ impl HeuristicAI {
             Action::ReserveCard { tier, slot } => {
                 let mut score = 35.0;
                 if state.board.has_gold() {
-                    score += 20.0; // 抢黄金收益极大
+                    score += 25.0; // 抢黄金收益极大
                 }
 
                 if let Some(s) = slot {
                     let t_idx = tier.index();
                     if *s < state.pyramid[t_idx].len() {
                         let c = state.pyramid[t_idx][*s];
+                        let missing = p.tokens_missing(&c);
+
+                        // 严防死锁：在缺乏 bonus 基础时，严禁无脑预留高费大牌将预留槽永久堵死！
+                        if missing > 5 {
+                            score -= (missing - 5) as f32 * 12.0;
+                        }
+                        if p.reserved_cards.len() >= 1 && missing > 3 {
+                            score -= 20.0;
+                        }
+                        if p.reserved_cards.len() >= 2 && missing > 1 {
+                            score -= 40.0;
+                        }
+
                         score += c.points as f32 * 8.0;
                         score += c.crowns as f32 * 10.0;
+                    }
+                } else {
+                    // 盲抽牌堆顶：卡牌不可预测且极易卡死手牌槽，风险极大！
+                    // 降低基础评分，且已有预留牌时严惩盲抽，杜绝出现比明牌预留评分更高的倒挂现象
+                    score -= 15.0;
+                    if p.reserved_cards.len() >= 1 {
+                        score -= 25.0;
+                    }
+                    if p.reserved_cards.len() >= 2 {
+                        score -= 50.0;
                     }
                 }
                 score
@@ -136,7 +164,20 @@ impl HeuristicAI {
             // 3. 拿取标记 (资源积累)
             // -------------------------------------------------------------
             Action::TakeTokens { count, positions } => {
-                let mut score = 30.0 + (*count as f32 * 10.0); // 优先拿 3 连
+                let current_tokens = p.tokens.total();
+                let total_after = current_tokens + *count;
+
+                let mut score = 25.0 + (*count as f32 * 8.0);
+
+                // 严惩溢出弃牌：超出 10 个的部分每个重罚 25 分
+                if total_after > 10 {
+                    let overflow = (total_after - 10) as f32;
+                    score -= overflow * 25.0;
+                }
+                // 手牌达到 8~9 个时克制无脑盲目拿 3 连
+                if current_tokens >= 8 && *count == 3 {
+                    score -= 15.0;
+                }
 
                 let mut pearl_count = 0;
                 let mut colors = Vec::with_capacity(3);
@@ -146,9 +187,26 @@ impl HeuristicAI {
                     if let Some(gem) = state.board.get(r, c) {
                         if gem == GemType::Pearl {
                             pearl_count += 1;
-                            score += 12.0; // 珍珠稀缺
+                            score += 15.0; // 珍珠稀缺
                         }
                         colors.push(gem);
+                    }
+                }
+
+                // 目标协同加权：如果拿取的颜色是当前最接近能买到的卡牌所急需的，加分！
+                // 栈上去重：避免同色 3 连重复遍历金字塔且避免多次重复叠加加权
+                let mut unique_colors = [GemType::Gold; 3];
+                let mut unique_len = 0;
+                for &gem in &colors {
+                    if !unique_colors[..unique_len].contains(&gem) {
+                        unique_colors[unique_len] = gem;
+                        unique_len += 1;
+                    }
+                }
+
+                for &gem in &unique_colors[..unique_len] {
+                    if Self::is_gem_needed_for_near_cards(state, p, gem, 3) {
+                        score += 12.0;
                     }
                 }
 
@@ -156,7 +214,7 @@ impl HeuristicAI {
                 let gives_privilege = (*count == 3 && colors[0] == colors[1] && colors[1] == colors[2])
                     || pearl_count >= 2;
                 if gives_privilege {
-                    score -= 15.0;
+                    score -= 20.0;
                 }
 
                 score
@@ -166,7 +224,18 @@ impl HeuristicAI {
             // 4. 特权卷轴与补板
             // -------------------------------------------------------------
             Action::UsePrivilege { r, c } => {
+                let current_tokens = p.tokens.total();
                 let gem = state.board.get(*r, *c);
+
+                // 1. 手牌已达 10 枚：严禁使用特权，否则直接招致弃牌
+                if current_tokens >= 10 {
+                    return -50.0;
+                }
+                // 2. 手牌在 8~9 枚时：除非拿紧缺的珍珠，否则不滥用特权（0.0 < SkipOptional 15.0）
+                if current_tokens >= 8 && gem != Some(GemType::Pearl) {
+                    return 0.0;
+                }
+
                 if gem == Some(GemType::Pearl) {
                     40.0 // 拿珍珠极佳
                 } else {
@@ -178,10 +247,12 @@ impl HeuristicAI {
 
             Action::ReplenishBoard => {
                 let remaining = state.board.count_tokens();
-                if remaining <= 7 {
-                    35.0 // 盘面空竭，必须补板
+                if remaining <= 4 {
+                    45.0 // 盘面极度空竭，必须补板
+                } else if remaining <= 7 {
+                    20.0 // 适度补板
                 } else {
-                    -10.0 // 盘面还很满时补板纯属给对手送特权
+                    -30.0 // 盘面仍有充足标记时补板纯属给对手白送特权
                 }
             }
 
@@ -214,12 +285,18 @@ impl HeuristicAI {
             }
 
             Action::DiscardToken { gem } => {
-                // 弃牌时优先丢弃非珍珠、黄金，且手中库存最多的标记
-                if *gem == GemType::Pearl || *gem == GemType::Gold {
-                    -50.0
-                } else {
-                    p.tokens.get(*gem) as f32 * 5.0
+                // 黄金和珍珠极为珍贵，严防轻易丢弃；若极端情况下不得不弃，黄金优于珍珠保留
+                match *gem {
+                    GemType::Gold => return -90.0,
+                    GemType::Pearl => return -100.0,
+                    _ => {}
                 }
+                let mut score = p.tokens.get(*gem) as f32 * 5.0;
+                // 保护急需颜色：若该宝石是场上最接近买到的卡牌所必需的，尽量不弃
+                if Self::is_gem_needed_for_near_cards(state, p, *gem, 2) {
+                    score -= 30.0;
+                }
+                score
             }
 
             Action::TakeGoldToken { r, c } => {
@@ -228,5 +305,30 @@ impl HeuristicAI {
                 50.0 - dist_to_center as f32 * 2.0
             }
         }
+    }
+
+    /// 检查某种宝石是否属于当前最接近可购买卡牌（缺口 <= max_missing）的紧缺成本
+    #[inline]
+    fn is_gem_needed_for_near_cards(
+        state: &GameState,
+        p: &crate::game_state::player::PlayerState,
+        gem: GemType,
+        max_missing: u8,
+    ) -> bool {
+        state
+            .pyramid
+            .iter()
+            .flat_map(|row| row.iter())
+            .chain(p.reserved_cards.iter().map(|rc| &rc.card))
+            .any(|c| {
+                let missing = p.tokens_missing(c);
+                if missing > 0 && missing <= max_missing {
+                    let cost_gem = c.cost.get(gem);
+                    let have = p.tokens.get(gem) + p.get_bonus(gem);
+                    cost_gem > have
+                } else {
+                    false
+                }
+            })
     }
 }

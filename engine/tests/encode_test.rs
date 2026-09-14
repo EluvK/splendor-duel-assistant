@@ -135,5 +135,30 @@ fn test_reserved_cards_anti_leakage_and_encoding() {
     assert!((p1_slot1[3] - 2.0 / 3.0).abs() < 1e-5, "P1 公开牌皇冠双方可见");
     assert!((p1_slot1[4] - 1.0 / 5.0).abs() < 1e-5, "P1 公开牌颜色双方可见");
     assert_eq!(p1_slot1[5], 0.0, "P1 买不起该昂贵牌，can_afford 应为 0.0 (且反映的是对手支付能力)");
+
+    // 特征 32: op_has_winning_purchase [741]
+    // P1 拥有一张免费直接斩杀卡 (secret_card 若为 20 分)，但由于是暗抽，P0 绝不能知晓！
+    let mut lethal_secret_card = secret_card;
+    lethal_secret_card.points = 20; // 满足 20 分胜负条件
+    game.players[1].reserved_cards[0] = ReservedCard::new(lethal_secret_card, false);
+    // 清空金字塔卡牌以排除场面干扰
+    for row in game.pyramid.iter_mut() {
+        row.clear();
+    }
+    let obs_secret = encode_state(&game);
+    assert_eq!(
+        obs_secret[709 + 32],
+        0.0,
+        "对手暗抽即使持有斩杀牌，特征 32 也必须为 0.0 (严禁 POMDP 私密信息泄露)"
+    );
+
+    // 反之，若该斩杀牌公开 (is_public: true)，特征 32 应感知到对手斩杀威胁 (1.0)
+    game.players[1].reserved_cards[0] = ReservedCard::new(lethal_secret_card, true);
+    let obs_public = encode_state(&game);
+    assert_eq!(
+        obs_public[709 + 32],
+        1.0,
+        "对手若持有公开可买的斩杀牌，特征 32 应为 1.0"
+    );
 }
 

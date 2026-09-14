@@ -20,7 +20,7 @@ from splendor_ai import (
 def test_heuristic_compact_generation():
     batch = generate_heuristic_compact_batch(num_games=5, start_seed=42)
     assert batch.num_samples > 0
-    assert batch.obs.shape == (batch.num_samples, 726)
+    assert batch.obs.shape == (batch.num_samples, SplendorNet.OBS_SIZE)
     assert batch.mask.shape == (batch.num_samples, 288)
     assert batch.action.shape == (batch.num_samples,)
     assert batch.value.shape == (batch.num_samples, 1)

@@ -41,7 +41,9 @@ where
     (0..500).into_par_iter().for_each(|seed| {
         let mut game = GameState::new_game(seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        while !matches!(game.phase, TurnPhase::GameOver(_)) {
+        let mut steps = 0;
+        while !matches!(game.phase, TurnPhase::GameOver(_)) && steps < 2000 {
+            steps += 1;
             if let Some(action) = select_fn(&game, &mut rng) {
                 let _ = GameEngine::step(&mut game, &action);
             } else {

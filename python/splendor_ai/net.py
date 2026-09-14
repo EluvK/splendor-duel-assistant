@@ -29,15 +29,15 @@ class ResidualBlock2D(nn.Module):
 class SplendorNet(nn.Module):
     """璀璨宝石：对决 Policy-Value 神经网络.
 
-    输入: 726 维扁平状态观察向量
-      - 前 200 维拆解为 (B, 8, 5, 5) 棋盘空间网格，经由 2D ResNet 提取 3 连相邻几何特征
-      - 后 526 维经由多层感知机 (MLP) 提取卡牌市场、双方手牌与胜负节奏特征
+    输入: OBS_SIZE (742) 维扁平状态观察向量
+      - 前 200 维拆解为 (B, 8, 5, 5) 棋盘空间网格，经由 2D ResNet + 1x1 Conv 提取全分辨率 3 连相邻几何特征
+      - 后 542 维经由多层感知机 (MLP) 提取卡牌市场、双方手牌、胜负紧迫度与相对博弈差值特征
     输出:
       - policy_logits: [B, 288] 动作概率对数
-      - value: [B, 1] 行动方胜率预测 ([-1.0, 1.0])
+      - value: [B, 1] 行动方带时间衰减的终局估值预测 ([-1.0, 1.0])
     """
 
-    OBS_SIZE = SplendorDuelEnv.OBS_SIZE       # 726
+    OBS_SIZE = SplendorDuelEnv.OBS_SIZE       # 742
     ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE # 288
     BOARD_CHANNELS = 8
     BOARD_GRID = 5
@@ -51,7 +51,7 @@ class SplendorNet(nn.Module):
     ) -> None:
         super().__init__()
 
-        # 1. 棋盘 2D 卷积骨干
+        # 1. 棋盘 2D 卷积骨干 (保持 5x5 全分辨率，避免不对称池化模糊连线拓扑)
         self.board_conv_in = nn.Sequential(
             nn.Conv2d(self.BOARD_CHANNELS, spatial_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(spatial_channels),
@@ -60,11 +60,20 @@ class SplendorNet(nn.Module):
         self.board_res_blocks = nn.ModuleList(
             [ResidualBlock2D(spatial_channels) for _ in range(num_res_blocks)]
         )
-        self.board_pool = nn.AvgPool2d(kernel_size=3, stride=2)
-        board_out_dim = spatial_channels * 2 * 2  # 64 * 4 = 256
+        self.board_conv_out = nn.Sequential(
+            nn.Conv2d(spatial_channels, 16, kernel_size=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+        )
+        self.board_fc = nn.Sequential(
+            nn.Linear(16 * self.BOARD_GRID * self.BOARD_GRID, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+        )
+        board_out_dim = 256
 
         # 2. 上下文标量特征 MLP 骨干
-        context_in_dim = self.OBS_SIZE - 200  # 525
+        context_in_dim = self.OBS_SIZE - 200  # 542
         self.context_mlp = nn.Sequential(
             nn.Linear(context_in_dim, context_hidden),
             nn.LayerNorm(context_hidden),
@@ -89,9 +98,12 @@ class SplendorNet(nn.Module):
             nn.Linear(fusion_hidden, self.ACTION_SIZE),
         )
 
-        # Value Head
+        # Value Head (扩充容量至两层并增加 LayerNorm 正则化)
         self.value_head = nn.Sequential(
-            nn.Linear(fusion_hidden, 64),
+            nn.Linear(fusion_hidden, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
             nn.Tanh(),
@@ -121,11 +133,12 @@ class SplendorNet(nn.Module):
         board = board_flat.view(b_size, self.BOARD_GRID, self.BOARD_GRID, self.BOARD_CHANNELS)
         board = board.permute(0, 3, 1, 2).contiguous()
 
-        # 空间前向
+        # 空间前向 (1x1 Conv + Flatten + FC 全分辨率拓扑保持)
         x_board = self.board_conv_in(board)
         for block in self.board_res_blocks:
             x_board = block(x_board)
-        x_board = self.board_pool(x_board).view(b_size, -1)
+        x_board = self.board_conv_out(x_board).view(b_size, -1)
+        x_board = self.board_fc(x_board)
 
         # 上下文前向
         x_context = self.context_mlp(context)

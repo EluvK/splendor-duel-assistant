@@ -328,3 +328,39 @@ fn test_parallel_selfplay_stress() {
     println!("10王冠获胜局数: {reason_10_crowns} (占比 {:.1}%)", reason_10_crowns as f64 / 10.0);
     println!("单色10分获胜局数: {reason_single_color} (占比 {:.1}%)", reason_single_color as f64 / 10.0);
 }
+
+#[test]
+fn test_heuristic_selfplay_sanity() {
+    // 验证启发式 AI 在 100 局自博弈中均能在合理步数内终结且绝不死锁
+    for seed in 0..100 {
+        let mut game = GameState::new_game(seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut steps = 0;
+        while !matches!(game.phase, TurnPhase::GameOver(_)) {
+            steps += 1;
+            if steps > 300 {
+                panic!("Seed {seed} 异常超过 300 步！可能发生死循环");
+            }
+            let action = HeuristicAI::select_action(&game, &mut rng)
+                .unwrap_or_else(|| panic!("Seed {seed} 无合法动作"));
+            let _ = GameEngine::step(&mut game, &action);
+        }
+
+        assert!(
+            game.winner.is_some(),
+            "Seed {seed} 终局时必须产生明确获胜者!"
+        );
+        let (winner, reason) = game.winner.unwrap();
+        assert!(
+            winner == 0 || winner == 1,
+            "Seed {seed} 获胜者玩家索引必须为 0 或 1!"
+        );
+        assert!(
+            matches!(
+                game.phase,
+                TurnPhase::GameOver(r) if r == reason
+            ),
+            "Seed {seed} phase 中的胜负原因与 winner 记录必须一致!"
+        );
+    }
+}

@@ -12,14 +12,14 @@ def test_net_forward_shapes():
     net = SplendorNet(spatial_channels=32, num_res_blocks=2)
 
     # 单样本前向
-    single_obs = torch.randn(726)
+    single_obs = torch.randn(SplendorNet.OBS_SIZE)
     logits, value = net(single_obs)
     assert logits.shape == (1, 288)
     assert value.shape == (1, 1)
     assert (-1.0 <= value.item() <= 1.0)
 
     # 批处理前向 (Batch Size = 8)
-    batch_obs = torch.randn(8, 726)
+    batch_obs = torch.randn(8, SplendorNet.OBS_SIZE)
     batch_logits, batch_value = net(batch_obs)
     assert batch_logits.shape == (8, 288)
     assert batch_value.shape == (8, 1)

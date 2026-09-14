@@ -57,8 +57,9 @@ def test_generate_rust_neural_mcts_selfplay():
     assert batch.mask.shape[1] == SplendorDuelEnv.ACTION_SIZE
     assert len(batch.action) == batch.num_samples
     assert batch.value.shape == (batch.num_samples, 1)
-    assert np.all(np.isin(batch.value, [-1.0, 1.0]))
-    assert set(np.unique(batch.value)).issubset({-1.0, 1.0})
+    # 验证带时间衰减折现的价值区间落在 [-1.0, 1.0] 内且不含 NaN
+    assert np.all(batch.value >= -1.0) and np.all(batch.value <= 1.0)
+    assert not np.isnan(batch.value).any()
 
 
 def test_evaluate_neural_match_with_mcts():

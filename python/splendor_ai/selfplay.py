@@ -12,6 +12,9 @@ from splendor_ai.dataset import CompactBatch
 from splendor_ai.env import SplendorDuelEnv
 from splendor_ai.net import SplendorNet
 
+# 回合时间衰减折现因子：统一默认 0.98
+DEFAULT_GAMMA_TURN: float = 0.98
+
 
 def generate_heuristic_compact_batch(
     num_games: int, start_seed: int = 42
@@ -69,6 +72,7 @@ def generate_selfplay_compact_batch(
     num_games: int,
     start_seed: int = 42,
     temperature: float = 1.0,
+    gamma_turn: float = DEFAULT_GAMMA_TURN,
 ) -> CompactBatch:
     """使用当前神经网络直觉概率进行快速自博弈 (不跑 MCTS，用于超快速粗糙探索)."""
     all_obs: List[np.ndarray] = []
@@ -85,6 +89,7 @@ def generate_selfplay_compact_batch(
             raw_trajectory = []
             while not env.is_done:
                 acting_player = env.current_player
+                turn_num = env.turn_number
                 mask = info["action_mask"]
 
                 obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
@@ -94,18 +99,22 @@ def generate_selfplay_compact_batch(
                 probs_np = probs.cpu().numpy()[0]
                 action = int(np.random.choice(len(probs_np), p=probs_np))
 
-                raw_trajectory.append((obs, mask, action, acting_player))
+                raw_trajectory.append((obs, mask, action, acting_player, turn_num))
                 obs, reward, terminated, truncated, info = env.step(action)
                 if truncated:
                     break
 
             winner = info.get("winner")
             if winner is not None:
-                for obs_s, mask_s, act_s, ply_s in raw_trajectory:
+                final_turn = env.turn_number
+                for obs_s, mask_s, act_s, ply_s, turn_s in raw_trajectory:
                     all_obs.append(obs_s)
                     all_masks.append(mask_s)
                     all_actions.append(act_s)
-                    all_values.append(1.0 if ply_s == winner else -1.0)
+                    rem_turns = max(0, final_turn - turn_s)
+                    discount = gamma_turn ** rem_turns
+                    base = 1.0 if ply_s == winner else -1.0
+                    all_values.append(base * discount)
 
     total_steps = len(all_actions)
     obs_arr = np.array(all_obs, dtype=np.float32) if total_steps > 0 else np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32)

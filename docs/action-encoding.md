@@ -20,16 +20,16 @@
 
 ---
 
-## 二、状态特征张量布局 (Total: 726 Float32)
+## 二、状态特征张量布局 (Total: 742 Float32)
 
-全局状态由 5 大特征分块组成，展平总维度为 **726 维**：
+全局状态由 5 大特征分块组成，展平总维度为 **742 维**：
 
 ```
 [0..200]    分块 1: 5×5 棋盘空间 (8 通道 × 25 格 = 200 维)
 [200..605]  分块 2: 金字塔市场卡牌 (15 槽位 × 27 维 = 405 维)
 [605..625]  分块 3: 场上王室卡 (4 槽位 × 5 维 = 20 维)
 [625..709]  分块 4: 双方玩家状态 (2 玩家 × 42 维 = 84 维)
-[709..726]  分块 5: 全局环境与阶段 (17 维)
+[709..742]  分块 5: 全局环境、博弈差值与胜负威胁 (33 维)
 ```
 
 ### 1. 棋盘空间张量 (200 维)
@@ -80,7 +80,7 @@
   - 我方 (Active): `is_public` 反映该牌是否对局公开（明牌预留为 1.0，暗抽为 0.0）；其余属性均如实编码，`can_afford` 判定我方是否买得起。
   - 敌方 (Opponent): 若为明牌预留 (`is_public == true`)，各属性正常编码，`can_afford` 判定敌方是否买得起；若为盲抽暗牌 (`is_public == false`)，属性与支付能力全部掩蔽为 `0.0`（POMDP 防信息泄露）。
 
-### 5. 全局环境与阶段 (17 维)
+### 5. 全局环境、博弈差值与胜负威胁 (33 维)
 - `[0..8]`: `TurnPhase` (9-way One-Hot: OptionalActions, MandatoryAction, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens, SelectReserveGold, GameOver)
 - `[9]`: `privilege_pool / 3.0`
 - `[10]`: `bag_count / 25.0`
@@ -88,6 +88,22 @@
 - `[12]`: `turn_number_norm` (`min(1.0, turn / 60.0)`)
 - `[13]`: `extra_turn_granted` (1.0 或 0.0)
 - `[14..16]`: 牌堆剩余比例 `[deck1/30, deck2/24, deck3/13]`
+- `[17]`: `points_diff_norm` (`(cp.points - op.points + 20.0) / 40.0`, 领先为 >0.5, 落后为 <0.5)
+- `[18]`: `crowns_diff_norm` (`(cp.crowns - op.crowns + 10.0) / 20.0`)
+- `[19]`: `color_diff_norm` (`(cp.max_color - op.max_color + 10.0) / 20.0`)
+- `[20]`: `privilege_diff_norm` (`(cp.privileges - op.privileges + 3.0) / 6.0`)
+- `[21]`: `cp_token_margin` (`(10 - cp.tokens.total()).max(0) / 10.0`, 我方手牌余量)
+- `[22]`: `op_token_margin` (`(10 - op.tokens.total()).max(0) / 10.0`, 对手手牌余量)
+- `[23]`: `cp_points_gap` (`(20 - cp.points).max(0) / 20.0`, 我方距 20 声望差距)
+- `[24]`: `op_points_gap` (`(20 - op.points).max(0) / 20.0`, 对手距 20 声望差距)
+- `[25]`: `cp_crowns_gap` (`(10 - cp.crowns).max(0) / 10.0`, 我方距 10 皇冠差距)
+- `[26]`: `op_crowns_gap` (`(10 - op.crowns).max(0) / 10.0`, 对手距 10 皇冠差距)
+- `[27]`: `cp_color_gap` (`(10 - cp.max_color).max(0) / 10.0`, 我方距单色 10 分差距)
+- `[28]`: `op_color_gap` (`(10 - op.max_color).max(0) / 10.0`, 对手距单色 10 分差距)
+- `[29]`: `cp_min_win_distance` (`min(points_gap, crowns_gap, color_gap)`, 我方距胜利最短归一化距离)
+- `[30]`: `op_min_win_distance` (`min(...)`, 对手距胜利最短归一化距离)
+- `[31]`: `cp_has_winning_action` (1.0 或 0.0，我方当前是否有一步致胜买卡斩杀能力)
+- `[32]`: `op_has_winning_purchase` (1.0 或 0.0，对手当前在金字塔与公开预留手牌中是否买得起致胜卡；严格遵循 POMDP 掩蔽暗抽牌)
 
 ---
 

@@ -132,4 +132,24 @@ impl PlayerState {
 
         self.tokens.get(GemType::Gold) >= gold_needed
     }
+
+    /// 计算购买某张卡牌还缺少的标记总数（扣除 bonus 与现有标记后，再抵扣可用黄金后的净缺口）
+    pub fn tokens_missing(&self, card: &JewelCard) -> u8 {
+        let mut shortage: u8 = 0;
+        for gem in GemType::BASIC_FIVE {
+            let cost = card.cost.get(gem);
+            let discount = self.get_bonus(gem);
+            let required = cost.saturating_sub(discount);
+            let have = self.tokens.get(gem);
+            if have < required {
+                shortage += required - have;
+            }
+        }
+        let pearl_req = card.cost.pearl;
+        let pearl_have = self.tokens.get(GemType::Pearl);
+        if pearl_have < pearl_req {
+            shortage += pearl_req - pearl_have;
+        }
+        shortage.saturating_sub(self.tokens.get(GemType::Gold))
+    }
 }

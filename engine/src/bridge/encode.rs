@@ -6,7 +6,7 @@ use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard, RoyalAbili
 use crate::model::token::GemType;
 
 /// 观察向量维度
-pub const OBS_SIZE: usize = 726;
+pub const OBS_SIZE: usize = 742;
 
 /// 动作空间大小（离散动作总维度）
 pub const ACTION_SIZE: usize = 288;
@@ -214,7 +214,7 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     offset += 84;
 
     // -------------------------------------------------------------
-    // 分块 5: 全局环境与阶段 (17 维) [709..726]
+    // 分块 5: 全局环境、博弈差值与胜负威胁 (33 维) [709..742]
     // -------------------------------------------------------------
     match state.phase {
         TurnPhase::OptionalActions => out[offset] = 1.0,
@@ -236,7 +236,100 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     out[offset + 15] = state.decks[1].len() as f32 / 24.0;
     out[offset + 16] = state.decks[2].len() as f32 / 13.0;
 
+    let p_act = &state.players[cp];
+    let p_opp = &state.players[op];
+
+    // 17. 双方声望差归一化 [-20, 20] -> [0, 1]
+    out[offset + 17] = (p_act.total_points as f32 - p_opp.total_points as f32 + 20.0) / 40.0;
+    // 18. 双方皇冠差归一化 [-10, 10] -> [0, 1]
+    out[offset + 18] = (p_act.total_crowns as f32 - p_opp.total_crowns as f32 + 10.0) / 20.0;
+    // 19. 单色最大分差归一化 [-10, 10] -> [0, 1]
+    let cp_max_c = p_act.color_points.iter().copied().max().unwrap_or(0);
+    let op_max_c = p_opp.color_points.iter().copied().max().unwrap_or(0);
+    out[offset + 19] = (cp_max_c as f32 - op_max_c as f32 + 10.0) / 20.0;
+    // 20. 特权差归一化 [-3, 3] -> [0, 1]
+    out[offset + 20] = (p_act.privileges as f32 - p_opp.privileges as f32 + 3.0) / 6.0;
+
+    // 21. 我方手牌余量 (10 - total) / 10.0
+    out[offset + 21] = ((10 - (p_act.tokens.total() as isize)).clamp(0, 10) as f32) / 10.0;
+    // 22. 对手手牌余量 (10 - total) / 10.0
+    out[offset + 22] = ((10 - (p_opp.tokens.total() as isize)).clamp(0, 10) as f32) / 10.0;
+
+    // 23..=28. 双方胜利距离 (Gap to Win)
+    let cp_pts_gap = (20.0 - p_act.total_points as f32).max(0.0) / 20.0;
+    let op_pts_gap = (20.0 - p_opp.total_points as f32).max(0.0) / 20.0;
+    let cp_crown_gap = (10.0 - p_act.total_crowns as f32).max(0.0) / 10.0;
+    let op_crown_gap = (10.0 - p_opp.total_crowns as f32).max(0.0) / 10.0;
+    let cp_col_gap = (10.0 - cp_max_c as f32).max(0.0) / 10.0;
+    let op_col_gap = (10.0 - op_max_c as f32).max(0.0) / 10.0;
+
+    out[offset + 23] = cp_pts_gap;
+    out[offset + 24] = op_pts_gap;
+    out[offset + 25] = cp_crown_gap;
+    out[offset + 26] = op_crown_gap;
+    out[offset + 27] = cp_col_gap;
+    out[offset + 28] = op_col_gap;
+
+    // 29..=30. 双方离胜利的最小归一化差距
+    let cp_min_gap = cp_pts_gap.min(cp_crown_gap).min(cp_col_gap);
+    let op_min_gap = op_pts_gap.min(op_crown_gap).min(op_col_gap);
+    out[offset + 29] = cp_min_gap;
+    out[offset + 30] = op_min_gap;
+
+    // 31. 我方当前是否存在即刻买卡斩杀动作 (Lethal)
+    // 高效轻量判定金字塔与自身所有预留手牌，避免在特征编码层高频调用昂贵的 RuleEngine::legal_actions
+    let cp_can_win_now = state
+        .pyramid
+        .iter()
+        .flat_map(|row| row.iter())
+        .chain(p_act.reserved_cards.iter().map(|rc| &rc.card))
+        .any(|c| can_player_win_with_card(p_act, c));
+    out[offset + 31] = if cp_can_win_now { 1.0 } else { 0.0 };
+
+    // 32. 对手当前场上/公开手牌是否已经有买得起的致胜牌 (Opponent Lethal Threat)
+    // 严格遵守 POMDP 部分可观测设计：仅检查金字塔公开牌及对手明牌预留（is_public == true），杜绝暗抽私密手牌泄露
+    let op_can_win_now = state
+        .pyramid
+        .iter()
+        .flat_map(|row| row.iter())
+        .chain(
+            p_opp
+                .reserved_cards
+                .iter()
+                .filter(|rc| rc.is_public)
+                .map(|rc| &rc.card),
+        )
+        .any(|c| can_player_win_with_card(p_opp, c));
+    out[offset + 32] = if op_can_win_now { 1.0 } else { 0.0 };
+
     out
+}
+
+/// 判定玩家是否能够通过购买某张卡牌直接达成 3 种胜负条件之一
+#[inline]
+fn can_player_win_with_card(p: &crate::game_state::player::PlayerState, c: &JewelCard) -> bool {
+    if c.color == CardColor::Joker && !p.has_any_bonus() {
+        return false;
+    }
+    if !p.can_afford(c) {
+        return false;
+    }
+    if p.total_points + c.points >= 20 || p.total_crowns + c.crowns >= 10 {
+        return true;
+    }
+    if let Some(gem) = c.color.to_gem_type() {
+        if p.color_points[gem.index()] + c.points >= 10 {
+            return true;
+        }
+    } else if c.color == CardColor::Joker && c.points > 0 {
+        // Joker 变色卡可附着于已有 bonus 的任意颜色上
+        for gem in GemType::BASIC_FIVE {
+            if p.get_bonus(gem) > 0 && p.color_points[gem.index()] + c.points >= 10 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn encode_card_slot(

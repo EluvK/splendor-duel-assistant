@@ -11,12 +11,15 @@ use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
 use crate::gameplay::rules::RuleEngine;
 
+/// 回合时间衰减折现因子：鼓励智能体尽快锁定胜局，惩罚拖延回合
+pub const GAMMA_TURN: f32 = 0.98;
+
 /// 单局紧凑对弈轨迹
 struct SingleGameTrajectory {
     obs: Vec<f32>,     // steps * OBS_SIZE
     masks: Vec<u8>,    // steps * ACTION_SIZE (0 或 1)
     actions: Vec<i32>, // steps (0..ACTION_SIZE-1)
-    values: Vec<f32>,  // steps (-1.0 或 1.0)
+    values: Vec<f32>,  // steps 带回合衰减的折现终局估值 ([-1.0, 1.0])
     steps: usize,
 }
 
@@ -29,6 +32,27 @@ pub struct CompactBatchSamples {
     pub values: Vec<f32>,
 }
 
+/// 计算带有回合时间衰减的折现终局价值序列
+#[inline]
+fn compute_discounted_values(
+    raw_players: &[usize],
+    raw_turns: &[u32],
+    winner: usize,
+    final_turn: u32,
+) -> Vec<f32> {
+    let steps = raw_players.len();
+    let mut values = Vec::with_capacity(steps);
+    for i in 0..steps {
+        let p = raw_players[i];
+        let turn = raw_turns[i];
+        let rem_turns = final_turn.saturating_sub(turn) as f32;
+        let discount = GAMMA_TURN.powf(rem_turns);
+        let base = if p == winner { 1.0 } else { -1.0 };
+        values.push(base * discount);
+    }
+    values
+}
+
 fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     let mut game = GameState::new_game(seed);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -37,6 +61,7 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
     let mut raw_actions = Vec::with_capacity(200);
     let mut raw_players = Vec::with_capacity(200);
+    let mut raw_turns = Vec::with_capacity(200);
     let mut steps = 0;
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
@@ -61,6 +86,7 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
         }
         raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
+        raw_turns.push(game.turn_number);
 
         if GameEngine::step(&mut game, &action).is_err() {
             return None;
@@ -68,11 +94,8 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     }
 
     let winner = game.winner.map(|(w, _)| w)?;
-
-    let mut values = Vec::with_capacity(steps);
-    for &p in raw_players.iter() {
-        values.push(if p == winner { 1.0 } else { -1.0 });
-    }
+    let final_turn = game.turn_number;
+    let values = compute_discounted_values(&raw_players, &raw_turns, winner, final_turn);
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
@@ -128,6 +151,7 @@ fn simulate_single_mcts_game(
     let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
     let mut raw_actions = Vec::with_capacity(200);
     let mut raw_players = Vec::with_capacity(200);
+    let mut raw_turns = Vec::with_capacity(200);
     let mut steps = 0;
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
@@ -167,6 +191,7 @@ fn simulate_single_mcts_game(
         }
         raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
+        raw_turns.push(game.turn_number);
 
         if GameEngine::step(&mut game, &action).is_err() {
             return None;
@@ -174,11 +199,8 @@ fn simulate_single_mcts_game(
     }
 
     let winner = game.winner.map(|(w, _)| w)?;
-
-    let mut values = Vec::with_capacity(steps);
-    for &p in raw_players.iter() {
-        values.push(if p == winner { 1.0 } else { -1.0 });
-    }
+    let final_turn = game.turn_number;
+    let values = compute_discounted_values(&raw_players, &raw_turns, winner, final_turn);
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
@@ -261,6 +283,7 @@ fn simulate_single_neural_mcts_game(
     let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
     let mut raw_actions = Vec::with_capacity(200);
     let mut raw_players = Vec::with_capacity(200);
+    let mut raw_turns = Vec::with_capacity(200);
     let mut steps = 0;
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
@@ -300,6 +323,7 @@ fn simulate_single_neural_mcts_game(
         }
         raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
+        raw_turns.push(game.turn_number);
 
         if GameEngine::step(&mut game, &action).is_err() {
             return None;
@@ -307,11 +331,8 @@ fn simulate_single_neural_mcts_game(
     }
 
     let winner = game.winner.map(|(w, _)| w)?;
-
-    let mut values = Vec::with_capacity(steps);
-    for &p in raw_players.iter() {
-        values.push(if p == winner { 1.0 } else { -1.0 });
-    }
+    let final_turn = game.turn_number;
+    let values = compute_discounted_values(&raw_players, &raw_turns, winner, final_turn);
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
