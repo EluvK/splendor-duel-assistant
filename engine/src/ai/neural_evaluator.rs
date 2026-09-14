@@ -50,10 +50,16 @@ impl TractNeuralEvaluator {
     /// 评估单一步观察向量 (OBS_SIZE 维)
     /// 返回 (ACTION_SIZE 维 policy_logits, NeuralPrediction)
     pub fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], NeuralPrediction), String> {
-        let input_tensor: Tensor = tract_ndarray::ArrayView2::from_shape((1, OBS_SIZE), obs.as_slice())
-            .map_err(|e| format!("Failed to create ndarray view: {e}"))?
-            .to_owned()
-            .into();
+        let input_tensor = unsafe {
+            let mut tensor = Tensor::uninitialized::<f32>(&[1, OBS_SIZE])
+                .map_err(|e| format!("Failed to allocate tensor: {e}"))?;
+            std::ptr::copy_nonoverlapping(
+                obs.as_ptr(),
+                tensor.as_slice_mut_unchecked::<f32>().as_mut_ptr(),
+                OBS_SIZE,
+            );
+            tensor
+        };
 
         let outputs = self
             .plan
@@ -68,46 +74,36 @@ impl TractNeuralEvaluator {
         }
 
         // outputs[0]: policy_logits [1, ACTION_SIZE]
-        let logits_view = outputs[0]
-            .to_array_view::<f32>()
-            .map_err(|e| format!("Failed to cast logits output: {e}"))?;
+        let logits_slice = outputs[0]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access logits output slice: {e}"))?;
+        if logits_slice.len() != ACTION_SIZE {
+            return Err(format!("Expected {} logits, got {}", ACTION_SIZE, logits_slice.len()));
+        }
         let mut logits = [0.0f32; ACTION_SIZE];
-        if logits_view.len() != ACTION_SIZE {
-            return Err(format!("Expected {} logits, got {}", ACTION_SIZE, logits_view.len()));
-        }
-        for (i, &v) in logits_view.iter().enumerate() {
-            logits[i] = v;
-        }
+        logits.copy_from_slice(logits_slice);
 
         // outputs[1]: win_value [1, 1]
-        let win_view = outputs[1]
-            .to_array_view::<f32>()
-            .map_err(|e| format!("Failed to cast win_value output: {e}"))?;
-        let win_value = if !win_view.is_empty() {
-            win_view[[0, 0]]
-        } else {
-            0.0
-        };
+        let win_slice = outputs[1]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access win_value slice: {e}"))?;
+        let win_value = win_slice.first().copied().unwrap_or(0.0);
 
         // outputs[2]: turns_value [1, 1]
-        let turns_view = outputs[2]
-            .to_array_view::<f32>()
-            .map_err(|e| format!("Failed to cast turns_value output: {e}"))?;
-        let turns_value = if !turns_view.is_empty() {
-            turns_view[[0, 0]]
-        } else {
-            0.5
-        };
+        let turns_slice = outputs[2]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access turns_value slice: {e}"))?;
+        let turns_value = turns_slice.first().copied().unwrap_or(0.5);
 
         // outputs[3]: reason_logits [1, 4]
-        let reason_view = outputs[3]
-            .to_array_view::<f32>()
-            .map_err(|e| format!("Failed to cast reason_logits output: {e}"))?;
+        let reason_slice = outputs[3]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access reason_logits slice: {e}"))?;
         let mut reason_probs = [0.25f32; 4];
-        if reason_view.len() >= 4 {
-            let max_logit = reason_view.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        if reason_slice.len() >= 4 {
+            let max_logit = reason_slice[..4].iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let mut sum_exp = 0.0f32;
-            for (i, &l) in reason_view.iter().take(4).enumerate() {
+            for (i, &l) in reason_slice[..4].iter().enumerate() {
                 let exp_val = (l - max_logit).exp();
                 reason_probs[i] = exp_val;
                 sum_exp += exp_val;

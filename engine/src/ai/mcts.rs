@@ -139,7 +139,7 @@ impl RustMCTS {
             is_terminal: is_term,
         });
 
-        for _ in 0..num_simulations {
+        for sim_idx in 0..num_simulations {
             let mut sim_state = state.determinize_for_player(state.current_player, rng);
             let mut curr_node_idx = root_idx;
             // 记录沿途 (node_idx, edge_idx)
@@ -194,6 +194,26 @@ impl RustMCTS {
                 nodes[n_idx].visits += 1;
                 nodes[n_idx].edges[e_idx].visits += 1;
                 nodes[n_idx].edges[e_idx].w_p0 += v_p0;
+            }
+
+            // 自适应早停判断：仅在确定性贪婪模式 (temperature <= 0.01) 下生效
+            // 若根节点第一分支访问量 N1 与第二分支访问量 N2 的差值大于剩余推演次数，
+            // 则即使剩余推演全部给 N2，N2 也绝对无法反超，提前安全截断
+            if temperature <= 0.01 && nodes[root_idx].edges.len() >= 2 {
+                let remaining = (num_simulations - 1 - sim_idx) as u32;
+                let mut max_visits = 0;
+                let mut second_max_visits = 0;
+                for edge in &nodes[root_idx].edges {
+                    if edge.visits > max_visits {
+                        second_max_visits = max_visits;
+                        max_visits = edge.visits;
+                    } else if edge.visits > second_max_visits {
+                        second_max_visits = edge.visits;
+                    }
+                }
+                if max_visits.saturating_sub(second_max_visits) > remaining {
+                    break;
+                }
             }
         }
 
@@ -315,7 +335,7 @@ impl RustMCTS {
             return None;
         }
 
-        for _ in 0..num_simulations {
+        for sim_idx in 0..num_simulations {
             let mut sim_state = state.determinize_for_player(state.current_player, rng);
             let mut curr_node_idx = root_idx;
             let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
@@ -390,6 +410,26 @@ impl RustMCTS {
                 nodes[n_idx].visits += 1;
                 nodes[n_idx].edges[e_idx].visits += 1;
                 nodes[n_idx].edges[e_idx].w_p0 += v_p0;
+            }
+
+            // 自适应早停判断：仅在确定性贪婪模式 (temperature <= 0.01) 下生效
+            // 若根节点第一分支访问量 N1 与第二分支访问量 N2 的差值大于剩余推演次数，
+            // 则即使剩余推演全部给 N2，N2 也绝对无法反超，提前安全截断
+            if temperature <= 0.01 && nodes[root_idx].edges.len() >= 2 {
+                let remaining = (num_simulations - 1 - sim_idx) as u32;
+                let mut max_visits = 0;
+                let mut second_max_visits = 0;
+                for edge in &nodes[root_idx].edges {
+                    if edge.visits > max_visits {
+                        second_max_visits = max_visits;
+                        max_visits = edge.visits;
+                    } else if edge.visits > second_max_visits {
+                        second_max_visits = edge.visits;
+                    }
+                }
+                if max_visits.saturating_sub(second_max_visits) > remaining {
+                    break;
+                }
             }
         }
 

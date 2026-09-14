@@ -137,28 +137,33 @@ impl GameState {
             }
         }
 
-        // 2. 按 Tier 搜集未知卡牌并重抽样
+        // 2. 按 Tier 搜集未知卡牌并重抽样 (栈上固定容量缓冲，零堆内存分配)
         for tier in CardTier::ALL {
             let t_idx = tier.index();
-            let mut unseen_pool: Vec<JewelCard> = ALL_JEWEL_CARDS
-                .iter()
-                .filter(|c| c.tier == tier && !known_card_ids[c.id as usize])
-                .copied()
-                .collect();
-
-            unseen_pool.shuffle(rng);
-
-            // 优先替换对手该 Tier 的盲抽暗牌
-            for rc in sim_state.players[opp].reserved_cards.iter_mut() {
-                if !rc.is_public && rc.card.tier == tier {
-                    if let Some(new_card) = unseen_pool.pop() {
-                        rc.card = new_card;
-                    }
+            // 各 Tier 卡牌数量上限：Tier1 为 30 张，Tier2 为 24 张，Tier3 为 13 张
+            let mut unseen_buf = [ALL_JEWEL_CARDS[0]; 32];
+            let mut count = 0;
+            for c in ALL_JEWEL_CARDS.iter() {
+                if c.tier == tier && !known_card_ids[c.id as usize] {
+                    unseen_buf[count] = *c;
+                    count += 1;
                 }
             }
 
-            // 剩余未知卡作为洗匀后的新牌堆
-            sim_state.decks[t_idx] = unseen_pool;
+            unseen_buf[..count].shuffle(rng);
+
+            // 优先替换对手该 Tier 的盲抽暗牌
+            let mut pop_idx = count;
+            for rc in sim_state.players[opp].reserved_cards.iter_mut() {
+                if !rc.is_public && rc.card.tier == tier && pop_idx > 0 {
+                    pop_idx -= 1;
+                    rc.card = unseen_buf[pop_idx];
+                }
+            }
+
+            // 剩余未知卡复用已有 Vec 内存 (clear + extend，消除重新开辟堆内存)
+            sim_state.decks[t_idx].clear();
+            sim_state.decks[t_idx].extend_from_slice(&unseen_buf[..pop_idx]);
         }
 
         sim_state
