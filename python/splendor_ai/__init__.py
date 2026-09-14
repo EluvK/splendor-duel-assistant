@@ -1,6 +1,13 @@
 """Splendor Duel AI package."""
 
 from splendor_ai._engine import PyGameState, generate_heuristic_samples
+from splendor_ai.advisor import (
+    AdviceReport,
+    HealthStatus,
+    IterationRecord,
+    TerminationDecision,
+    TrainingAdvisor,
+)
 from splendor_ai.arena import Arena, ArenaResult
 from splendor_ai.dataset import (
     CompactBatch,
@@ -42,6 +49,11 @@ __all__ = [
     "Progress",
     "Trainer",
     "TrainerConfig",
+    "TrainingAdvisor",
+    "IterationRecord",
+    "HealthStatus",
+    "TerminationDecision",
+    "AdviceReport",
     "Agent",
     "MCTSAgent",
     "PolicyNetAgent",

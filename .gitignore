@@ -34,6 +34,7 @@ checkpoints/
 *.bin
 data/
 logs/
+*.log
 
 # Reference (外部只读参考)
 reference/

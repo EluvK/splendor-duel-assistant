@@ -7,6 +7,7 @@ import time
 import torch
 
 from splendor_ai._engine import evaluate_neural_match
+from splendor_ai.advisor import HealthStatus, IterationRecord, TrainingAdvisor
 from splendor_ai.dataset import FastTensorLoader, ReplayBuffer, ShardedBuffer
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
@@ -238,6 +239,11 @@ def train_selfplay(args: argparse.Namespace) -> None:
     # 经验回放池 (滑动窗口防过拟合与遗忘)
     replay_buffer = ReplayBuffer(max_samples=args.buffer_size)
 
+    # 智能诊断与自适应参数建议器 (默认全面监控 5 大异常场景并执行自适应早停)
+    advisor = TrainingAdvisor()
+    status: HealthStatus = HealthStatus.HEALTHY
+    terminated_early = False
+
     cfg = TrainerConfig(
         lr=args.lr,
         weight_decay=args.weight_decay,
@@ -404,7 +410,45 @@ def train_selfplay(args: argparse.Namespace) -> None:
 
         trainer.save_checkpoint("latest.pt", is_best=False, meta=meta)
 
+        # (D) 智能诊断与自适应调优监控 (默认开启全场景异常早停与指标分析)
+        record = IterationRecord(
+            iteration=it,
+            train_loss=metrics["loss"],
+            policy_loss=metrics["policy_loss"],
+            value_loss=metrics["value_loss"],
+            top1_acc=metrics["top1_acc"],
+            top3_acc=metrics["top3_acc"],
+            win_rate=win_rate,
+            promoted=promoted,
+            candidate_wins=match_agent0_wins,
+            baseline_wins=match_agent1_wins,
+            draws=draws,
+            reasons=reasons or {},
+            avg_rounds=avg_rounds,
+            avg_steps=avg_steps,
+            lr=metrics["lr"],
+            samples_added=batch.num_samples,
+            buffer_size=len(replay_buffer),
+            current_args=vars(args),
+        )
+        status, decision, advice = advisor.step(record)
+        print(advisor.format_step_summary(record, status, decision))
+
+        if decision and decision.should_terminate:
+            terminated_early = True
+            if advice:
+                print(advisor.format_terminal_report(decision, advice))
+            if active_pipeline and next_batch_fut is not None:
+                next_batch_fut.cancel()
+                print("   🧹 正在安全回收后台异步自博弈推演资源...")
+            break
+
     executor.shutdown(wait=False)
+    if not terminated_early and advisor.history:
+        last_rec = advisor.history[-1]
+        final_advice = advisor.generate_advice(last_rec, status)
+        print(advisor.format_terminal_report(None, final_advice))
+
     print(f"\n🏁 全部自博弈迭代完成！终局最强模型位于 {best_path}")
 
 
