@@ -24,6 +24,8 @@ pub struct GameState {
     pub turn_number: u32,
     pub extra_turn_granted: bool,
     pub winner: Option<(usize, VictoryReason)>,
+    pub rng_seed: u64,
+    pub rng_counter: u64,
 }
 
 impl GameState {
@@ -91,7 +93,75 @@ impl GameState {
             turn_number: 1,
             extra_turn_granted: false,
             winner: None,
+            rng_seed: seed,
+            rng_counter: 0,
         }
+    }
+
+    /// 步进并衍生下一个高质量伪随机种子 (基于 SplitMix64 算法)
+    #[inline]
+    pub fn next_rng_seed(&mut self) -> u64 {
+        self.rng_counter = self.rng_counter.wrapping_add(1);
+        let mut z = self.rng_seed.wrapping_add(self.rng_counter.wrapping_mul(0x9E3779B97F4A7C15));
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+
+    /// 针对指定观察者视角执行确定化重抽样（Determinization / POMDP 信念状态展开）
+    ///
+    /// 将对手盲抽暗牌与剩余牌堆卡牌统一归入未知卡牌池，按等级洗匀后重新发给对手暗牌与重构剩余牌堆。
+    /// 观察者自身的全部卡牌、金字塔明牌、双方已购卡、对手公开预留卡均严格保持不变，卡牌总数严格满足守恒律。
+    pub fn determinize_for_player<R: Rng + ?Sized>(&self, observer: usize, rng: &mut R) -> Self {
+        let mut sim_state = self.clone();
+        let opp = 1 - observer;
+
+        // 1. 统计观察者已知的所有卡牌 ID (0..67)
+        let mut known_card_ids = [false; 68];
+        for row in &self.pyramid {
+            for c in row {
+                known_card_ids[c.id as usize] = true;
+            }
+        }
+        for p in &self.players {
+            for c in &p.cards {
+                known_card_ids[c.id as usize] = true;
+            }
+        }
+        for rc in &self.players[observer].reserved_cards {
+            known_card_ids[rc.card.id as usize] = true;
+        }
+        for rc in &self.players[opp].reserved_cards {
+            if rc.is_public {
+                known_card_ids[rc.card.id as usize] = true;
+            }
+        }
+
+        // 2. 按 Tier 搜集未知卡牌并重抽样
+        for tier in CardTier::ALL {
+            let t_idx = tier.index();
+            let mut unseen_pool: Vec<JewelCard> = ALL_JEWEL_CARDS
+                .iter()
+                .filter(|c| c.tier == tier && !known_card_ids[c.id as usize])
+                .copied()
+                .collect();
+
+            unseen_pool.shuffle(rng);
+
+            // 优先替换对手该 Tier 的盲抽暗牌
+            for rc in sim_state.players[opp].reserved_cards.iter_mut() {
+                if !rc.is_public && rc.card.tier == tier {
+                    if let Some(new_card) = unseen_pool.pop() {
+                        rc.card = new_card;
+                    }
+                }
+            }
+
+            // 剩余未知卡作为洗匀后的新牌堆
+            sim_state.decks[t_idx] = unseen_pool;
+        }
+
+        sim_state
     }
 
     /// 特权流转：优先从公用池取；公用池空时从对手处偷取；若己方已有 3 个则不再获得

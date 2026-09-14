@@ -81,8 +81,9 @@ impl GameEngine {
             return Err("Cannot replenish board: bag empty or board full".into());
         }
 
-        // 摇匀布袋后沿螺旋填入棋盘
-        let mut rng = ChaCha8Rng::seed_from_u64(state.turn_number as u64 + state.bag.len() as u64);
+        // 摇匀布袋后沿螺旋填入棋盘 (基于对局生命周期衍生独立高熵种子)
+        let step_seed = state.next_rng_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(step_seed);
         state.bag.shuffle(&mut rng);
         state.board.fill_spiral(&mut state.bag);
 

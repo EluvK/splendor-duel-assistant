@@ -364,3 +364,151 @@ fn test_heuristic_selfplay_sanity() {
         );
     }
 }
+
+#[test]
+fn test_replenish_board_rng_entropy_and_determinism() {
+    // 1. 同一初始种子推演两次 ReplenishBoard 产生严格相同结果 (确定性与可复现性)
+    let mut game1 = GameState::new_game(42);
+    let mut game2 = GameState::new_game(42);
+
+    // 拿走盘上一部分标记以便能够执行 ReplenishBoard
+    for r in 0..2 {
+        for c in 0..5 {
+            if let Some(gem) = game1.board.take(r, c) {
+                game1.bag.push(gem);
+            }
+            if let Some(gem) = game2.board.take(r, c) {
+                game2.bag.push(gem);
+            }
+        }
+    }
+
+    GameEngine::step(&mut game1, &Action::ReplenishBoard).unwrap();
+    GameEngine::step(&mut game2, &Action::ReplenishBoard).unwrap();
+
+    assert_eq!(
+        game1.board, game2.board,
+        "相同 seed 的游戏执行 ReplenishBoard 必须得到完全相同的盘面!"
+    );
+    assert_eq!(game1.rng_counter, 1);
+    assert_eq!(game2.rng_counter, 1);
+
+    // 2. 具有相同 turn_number 和 bag 长度、但初始种子不同的两个游戏，ReplenishBoard 应产生不同盘面 (高熵，消除伪随机碰撞)
+    let mut game_a = GameState::new_game(100);
+    let mut game_b = GameState::new_game(999);
+    for r in 0..2 {
+        for c in 0..5 {
+            if let Some(gem) = game_a.board.take(r, c) {
+                game_a.bag.push(gem);
+            }
+            if let Some(gem) = game_b.board.take(r, c) {
+                game_b.bag.push(gem);
+            }
+        }
+    }
+    assert_eq!(game_a.turn_number, game_b.turn_number);
+    assert_eq!(game_a.bag.len(), game_b.bag.len());
+
+    GameEngine::step(&mut game_a, &Action::ReplenishBoard).unwrap();
+    GameEngine::step(&mut game_b, &Action::ReplenishBoard).unwrap();
+
+    assert_ne!(
+        game_a.board, game_b.board,
+        "不同 seed 的游戏在相同回合与袋子余量下执行 ReplenishBoard 不应产生相同的排列!"
+    );
+}
+
+#[test]
+fn test_determinize_for_player_conservation_and_privacy() {
+    let mut game = GameState::new_game(12345);
+    let mut rng = ChaCha8Rng::seed_from_u64(999);
+
+    // 构造对局局面：
+    // Player 0 (观察者): 拥有 1 张公开预留卡和 1 张盲抽暗牌
+    // Player 1 (对手): 拥有 1 张公开预留卡和 2 张盲抽暗牌 (分别来自 Tier1 和 Tier2)
+    let opp_blind_t1 = game.decks[0].pop().unwrap();
+    let opp_blind_t2 = game.decks[1].pop().unwrap();
+    let opp_public_t2 = game.decks[1].pop().unwrap();
+
+    let obs_blind_t1 = game.decks[0].pop().unwrap();
+    let obs_public_t1 = game.decks[0].pop().unwrap();
+
+    game.players[1].reserved_cards.push(ReservedCard::new(opp_blind_t1, false));
+    game.players[1].reserved_cards.push(ReservedCard::new(opp_blind_t2, false));
+    game.players[1].reserved_cards.push(ReservedCard::new(opp_public_t2, true));
+
+    game.players[0].reserved_cards.push(ReservedCard::new(obs_blind_t1, false));
+    game.players[0].reserved_cards.push(ReservedCard::new(obs_public_t1, true));
+
+    // 执行对观察者 Player 0 的确定化重抽样
+    let det_state = game.determinize_for_player(0, &mut rng);
+
+    // 1. 观察者自身的卡牌严格保持不变
+    assert_eq!(det_state.players[0].reserved_cards, game.players[0].reserved_cards);
+    assert_eq!(det_state.players[0].cards, game.players[0].cards);
+
+    // 2. 金字塔公开卡牌严格保持不变
+    assert_eq!(det_state.pyramid, game.pyramid);
+
+    // 3. 对手的公开预留卡严格保持不变
+    assert_eq!(
+        det_state.players[1].reserved_cards[2],
+        game.players[1].reserved_cards[2]
+    );
+
+    // 4. 对手的盲抽暗牌：等级保持不变
+    assert_eq!(
+        det_state.players[1].reserved_cards[0].card.tier,
+        CardTier::Tier1
+    );
+    assert!(!det_state.players[1].reserved_cards[0].is_public);
+    assert_eq!(
+        det_state.players[1].reserved_cards[1].card.tier,
+        CardTier::Tier2
+    );
+    assert!(!det_state.players[1].reserved_cards[1].is_public);
+
+    // 5. 牌堆剩余张数严格保持不变
+    for tier in CardTier::ALL {
+        let t = tier.index();
+        assert_eq!(det_state.decks[t].len(), game.decks[t].len());
+    }
+
+    // 6. 全局 67 张珠宝卡守恒验证 (任何卡牌不重复、不遗漏)
+    let mut card_counts = [0u32; 68];
+    for row in &det_state.pyramid {
+        for c in row { card_counts[c.id as usize] += 1; }
+    }
+    for p in &det_state.players {
+        for c in &p.cards { card_counts[c.id as usize] += 1; }
+        for rc in &p.reserved_cards { card_counts[rc.card.id as usize] += 1; }
+    }
+    for deck in &det_state.decks {
+        for c in deck { card_counts[c.id as usize] += 1; }
+    }
+
+    for id in 0..67 {
+        assert_eq!(card_counts[id], 1, "卡牌 ID {id} 在确定化后必须且只能出现恰好 1 次！");
+    }
+}
+
+#[test]
+fn test_mcts_determinization_search() {
+    let mut game = GameState::new_game(777);
+    let mut rng = ChaCha8Rng::seed_from_u64(888);
+
+    // 对手持有一张盲抽暗牌
+    let opp_blind = game.decks[0].pop().unwrap();
+    game.players[1].reserved_cards.push(ReservedCard::new(opp_blind, false));
+
+    let mcts = RustMCTS::default();
+    let action = mcts.search_with_exploration(&game, 30, false, 0.3, 0.25, 0.0, &mut rng);
+
+    assert!(action.is_some(), "带有对手盲抽暗牌的局面下，MCTS 搜索必须顺利生成合法决策！");
+    let legal = RuleEngine::legal_actions(&game);
+    assert!(
+        legal.contains(&action.unwrap()),
+        "MCTS 产生的决策必须属于当前真实局面的合法动作！"
+    );
+}
+

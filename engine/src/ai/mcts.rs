@@ -125,7 +125,7 @@ impl RustMCTS {
         });
 
         for _ in 0..num_simulations {
-            let mut sim_state = state.clone();
+            let mut sim_state = state.determinize_for_player(state.current_player, rng);
             let mut curr_node_idx = root_idx;
             // 记录沿途 (node_idx, edge_idx)
             let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
@@ -133,10 +133,11 @@ impl RustMCTS {
             // 1. Selection: 沿着树向下选择 PUCT 最大分支
             while !nodes[curr_node_idx].is_terminal && !nodes[curr_node_idx].edges.is_empty() {
                 let best_edge_idx = self.select_best_edge(&nodes[curr_node_idx]);
-                path.push((curr_node_idx, best_edge_idx));
-
                 let action = nodes[curr_node_idx].edges[best_edge_idx].action.clone();
-                let _ = GameEngine::step(&mut sim_state, &action);
+                if GameEngine::step(&mut sim_state, &action).is_err() {
+                    break;
+                }
+                path.push((curr_node_idx, best_edge_idx));
 
                 // 若该边已有子节点，继续向下探索；否则在当前叶子停止展开
                 if let Some(child_idx) = nodes[curr_node_idx].edges[best_edge_idx].child_idx {
@@ -144,6 +145,10 @@ impl RustMCTS {
                 } else {
                     break;
                 }
+            }
+
+            if path.is_empty() {
+                continue;
             }
 
             // 2. Expansion: 为当前选中的末梢边展开新子节点
@@ -268,17 +273,18 @@ impl RustMCTS {
         }
 
         for _ in 0..num_simulations {
-            let mut sim_state = state.clone();
+            let mut sim_state = state.determinize_for_player(state.current_player, rng);
             let mut curr_node_idx = root_idx;
             let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
 
             // 1. Selection
             while !nodes[curr_node_idx].is_terminal && !nodes[curr_node_idx].edges.is_empty() {
                 let best_edge_idx = self.select_best_edge(&nodes[curr_node_idx]);
-                path.push((curr_node_idx, best_edge_idx));
-
                 let action = nodes[curr_node_idx].edges[best_edge_idx].action.clone();
-                let _ = GameEngine::step(&mut sim_state, &action);
+                if GameEngine::step(&mut sim_state, &action).is_err() {
+                    break;
+                }
+                path.push((curr_node_idx, best_edge_idx));
 
                 if let Some(child_idx) = nodes[curr_node_idx].edges[best_edge_idx].child_idx {
                     curr_node_idx = child_idx;
@@ -288,7 +294,7 @@ impl RustMCTS {
             }
 
             if path.is_empty() {
-                break;
+                continue;
             }
 
             // 2. Expansion & Evaluation
