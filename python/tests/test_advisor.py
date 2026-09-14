@@ -190,10 +190,91 @@ def test_report_formatting():
     summary_str = advisor.format_step_summary(rec, status, decision)
     assert "健康指标监测" in summary_str
     assert "正常健康" in summary_str
+    assert "核心三维健康度" in summary_str
 
     # 格式化终局看板
     adv = advisor.generate_advice(rec, status)
     terminal_str = advisor.format_terminal_report(None, adv)
     assert "自博弈全流程总结与进阶调优建议" in terminal_str
+    assert "核心三维运行指标对照看板" in terminal_str
     assert "建议执行的破局重训命令" in terminal_str
     assert "python python/train.py --mode selfplay" in terminal_str
+
+
+def test_metric_diagnostics_intervals():
+    # 1. Loss 区间校验
+    assert TrainingAdvisor.evaluate_loss(0.55).emoji == "🚨"
+    assert TrainingAdvisor.evaluate_loss(0.55).tag == "异常偏低(回音室)"
+    assert TrainingAdvisor.evaluate_loss(0.75).emoji == "⚠️"
+    assert TrainingAdvisor.evaluate_loss(1.10).emoji == "🟢"
+    assert TrainingAdvisor.evaluate_loss(1.60).emoji == "⚠️"
+    assert TrainingAdvisor.evaluate_loss(2.20).emoji == "🚨"
+
+    # 2. Top-1 区间校验
+    assert TrainingAdvisor.evaluate_top1(0.65).emoji == "🚨"
+    assert TrainingAdvisor.evaluate_top1(0.65).tag == "异常偏低(直觉弱)"
+    assert TrainingAdvisor.evaluate_top1(0.78).emoji == "⚠️"
+    assert TrainingAdvisor.evaluate_top1(0.85).emoji == "🟢"
+    assert TrainingAdvisor.evaluate_top1(0.91).emoji == "⚠️"
+    assert TrainingAdvisor.evaluate_top1(0.95).emoji == "🚨"
+    assert TrainingAdvisor.evaluate_top1(0.95).tag == "异常偏高(过拟合)"
+
+    # 3. 候选胜率区间校验
+    assert TrainingAdvisor.evaluate_winrate(0.35).emoji == "🚨"
+    assert TrainingAdvisor.evaluate_winrate(0.48).emoji == "⚠️"
+    assert TrainingAdvisor.evaluate_winrate(0.55).emoji == "🟢"
+    assert TrainingAdvisor.evaluate_winrate(0.65).emoji == "🟢"
+    assert TrainingAdvisor.evaluate_winrate(0.80).emoji == "🚨"
+    assert TrainingAdvisor.evaluate_winrate(0.80).tag == "异常偏高(断层异动)"
+
+
+def test_echo_chamber_early_stop():
+    # 模拟回音室效应：Loss < 0.60 且 Top-1 > 0.93，网络陷入自娱自乐与过拟合
+    advisor = TrainingAdvisor(echo_chamber_patience=4)
+    for i in range(1, 6):
+        advisor.step(_make_dummy_record(iteration=i, win_rate=0.45, promoted=False))
+
+    # 连续 4 轮发生回音室现象且连续未晋升达 6 轮以上
+    decision = None
+    for i in range(6, 10):
+        status, decision, advice = advisor.step(
+            _make_dummy_record(iteration=i, train_loss=0.45, top1_acc=0.945, win_rate=0.45, promoted=False)
+        )
+
+    assert status == HealthStatus.COLLAPSED
+    assert decision is not None
+    assert decision.should_terminate is True
+    assert "回音室效应与过度拟合" in decision.reason_type
+    assert advice is not None
+    assert advice.recommended_params["dirichlet_eps"] >= 0.35
+
+
+def test_divergence_early_stop():
+    # 模拟梯度爆炸或直觉崩溃 (Loss > 2.0 或 Top-1 < 0.70)
+    advisor = TrainingAdvisor(divergence_patience=3)
+    for i in range(1, 4):
+        status, decision, advice = advisor.step(
+            _make_dummy_record(iteration=i, train_loss=2.35, top1_acc=0.62, win_rate=0.45, promoted=False)
+        )
+
+    assert status == HealthStatus.EXPLODED
+    assert decision is not None
+    assert decision.should_terminate is True
+    assert "梯度爆炸与直觉崩溃" in decision.reason_type
+    assert advice is not None
+    assert advice.recommended_params["lr"] <= 3e-4
+
+
+def test_baseline_fault_detection():
+    # 模拟候选模型胜率 > 75% 触发两代断层异动警示
+    advisor = TrainingAdvisor()
+    advisor.step(_make_dummy_record(iteration=1, win_rate=0.80, promoted=True))
+    status, decision, advice = advisor.step(_make_dummy_record(iteration=2, win_rate=0.82, promoted=True))
+
+    assert status == HealthStatus.BASELINE_FAULT
+    # 不应该直接强杀训练，允许继续演进，但看板需要提示
+    assert decision is None
+    rec = advisor.history[-1]
+    adv = advisor.generate_advice(rec, status)
+    assert "两代候选模型发生突然断层" in adv.summary
+

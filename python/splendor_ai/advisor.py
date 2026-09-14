@@ -9,10 +9,32 @@ from typing import Any, Dict, List, Optional, Tuple
 class HealthStatus(str, Enum):
     HEALTHY = "正常健康 (Healthy)"
     STAGNANT = "停滞预警 (Stagnant)"
-    COLLAPSED = "模式塌陷 (Mode Collapse)"
+    COLLAPSED = "模式塌陷/回音室 (Mode Collapse / Echo Chamber)"
     DEGRADED = "严重退化 (Degraded)"
     CYCLING = "胜率震荡 (Cycling)"
     ANOMALOUS = "对局异常 (Pace Anomaly)"
+    EXPLODED = "梯度发散/直觉崩溃 (Diverged)"
+    BASELINE_FAULT = "基准断层异动 (Baseline Fault)"
+
+
+class MetricLevel(str, Enum):
+    ABNORMAL_LOW = "异常偏低"    # 🚨
+    WARNING_LOW = "偏低预警"     # ⚠️
+    HEALTHY = "绝对健康"        # 🟢
+    WARNING_HIGH = "偏高预警"    # ⚠️
+    ABNORMAL_HIGH = "异常偏高"   # 🚨
+
+
+@dataclass
+class MetricEval:
+    """单一关键维度的健康状态评测结果."""
+
+    value: float
+    level: MetricLevel
+    emoji: str
+    target_range: str
+    tag: str
+    comment: str
 
 
 @dataclass
@@ -71,6 +93,8 @@ class TrainingAdvisor:
         collapse_entropy_thresh: float = 0.15,
         degradation_patience: int = 3,
         degradation_winrate_thresh: float = 0.20,
+        echo_chamber_patience: int = 4,
+        divergence_patience: int = 3,
     ) -> None:
         self.stagnation_patience = stagnation_patience
         self.collapse_window = collapse_window
@@ -78,15 +102,187 @@ class TrainingAdvisor:
         self.collapse_entropy_thresh = collapse_entropy_thresh
         self.degradation_patience = degradation_patience
         self.degradation_winrate_thresh = degradation_winrate_thresh
+        self.echo_chamber_patience = echo_chamber_patience
+        self.divergence_patience = divergence_patience
         self.anomalous_patience = 3
         self.cycling_patience = 6
 
         self.history: List[IterationRecord] = []
         self.consecutive_failures: int = 0
         self.high_confidence_streak: int = 0
+        self.echo_chamber_streak: int = 0
+        self.divergence_streak: int = 0
         self.degraded_streak: int = 0
         self.anomalous_streak: int = 0
         self.cycling_streak: int = 0
+        self.fault_streak: int = 0
+
+    @staticmethod
+    def evaluate_loss(loss: float) -> MetricEval:
+        """评估训练总 Loss (CrossEntropy + 1.0 * MSE).
+
+        - < 0.60: 🚨 异常偏低（丧失探索，网络陷入回音室）
+        - 0.60 ~ 0.90: ⚠️ 偏低预警（拟合过深或多样性降低）
+        - 0.90 ~ 1.35: 🟢 绝对健康运行区间（前沿棋力健康拟合）
+        - 1.35 ~ 2.00: ⚠️ 偏高预警（欠拟合或处于学习初期）
+        - > 2.00: 🚨 异常偏高（梯度爆炸、学习率过大震荡）
+        """
+        if loss < 0.60:
+            return MetricEval(
+                value=loss,
+                level=MetricLevel.ABNORMAL_LOW,
+                emoji="🚨",
+                target_range="0.90~1.35",
+                tag="异常偏低(回音室)",
+                comment="网络陷入回音室，对局同质化与过度拟合",
+            )
+        if loss < 0.90:
+            return MetricEval(
+                value=loss,
+                level=MetricLevel.WARNING_LOW,
+                emoji="⚠️",
+                target_range="0.90~1.35",
+                tag="偏低预警",
+                comment="拟合略深，需关注探索空间",
+            )
+        if loss <= 1.35:
+            return MetricEval(
+                value=loss,
+                level=MetricLevel.HEALTHY,
+                emoji="🟢",
+                target_range="0.90~1.35",
+                tag="健康运行",
+                comment="前沿棋力健康拟合区间",
+            )
+        if loss <= 2.00:
+            return MetricEval(
+                value=loss,
+                level=MetricLevel.WARNING_HIGH,
+                emoji="⚠️",
+                target_range="0.90~1.35",
+                tag="偏高预警",
+                comment="欠拟合或处于自博弈初期/样本扰动",
+            )
+        return MetricEval(
+            value=loss,
+            level=MetricLevel.ABNORMAL_HIGH,
+            emoji="🚨",
+            target_range="0.90~1.35",
+            tag="异常偏高(发散)",
+            comment="梯度爆炸、学习率过大或特征破坏",
+        )
+
+    @staticmethod
+    def evaluate_top1(top1: float) -> MetricEval:
+        """评估 Top-1 先验预测准确率 (网络 vs MCTS 搜索目标分布).
+
+        - < 70.0%: 🚨 异常偏低（网络直觉崩溃、缺乏主见）
+        - 70.0% ~ 82.0%: ⚠️ 偏低预警（策略直觉偏弱，MCTS 搜索负担过重）
+        - 82.0% ~ 89.0%: 🟢 绝对健康运行区间（常规步敏捷，关键步有深算空间）
+        - 89.0% ~ 93.0%: ⚠️ 偏高预警（策略过度自信边缘，留意探索多样性）
+        - > 93.0%: 🚨 异常偏高（过拟合、丧失策略改进增量）
+        """
+        pct = top1 * 100
+        if top1 < 0.70:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.ABNORMAL_LOW,
+                emoji="🚨",
+                target_range="82.0%~89.0%",
+                tag="异常偏低(直觉弱)",
+                comment="网络直觉崩溃、缺乏主见，MCTS 纠偏负担过重",
+            )
+        if top1 < 0.82:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.WARNING_LOW,
+                emoji="⚠️",
+                target_range="82.0%~89.0%",
+                tag="偏低预警",
+                comment="直觉偏弱，常规步命中率待提升",
+            )
+        if top1 <= 0.89:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.HEALTHY,
+                emoji="🟢",
+                target_range="82.0%~89.0%",
+                tag="健康运行",
+                comment="黄金平衡：常规步敏捷，关键步有深算纠偏空间",
+            )
+        if top1 <= 0.93:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.WARNING_HIGH,
+                emoji="⚠️",
+                target_range="82.0%~89.0%",
+                tag="偏高预警",
+                comment="策略过度自信边缘，需保持探索噪声",
+            )
+        return MetricEval(
+            value=pct,
+            level=MetricLevel.ABNORMAL_HIGH,
+            emoji="🚨",
+            target_range="82.0%~89.0%",
+            tag="异常偏高(过拟合)",
+            comment="过拟合、先验压制 MCTS，丧失策略改进增量",
+        )
+
+    @staticmethod
+    def evaluate_winrate(win_rate: float) -> MetricEval:
+        """评估候选模型对基准主力的对抗胜率.
+
+        - < 42.0%: 🚨 异常偏低（大幅负向退步）
+        - 42.0% ~ 52.0%: ⚠️ 偏低预警（微弱落后，未能超越基准门禁）
+        - 52.0% ~ 58.0%: 🟢 绝对健康运行区间（教科书级平稳迭代进化）
+        - 58.0% ~ 75.0%: 🟢 强势进化（突破性增益）
+        - > 75.0%: 🚨 异常偏高（两代突然断层，通常说明老模型某处坏了或评估偏差）
+        """
+        pct = win_rate * 100
+        if win_rate < 0.42:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.ABNORMAL_LOW,
+                emoji="🚨",
+                target_range="52.0%~58.0%",
+                tag="异常偏低(负退化)",
+                comment="大幅负向退步，单轮参数更新破坏已有棋力",
+            )
+        if win_rate < 0.52:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.WARNING_LOW,
+                emoji="⚠️",
+                target_range="52.0%~58.0%",
+                tag="偏低预警",
+                comment="微弱落后或势均力敌，未突破门禁",
+            )
+        if win_rate <= 0.58:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.HEALTHY,
+                emoji="🟢",
+                target_range="52.0%~58.0%",
+                tag="健康进化",
+                comment="教科书级平稳迭代进化区间",
+            )
+        if win_rate <= 0.75:
+            return MetricEval(
+                value=pct,
+                level=MetricLevel.HEALTHY,
+                emoji="🟢",
+                target_range="52.0%~58.0%",
+                tag="强势突破",
+                comment="候选模型展现出明显的进攻与破局优势",
+            )
+        return MetricEval(
+            value=pct,
+            level=MetricLevel.ABNORMAL_HIGH,
+            emoji="🚨",
+            target_range="52.0%~58.0%",
+            tag="异常偏高(断层异动)",
+            comment="两代突然断层，通常说明老模型陷入死锁漏洞或评估偏倚",
+        )
 
     @staticmethod
     def compute_shannon_diversity(reasons: Dict[str, int]) -> float:
@@ -119,24 +315,45 @@ class TrainingAdvisor:
             self.consecutive_failures += 1
 
         entropy = self.compute_shannon_diversity(record.reasons)
+
+        # 1. 传统超高 Top-1 + 单一胜因塌陷
         if record.top1_acc >= self.collapse_top1_thresh and entropy <= self.collapse_entropy_thresh:
             self.high_confidence_streak += 1
         else:
             self.high_confidence_streak = 0
 
+        # 2. 回音室效应监测 (Loss < 0.60 且 Top-1 > 0.93，网络陷入自娱自乐与同质拟合)
+        if record.train_loss < 0.60 and record.top1_acc > 0.93:
+            self.echo_chamber_streak += 1
+        else:
+            self.echo_chamber_streak = 0
+
+        # 3. 梯度发散/直觉崩溃监测 (Loss > 2.00 或 Top-1 < 0.70)
+        if record.train_loss > 2.00 or record.top1_acc < 0.70:
+            self.divergence_streak += 1
+        else:
+            self.divergence_streak = 0
+
+        # 4. 胜率暴跌与严重退化监测
         if record.win_rate <= self.degradation_winrate_thresh:
             self.degraded_streak += 1
         else:
             self.degraded_streak = 0
 
-        # 对局节奏异常判断 (单局走子严重拖局/死循环或异常猝死)
+        # 5. 两代异常断层监测 (胜率 > 75%)
+        if record.win_rate > 0.75:
+            self.fault_streak += 1
+        else:
+            self.fault_streak = 0
+
+        # 6. 对局节奏异常判断 (单局走子严重拖局/死循环或异常猝死)
         is_anomalous_pace = record.avg_rounds > 85.0 or (record.avg_rounds > 0 and record.avg_rounds < 35.0)
         if is_anomalous_pace:
             self.anomalous_streak += 1
         else:
             self.anomalous_streak = 0
 
-        # 胜率循环震荡判断 (近 6 轮存在极差超 45% 的两极分化)
+        # 7. 胜率循环震荡判断 (近 6 轮存在极差超 45% 的两极分化)
         is_cycling = False
         if len(self.history) >= 6:
             recent_rates = [r.win_rate for r in self.history[-6:]]
@@ -159,23 +376,31 @@ class TrainingAdvisor:
 
     def _evaluate_health(self, record: IterationRecord, entropy: float) -> HealthStatus:
         """评估当前轮次的实时健康度状态 (按紧急与严重程度从高到低识别)."""
-        # 1. 灾难性退化最优先暴露
+        # 1. 梯度发散与直觉崩溃 (Loss > 2.0 或 Top-1 < 70% 持续)
+        if self.divergence_streak >= self.divergence_patience:
+            return HealthStatus.EXPLODED
+
+        # 2. 灾难性退化最优先暴露 (胜率暴跌至 20% 以下)
         if self.degraded_streak >= self.degradation_patience:
             return HealthStatus.DEGRADED
 
-        # 2. 严重模式塌陷次优先暴露
-        if self.high_confidence_streak >= self.collapse_window:
+        # 3. 严重模式塌陷与回音室 (Top-1 畸高/胜因单一 或 Loss 极低锁死)
+        if self.high_confidence_streak >= self.collapse_window or self.echo_chamber_streak >= self.echo_chamber_patience:
             return HealthStatus.COLLAPSED
 
-        # 3. 对局回合死锁与节奏异常 (优先于停滞曝光，便于及时发现规则走子死循环)
+        # 4. 对局回合死锁与节奏异常 (拖局 > 85 轮或猝死)
         if self.anomalous_streak > 0:
             return HealthStatus.ANOMALOUS
 
-        # 4. 胜率循环克制与大幅震荡
+        # 5. 胜率循环克制与大幅震荡
         if self.cycling_streak > 0:
             return HealthStatus.CYCLING
 
-        # 5. 连续未晋升停滞
+        # 6. 两代断层异动警报 (连续 2 轮胜率 > 75%，警惕基准缺陷或先后手失衡)
+        if self.fault_streak >= 2:
+            return HealthStatus.BASELINE_FAULT
+
+        # 7. 连续未晋升停滞
         if self.consecutive_failures >= 10:
             return HealthStatus.STAGNANT
 
@@ -184,7 +409,7 @@ class TrainingAdvisor:
     def _check_termination(
         self, record: IterationRecord, entropy: float, status: HealthStatus
     ) -> Optional[TerminationDecision]:
-        """根据 5 大异常场景触发及时的自适应早停判定."""
+        """根据全场景异常触发及时的自适应早停判定."""
         # 1. 停滞僵局 (Stagnation Deadlock)
         if self.consecutive_failures >= self.stagnation_patience:
             return TerminationDecision(
@@ -194,7 +419,7 @@ class TrainingAdvisor:
                 metric_evidence=f"连续未晋升轮数 = {self.consecutive_failures} | 近期胜率 = {record.win_rate*100:.1f}%",
             )
 
-        # 2. 严重模式塌陷与策略过度锁定 (Severe Mode Collapse)
+        # 2. 严重模式塌陷与策略过度锁定 (Severe Mode Collapse / Echo Chamber)
         if self.high_confidence_streak >= self.collapse_window and self.consecutive_failures >= 8:
             return TerminationDecision(
                 should_terminate=True,
@@ -203,9 +428,25 @@ class TrainingAdvisor:
                 metric_evidence=f"Top-1 = {record.top1_acc*100:.1f}% | 胜因多样性熵 = {entropy:.3f} | 连续锁定 = {self.high_confidence_streak} 轮",
             )
 
-        # 3. 灾难性遗忘与策略崩溃 (Catastrophic Forgetting)
+        if self.echo_chamber_streak >= self.echo_chamber_patience and self.consecutive_failures >= 6:
+            return TerminationDecision(
+                should_terminate=True,
+                reason_type="回音室效应与过度拟合 (Echo Chamber)",
+                description="连续多轮训练 Loss 跌破 0.60 且 Top-1 超过 93.0% (丧失探索增量)，网络陷入自博弈同质化死循环，难以产生策略改进。",
+                metric_evidence=f"Loss = {record.train_loss:.4f} (<0.60) | Top-1 = {record.top1_acc*100:.1f}% (>93%) | 连续同质 = {self.echo_chamber_streak} 轮",
+            )
+
+        # 3. 梯度爆炸与直觉崩溃 (Gradient Instability / Intuition Collapse)
+        if self.divergence_streak >= self.divergence_patience:
+            return TerminationDecision(
+                should_terminate=True,
+                reason_type="梯度爆炸与直觉崩溃 (Gradient Instability)",
+                description=f"连续 {self.divergence_streak} 轮 Loss 高于 2.00 或 Top-1 低于 70.0%，策略网络直觉崩溃、梯度剧烈震荡，无法正常拟合。",
+                metric_evidence=f"最新 Loss = {record.train_loss:.4f} | Top-1 = {record.top1_acc*100:.1f}% | 连续发散 = {self.divergence_streak} 轮",
+            )
+
+        # 4. 灾难性遗忘与策略崩溃 (Catastrophic Forgetting)
         if self.degraded_streak >= self.degradation_patience and len(self.history) >= 4:
-            # 获取崩盘前的正常历史轮次 Loss 均值作为基准
             normal_history = self.history[: -self.degraded_streak]
             prev_losses = [r.train_loss for r in normal_history[-3:]] if normal_history else []
             avg_prev_loss = sum(prev_losses) / len(prev_losses) if prev_losses else record.train_loss
@@ -217,7 +458,7 @@ class TrainingAdvisor:
                     metric_evidence=f"连续崩盘轮数 = {self.degraded_streak} | 最新候选胜率 = {record.win_rate*100:.1f}% | Loss = {record.train_loss:.4f} (基准: {avg_prev_loss:.4f})",
                 )
 
-        # 4. 严重策略震荡与循环互克 (Severe Strategy Cycling)
+        # 5. 严重策略震荡与循环互克 (Severe Strategy Cycling)
         if self.cycling_streak >= self.cycling_patience and self.consecutive_failures >= 8:
             return TerminationDecision(
                 should_terminate=True,
@@ -226,7 +467,7 @@ class TrainingAdvisor:
                 metric_evidence=f"连续震荡轮数 = {self.cycling_streak} | 连续未晋升 = {self.consecutive_failures} 轮",
             )
 
-        # 5. 对局死锁与严重节奏异常 (Severe Pace Deadlock)
+        # 6. 对局死锁与严重节奏异常 (Severe Pace Deadlock)
         if self.anomalous_streak >= self.anomalous_patience:
             return TerminationDecision(
                 should_terminate=True,
@@ -255,10 +496,10 @@ class TrainingAdvisor:
         root_causes: List[str] = []
         rec_params: Dict[str, Any] = {}
 
-        if status == HealthStatus.COLLAPSED or (decision and "模式塌陷" in decision.reason_type):
-            summary = "模型陷入单一套路纳什陷阱 (过度确定性与单一胜因)，急需重新注入高质量探索与扩大历史经验多样性。"
-            root_causes.append("策略网络自信度过高 (Top-1 > 97%)，MCTS 先验概率被自身垄断，无法发掘皇冠或封锁单色等替代路径。")
-            root_causes.append("经验回放池内同质局面过多，学习率过高导致候选模型在单一样本分布上快速塌陷。")
+        if status == HealthStatus.COLLAPSED or (decision and ("模式塌陷" in decision.reason_type or "回音室" in decision.reason_type)):
+            summary = "模型陷入单一套路纳什陷阱/回音室 (过度确定性与单一胜因)，急需注入高质量探索并扩大历史经验多样性。"
+            root_causes.append("策略网络自信度过高 (Top-1 > 93%)，MCTS 先验概率被自身垄断，丧失策略改进增量。")
+            root_causes.append("经验回放池内同质局面过多，学习率与训练轮次偏大导致候选模型在单一样本分布上过度拟合。")
             rec_params = {
                 "mcts_sims": max(50, curr_sims + 20),
                 "temp_steps": max(15, curr_temp + 4),
@@ -266,6 +507,17 @@ class TrainingAdvisor:
                 "lr": max(2e-4, round(curr_lr * 0.4, 5)),
                 "buffer_size": max(150000, curr_buf + 50000),
                 "train_epochs": max(1, curr_epochs - 1),
+            }
+
+        elif status == HealthStatus.EXPLODED or (decision and "梯度爆炸" in decision.reason_type):
+            summary = "策略网络直觉崩溃或梯度爆炸，更新步长过激破坏了参数空间，需大幅调低学习率并提高 MCTS 标签质量。"
+            root_causes.append("学习率过高 (当前 lr 导致 Loss 飙升 > 2.0) 或网络直觉不稳定 (Top-1 < 70%)。")
+            root_causes.append("自博弈推演深度不足以提供可靠监督信号，导致策略头梯度剧烈撕裂。")
+            rec_params = {
+                "lr": max(1e-4, round(curr_lr * 0.3, 5)),
+                "mcts_sims": max(50, curr_sims + 20),
+                "train_epochs": max(1, curr_epochs - 1),
+                "buffer_size": max(150000, curr_buf + 50000),
             }
 
         elif status == HealthStatus.STAGNANT or (decision and "停滞僵局" in decision.reason_type):
@@ -299,6 +551,16 @@ class TrainingAdvisor:
                 "mcts_sims": max(50, curr_sims + 15),
             }
 
+        elif status == HealthStatus.BASELINE_FAULT:
+            summary = "两代候选模型发生突然断层 (胜率 > 75%)，通常表明老基准模型存在死锁或评估环境出现黑白方偏倚。"
+            root_causes.append("上一代基准模型可能存在特定开局下的走子死锁盲区，被候选模型单方面针对收割。")
+            root_causes.append("评估对抗对局样本量偏少或先后手分配不均，建议增加评测对局数并核查先手胜率。")
+            rec_params = {
+                "games_per_iter": max(50, int(current.get("games_per_iter", 50)) + 20),
+                "mcts_sims": max(40, curr_sims),
+                "eval_agent": "neural_mcts",
+            }
+
         elif status == HealthStatus.ANOMALOUS or (decision and "死锁" in decision.reason_type):
             summary = "对局出现严重长回合对耗或死锁拖局，需增强先验探索并增加开局随机度以打破防守死局。"
             root_causes.append("双方策略极度保守导致对局逼近百步上限，难以达成有效胜因目标，搜索陷入低效无效推演。")
@@ -311,7 +573,7 @@ class TrainingAdvisor:
 
         else:
             summary = "自博弈处于健康进化或平稳收官状态，可保持当前参数或提升推演深度冲击更高竞技上限。"
-            root_causes.append("模型胜因多样性与门禁对抗胜率保持稳定，无明显死锁或塌陷。")
+            root_causes.append("模型核心指标 (Loss / Top-1 / 胜率) 运行在绝对健康区间，胜因多样性稳定。")
             rec_params = {
                 "mcts_sims": max(50, curr_sims + 10),
                 "temp_steps": curr_temp,
@@ -319,7 +581,6 @@ class TrainingAdvisor:
                 "lr": curr_lr,
             }
 
-        # 构建可直接复制执行的推荐 CLI 命令
         cmd_parts = ["python python/train.py --mode selfplay"]
         cmd_parts.append(f"--iterations {current.get('iterations', 50)}")
         cmd_parts.append(f"--games-per-iter {current.get('games_per_iter', 50)}")
@@ -343,16 +604,29 @@ class TrainingAdvisor:
         status: HealthStatus,
         decision: Optional[TerminationDecision],
     ) -> str:
-        """生成单轮迭代结尾的紧凑健康指标摘要."""
+        """生成单轮迭代结尾的清晰、三维三色健康指标摘要."""
         entropy = self.compute_shannon_diversity(record.reasons)
         max_h = math.log(3)
         entropy_ratio = (entropy / max_h) * 100 if max_h > 0 else 0.0
 
-        status_emoji = "🟢" if status == HealthStatus.HEALTHY else "⚠️" if status in [HealthStatus.STAGNANT, HealthStatus.CYCLING] else "🚨"
+        loss_eval = self.evaluate_loss(record.train_loss)
+        top1_eval = self.evaluate_top1(record.top1_acc)
+        win_eval = self.evaluate_winrate(record.win_rate)
+
+        status_emoji = (
+            "🟢"
+            if status == HealthStatus.HEALTHY
+            else "⚠️"
+            if status in [HealthStatus.STAGNANT, HealthStatus.CYCLING, HealthStatus.BASELINE_FAULT]
+            else "🚨"
+        )
 
         lines = [
-            f"   🩺 [健康指标监测] {status_emoji} 状态: {status.value} | 胜因多样性熵: {entropy:.3f} (均衡度: {entropy_ratio:.1f}%) | "
-            f"连续未晋升: {self.consecutive_failures} 轮 | Top-1: {record.top1_acc*100:.1f}%"
+            f"   🩺 [健康指标监测] {status_emoji} 状态: {status.value} | 连续未晋升: {self.consecutive_failures} 轮 | "
+            f"胜因熵: {entropy:.3f} (均衡度: {entropy_ratio:.1f}%)",
+            f"      📊 核心三维健康度: Loss: {record.train_loss:.3f} {loss_eval.emoji}({loss_eval.tag}) | "
+            f"Top-1: {record.top1_acc*100:.1f}% {top1_eval.emoji}({top1_eval.tag}) | "
+            f"胜率: {record.win_rate*100:.1f}% {win_eval.emoji}({win_eval.tag})",
         ]
 
         if decision and decision.should_terminate:
@@ -378,6 +652,25 @@ class TrainingAdvisor:
             f"🏥 诊断状态: {advice.health_status.value}",
             f"📝 总体结论: {advice.summary}",
         ]
+
+        # 核心指标运行统计与健康区间对照
+        if self.history:
+            avg_loss = sum(r.train_loss for r in self.history) / len(self.history)
+            avg_top1 = sum(r.top1_acc for r in self.history) / len(self.history)
+            avg_win = sum(r.win_rate for r in self.history) / len(self.history)
+            latest = self.history[-1]
+
+            loss_eval = self.evaluate_loss(latest.train_loss)
+            top1_eval = self.evaluate_top1(latest.top1_acc)
+            win_eval = self.evaluate_winrate(latest.win_rate)
+
+            lines.extend([
+                "",
+                "📊 核心三维运行指标对照看板:",
+                f"   • Loss 状态    : 最新 {latest.train_loss:.3f} {loss_eval.emoji} | 历史均值 {avg_loss:.3f} | 目标健康区间: [0.90 ~ 1.35] ({loss_eval.comment})",
+                f"   • Top-1 直觉   : 最新 {latest.top1_acc*100:.1f}% {top1_eval.emoji} | 历史均值 {avg_top1*100:.1f}% | 目标健康区间: [82.0% ~ 89.0%] ({top1_eval.comment})",
+                f"   • 候选胜率     : 最新 {latest.win_rate*100:.1f}% {win_eval.emoji} | 历史均值 {avg_win*100:.1f}% | 目标健康区间: [52.0% ~ 58.0%] ({win_eval.comment})",
+            ])
 
         if decision:
             lines.extend([
