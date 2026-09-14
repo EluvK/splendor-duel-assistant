@@ -218,10 +218,17 @@ class ReplayBuffer:
         """汇聚当前 Buffer 内全部有效样本为一个连续的 CompactBatch."""
         if not self.action_list:
             return CompactBatch(
-                obs=np.zeros((0, 725), dtype=np.float32),
-                mask=np.zeros((0, 256), dtype=bool),
+                obs=np.zeros((0, 742), dtype=np.float32),
+                mask=np.zeros((0, 288), dtype=bool),
                 action=np.zeros((0,), dtype=np.int64),
                 value=np.zeros((0, 1), dtype=np.float32),
+            )
+        if len(self.action_list) == 1:
+            return CompactBatch(
+                obs=self.obs_list[0],
+                mask=self.mask_list[0],
+                action=self.action_list[0],
+                value=self.value_list[0],
             )
         obs_all = np.concatenate(self.obs_list, axis=0)
         mask_all = np.concatenate(self.mask_list, axis=0)

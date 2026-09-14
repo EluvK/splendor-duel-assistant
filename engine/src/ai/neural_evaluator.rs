@@ -34,12 +34,10 @@ impl TractNeuralEvaluator {
     /// 评估单一步观察向量 (OBS_SIZE 维)
     /// 返回 (ACTION_SIZE 维 policy_logits, value [-1.0, 1.0])
     pub fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], f32), String> {
-        let input_tensor: Tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, OBS_SIZE),
-            obs.to_vec(),
-        )
-        .map_err(|e| format!("Failed to create ndarray: {e}"))?
-        .into();
+        let input_tensor: Tensor = tract_ndarray::ArrayView2::from_shape((1, OBS_SIZE), obs.as_slice())
+            .map_err(|e| format!("Failed to create ndarray view: {e}"))?
+            .to_owned()
+            .into();
 
         let outputs = self
             .plan

@@ -5,7 +5,9 @@ use rayon::prelude::*;
 use crate::ai::heuristic_ai::HeuristicAI;
 use crate::ai::mcts::RustMCTS;
 use crate::ai::neural_evaluator::TractNeuralEvaluator;
-use crate::bridge::encode::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
+use crate::bridge::encode::{
+    action_mask_from_legals, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE,
+};
 use crate::game_state::phase::{TurnPhase, VictoryReason};
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
@@ -13,6 +15,9 @@ use crate::gameplay::rules::RuleEngine;
 
 /// 回合时间衰减折现因子：鼓励智能体尽快锁定胜局，惩罚拖延回合
 pub const GAMMA_TURN: f32 = 0.98;
+
+/// 单局对弈步数安全上限：防止早期未成熟策略陷入拿放宝石死循环，超过此步数判定为超时平局结算
+pub const MAX_GAME_STEPS: usize = 400;
 
 /// 单局紧凑对弈轨迹
 struct SingleGameTrajectory {
@@ -32,12 +37,12 @@ pub struct CompactBatchSamples {
     pub values: Vec<f32>,
 }
 
-/// 计算带有回合时间衰减的折现终局价值序列
+/// 计算带有回合时间衰减的折现终局价值序列 (支持常规胜负与超时平局)
 #[inline]
 fn compute_discounted_values(
     raw_players: &[usize],
     raw_turns: &[u32],
-    winner: usize,
+    winner_opt: Option<usize>,
     final_turn: u32,
 ) -> Vec<f32> {
     let steps = raw_players.len();
@@ -47,7 +52,16 @@ fn compute_discounted_values(
         let turn = raw_turns[i];
         let rem_turns = final_turn.saturating_sub(turn) as f32;
         let discount = GAMMA_TURN.powf(rem_turns);
-        let base = if p == winner { 1.0 } else { -1.0 };
+        let base = match winner_opt {
+            Some(winner) => {
+                if p == winner {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            None => 0.0, // 超时平局：双方最终基准价值均为 0.0，向网络强化“拖延无益”信号
+        };
         values.push(base * discount);
     }
     values
@@ -66,13 +80,18 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
         steps += 1;
-        if steps > 1500 {
-            return None;
+        if steps > MAX_GAME_STEPS {
+            break;
+        }
+
+        let legals = RuleEngine::legal_actions(&game);
+        if legals.is_empty() {
+            break;
         }
 
         let acting_player = game.current_player;
         let obs = encode_state(&game);
-        let mask = action_mask(&game);
+        let mask = action_mask_from_legals(&legals);
 
         let action = HeuristicAI::select_action(&game, &mut rng)?;
         let action_id = action_to_id(&action);
@@ -93,16 +112,21 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
         }
     }
 
-    let winner = game.winner.map(|(w, _)| w)?;
+    let actual_steps = raw_actions.len();
+    if actual_steps == 0 {
+        return None;
+    }
+
+    let winner_opt = game.winner.map(|(w, _)| w);
     let final_turn = game.turn_number;
-    let values = compute_discounted_values(&raw_players, &raw_turns, winner, final_turn);
+    let values = compute_discounted_values(&raw_players, &raw_turns, winner_opt, final_turn);
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
         actions: raw_actions,
         values,
-        steps,
+        steps: actual_steps,
     })
 }
 
@@ -156,13 +180,18 @@ fn simulate_single_mcts_game(
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
         steps += 1;
-        if steps > 1500 {
-            return None;
+        if steps > MAX_GAME_STEPS {
+            break;
+        }
+
+        let legals = RuleEngine::legal_actions(&game);
+        if legals.is_empty() {
+            break;
         }
 
         let acting_player = game.current_player;
         let obs = encode_state(&game);
-        let mask = action_mask(&game);
+        let mask = action_mask_from_legals(&legals);
 
         // 前 temp_steps 步 (如前 12 步) 启用温度 1.0 轮盘赌与根节点 Dirichlet 噪声，破除开局盲区
         let (add_noise, temp) = if steps <= temp_steps {
@@ -198,16 +227,21 @@ fn simulate_single_mcts_game(
         }
     }
 
-    let winner = game.winner.map(|(w, _)| w)?;
+    let actual_steps = raw_actions.len();
+    if actual_steps == 0 {
+        return None;
+    }
+
+    let winner_opt = game.winner.map(|(w, _)| w);
     let final_turn = game.turn_number;
-    let values = compute_discounted_values(&raw_players, &raw_turns, winner, final_turn);
+    let values = compute_discounted_values(&raw_players, &raw_turns, winner_opt, final_turn);
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
         actions: raw_actions,
         values,
-        steps,
+        steps: actual_steps,
     })
 }
 
@@ -288,13 +322,18 @@ fn simulate_single_neural_mcts_game(
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
         steps += 1;
-        if steps > 1500 {
-            return None;
+        if steps > MAX_GAME_STEPS {
+            break;
+        }
+
+        let legals = RuleEngine::legal_actions(&game);
+        if legals.is_empty() {
+            break;
         }
 
         let acting_player = game.current_player;
         let obs = encode_state(&game);
-        let mask = action_mask(&game);
+        let mask = action_mask_from_legals(&legals);
 
         let (add_noise, temp) = if steps <= temp_steps {
             (true, 1.0)
@@ -302,8 +341,9 @@ fn simulate_single_neural_mcts_game(
             (false, 0.0)
         };
 
-        let action = mcts.search_neural_with_exploration(
+        let action = mcts.search_neural_with_exploration_and_legals(
             &game,
+            legals,
             evaluator,
             num_sims,
             add_noise,
@@ -330,16 +370,21 @@ fn simulate_single_neural_mcts_game(
         }
     }
 
-    let winner = game.winner.map(|(w, _)| w)?;
+    let actual_steps = raw_actions.len();
+    if actual_steps == 0 {
+        return None;
+    }
+
+    let winner_opt = game.winner.map(|(w, _)| w);
     let final_turn = game.turn_number;
-    let values = compute_discounted_values(&raw_players, &raw_turns, winner, final_turn);
+    let values = compute_discounted_values(&raw_players, &raw_turns, winner_opt, final_turn);
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
         actions: raw_actions,
         values,
-        steps,
+        steps: actual_steps,
     })
 }
 
@@ -479,8 +524,9 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
-                        match mcts.search_neural_with_exploration(
+                        match mcts.search_neural_with_exploration_and_legals(
                             &game,
+                            legals,
                             &eval0,
                             num_sims,
                             false,
@@ -490,7 +536,7 @@ pub fn evaluate_neural_match_parallel(
                             &mut rng,
                         ) {
                             Some(act) => act,
-                            None => legals[0].clone(),
+                            None => break,
                         }
                     }
                 } else if let Some(ref eval1) = eval1 {
@@ -512,8 +558,9 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
-                        match mcts.search_neural_with_exploration(
+                        match mcts.search_neural_with_exploration_and_legals(
                             &game,
+                            legals,
                             eval1,
                             num_sims,
                             false,
@@ -523,7 +570,7 @@ pub fn evaluate_neural_match_parallel(
                             &mut rng,
                         ) {
                             Some(act) => act,
-                            None => legals[0].clone(),
+                            None => break,
                         }
                     }
                 } else {

@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
 use crate::gameplay::rules::RuleEngine;
@@ -18,7 +20,9 @@ pub struct LineDef {
     pub positions: [(usize, usize); 3],
 }
 
-pub fn all_line_definitions() -> Vec<LineDef> {
+pub static ALL_LINES: LazyLock<Vec<LineDef>> = LazyLock::new(generate_all_line_definitions);
+
+fn generate_all_line_definitions() -> Vec<LineDef> {
     let mut lines = Vec::with_capacity(120);
     const DIRS: [(isize, isize); 4] = [(0, 1), (1, 0), (1, 1), (1, -1)];
 
@@ -56,6 +60,10 @@ pub fn all_line_definitions() -> Vec<LineDef> {
         }
     }
     lines
+}
+
+pub fn all_line_definitions() -> Vec<LineDef> {
+    ALL_LINES.clone()
 }
 
 /// 状态特征张量编码器（当前玩家规范视角）
@@ -393,8 +401,7 @@ pub fn action_to_id(action: &Action) -> usize {
                 let (r, c) = positions[0];
                 27 + (r * 5 + c)
             } else {
-                let all_lines = all_line_definitions();
-                let idx = all_lines
+                let idx = ALL_LINES
                     .iter()
                     .position(|l| {
                         l.count == *count
@@ -444,10 +451,16 @@ pub fn action_to_id(action: &Action) -> usize {
 
 /// 生成合法动作掩码 [bool; ACTION_SIZE]
 pub fn action_mask(state: &GameState) -> [bool; ACTION_SIZE] {
-    let mut mask = [false; ACTION_SIZE];
     let legals = RuleEngine::legal_actions(state);
+    action_mask_from_legals(&legals)
+}
+
+/// 基于已知合法动作列表生成动作掩码 (避免重复调用 RuleEngine::legal_actions)
+#[inline]
+pub fn action_mask_from_legals(legals: &[Action]) -> [bool; ACTION_SIZE] {
+    let mut mask = [false; ACTION_SIZE];
     for act in legals {
-        let id = action_to_id(&act);
+        let id = action_to_id(act);
         if id < ACTION_SIZE {
             mask[id] = true;
         }

@@ -1,14 +1,26 @@
 use rand::prelude::*;
 use rand_distr::multi::{Dirichlet, MultiDistribution};
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hasher};
 
 use crate::ai::heuristic_ai::HeuristicAI;
 use crate::ai::neural_evaluator::TractNeuralEvaluator;
-use crate::bridge::{action_to_id, encode_state, ACTION_SIZE};
+use crate::bridge::{action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
 use crate::gameplay::rules::RuleEngine;
 use crate::model::action::Action;
+
+#[inline]
+fn hash_obs(obs: &[f32; OBS_SIZE]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let bytes = unsafe {
+        std::slice::from_raw_parts(obs.as_ptr() as *const u8, std::mem::size_of_val(obs))
+    };
+    hasher.write(bytes);
+    hasher.finish()
+}
 
 /// 子节点边
 struct Edge {
@@ -228,6 +240,32 @@ impl RustMCTS {
         rng: &mut R,
     ) -> Option<Action> {
         let legals = RuleEngine::legal_actions(state);
+        self.search_neural_with_exploration_and_legals(
+            state,
+            legals,
+            evaluator,
+            num_simulations,
+            add_dirichlet,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temperature,
+            rng,
+        )
+    }
+
+    /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索 (支持复用外部已生成的合法动作列表与评估缓存)
+    pub fn search_neural_with_exploration_and_legals<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        legals: Vec<Action>,
+        evaluator: &TractNeuralEvaluator,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<Action> {
         if legals.is_empty() {
             return None;
         }
@@ -236,11 +274,13 @@ impl RustMCTS {
         }
 
         let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
+        let mut eval_cache: HashMap<u64, ([f32; ACTION_SIZE], f32)> =
+            HashMap::with_capacity(num_simulations + 1);
         let root_idx = 0;
         let is_term = matches!(state.phase, TurnPhase::GameOver(_));
 
         let (mut root_edges, _root_v_mover) =
-            Self::create_edges_with_neural_priors(state, legals, evaluator).ok()?;
+            Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut eval_cache).ok()?;
 
         if add_dirichlet && root_edges.len() >= 2 {
             let alphas = vec![dirichlet_alpha; root_edges.len()];
@@ -314,7 +354,12 @@ impl RustMCTS {
                 if next_legals.is_empty() {
                     (Vec::new(), 0.0)
                 } else {
-                    match Self::create_edges_with_neural_priors(&sim_state, next_legals, evaluator) {
+                    match Self::create_edges_with_neural_priors_cached(
+                        &sim_state,
+                        next_legals,
+                        evaluator,
+                        &mut eval_cache,
+                    ) {
                         Ok((edges, v_mover)) => {
                             let vp0 = if sim_state.current_player == 0 {
                                 v_mover
@@ -372,14 +417,23 @@ impl RustMCTS {
         }
     }
 
-    /// 使用神经网络提供先验概率与状态估值
-    fn create_edges_with_neural_priors(
+    /// 使用神经网络提供先验概率与状态估值 (带缓存支持)
+    fn create_edges_with_neural_priors_cached(
         state: &GameState,
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
+        cache: &mut HashMap<u64, ([f32; ACTION_SIZE], f32)>,
     ) -> Result<(Vec<Edge>, f32), String> {
         let obs = encode_state(state);
-        let (logits, value) = evaluator.evaluate(&obs)?;
+        let key = hash_obs(&obs);
+
+        let (logits, value) = if let Some(cached) = cache.get(&key) {
+            *cached
+        } else {
+            let res = evaluator.evaluate(&obs)?;
+            cache.insert(key, res);
+            res
+        };
 
         let mut scores = Vec::with_capacity(legals.len());
         let mut max_logit = f32::NEG_INFINITY;
@@ -407,6 +461,16 @@ impl RustMCTS {
             .collect();
 
         Ok((edges, value))
+    }
+
+    #[allow(dead_code)]
+    fn create_edges_with_neural_priors(
+        state: &GameState,
+        legals: Vec<Action>,
+        evaluator: &TractNeuralEvaluator,
+    ) -> Result<(Vec<Edge>, f32), String> {
+        let mut cache = HashMap::new();
+        Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut cache)
     }
 
     /// 使用先验打分并做平滑 Softmax 归一化初始化分支
