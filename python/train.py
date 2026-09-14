@@ -359,7 +359,17 @@ def train_selfplay(args: argparse.Namespace) -> None:
             f"   ⚔️ Rust 并发对决完成 (耗时 {arena_elapsed:.2f}s): 候选胜 {c_wins} 局 | 基准胜 {b_wins} 局 "
             f"| 平局 {draws} 局 | 候选胜率: {win_rate*100:.1f}%"
         )
+        avg_rounds = 0.0
+        avg_steps = 0.0
         if reasons:
+            avg_rounds = reasons.get("total_rounds", 0) / max(total_g, 1)
+            avg_steps = reasons.get("total_steps", 0) / max(total_g, 1)
+            round_stats = [f"平均 {avg_rounds:.1f} 轮 ({avg_steps:.1f} 步)"]
+            if c_wins > 0 and "agent0_win_rounds" in reasons:
+                round_stats.append(f"候选胜均耗 {reasons['agent0_win_rounds'] / c_wins:.1f} 轮")
+            if b_wins > 0 and "agent0_lose_rounds" in reasons:
+                round_stats.append(f"基准胜均耗 {reasons['agent0_lose_rounds'] / b_wins:.1f} 轮")
+            print(f"   ⏱️ 对局回合: {' | '.join(round_stats)}")
             print(
                 f"   🎯 终局胜因: 20声望胜 {reasons.get('20_points', 0)} 局 | "
                 f"10皇冠胜 {reasons.get('10_crowns', 0)} 局 | "
@@ -378,6 +388,8 @@ def train_selfplay(args: argparse.Namespace) -> None:
             "promoted": promoted,
             "candidate_wins": match_agent0_wins,
             "baseline_wins": match_agent1_wins,
+            "avg_eval_rounds": avg_rounds,
+            "avg_eval_steps": avg_steps,
         }
 
         if promoted:
