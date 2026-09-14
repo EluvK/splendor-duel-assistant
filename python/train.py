@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pipeline",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Enable async double-buffering pipeline (overlap CPU MCTS self-play and GPU training)",
     )
 
