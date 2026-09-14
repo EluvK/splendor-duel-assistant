@@ -13,6 +13,119 @@ import {
   COLOR_KEYS
 } from './shared-components.js';
 
+function translateColor(color) {
+  const map = {
+    Blue: '蓝', Red: '红', Green: '绿', White: '白', Black: '黑', Pearl: '珍珠', Gold: '黄金',
+    blue: '蓝', red: '红', green: '绿', white: '白', black: '黑', pearl: '珍珠', gold: '黄金'
+  };
+  return map[color] || color;
+}
+
+export function formatFriendlyAction(desc) {
+  if (!desc) return '';
+  // Take N Tokens: (r, c), ...
+  if (desc.startsWith('Take') && desc.includes('Tokens:')) {
+    const m = desc.match(/Take (\d+) Tokens: (.*)/);
+    if (m) {
+      return `拿取 ${m[1]} 颗宝石: ${m[2]}`;
+    }
+  }
+  if (desc.startsWith('Take') && desc.includes('gems:')) {
+    const m = desc.match(/Take (\d+) gems: \[(.*?)\]/);
+    if (m) {
+      const count = m[1];
+      const gems = m[2].split(',').map(s => translateColor(s.trim())).join(', ');
+      return `拿取 ${count} 颗宝石: ${gems}`;
+    }
+  }
+  // Reserve Tier Tier1 slot 1 或 Reserve Tier Tier2 from Deck
+  if (desc.startsWith('Reserve Tier')) {
+    if (desc.includes('from Deck')) {
+      const m = desc.match(/Reserve Tier Tier(\d+) from Deck/);
+      return m ? `盲抽预留 等级${m[1]}牌库` : '盲抽预留卡牌';
+    }
+    const m = desc.match(/Reserve Tier Tier(\d+) slot (\d+)/);
+    if (m) {
+      return `预留 等级${m[1]} 卡位#${Number(m[2]) + 1}`;
+    }
+  }
+  // Purchase Tier Tier1 slot 0
+  if (desc.startsWith('Purchase Tier')) {
+    const m = desc.match(/Purchase Tier Tier(\d+) slot (\d+)/);
+    if (m) {
+      return `购买 等级${m[1]} 卡位#${Number(m[2]) + 1}`;
+    }
+  }
+  // Purchase Reserved card #0
+  if (desc.startsWith('Purchase Reserved card')) {
+    const m = desc.match(/#(\d+)/);
+    return m ? `购买预留卡 #${Number(m[1]) + 1}` : '购买预留卡';
+  }
+  if (desc.startsWith('Purchase Reserved')) {
+    const m = desc.match(/Purchase Reserved (Tier\d+) Card #(\d+)/);
+    if (m) {
+      const tier = m[1].replace('Tier', '');
+      return `购买预留 ${tier}阶 卡牌 #${m[2]}`;
+    }
+  }
+  if (desc.startsWith('Purchase')) {
+    const m = desc.match(/Purchase (Tier\d+) Card #(\d+)/);
+    if (m) {
+      const tier = m[1].replace('Tier', '');
+      return `购买 ${tier}阶 卡牌 #${m[2]}`;
+    }
+  }
+  if (desc.startsWith('Reserve')) {
+    const m = desc.match(/Reserve (Tier\d+) Card #(\d+)(.*)/);
+    if (m) {
+      const tier = m[1].replace('Tier', '');
+      const goldHint = m[3].includes('got gold') ? ' (+1金)' : '';
+      return `预留 ${tier}阶 卡牌 #${m[2]}${goldHint}`;
+    }
+  }
+  if (desc.startsWith('Blind Reserve')) {
+    const m = desc.match(/Blind Reserve (Tier\d+)(.*)/);
+    if (m) {
+      const tier = m[1].replace('Tier', '');
+      const goldHint = m[2].includes('got gold') ? ' (+1金)' : '';
+      return `盲抽预留 ${tier}阶${goldHint}`;
+    }
+  }
+  if (desc.includes('Replenish Board')) return '🌀 补充棋盘 (赠对手特权)';
+  if (desc.includes('Skip Optional (Auto)')) return '⏭ 自动跳过可选行动';
+  if (desc.includes('Skip Optional')) return '⏭ 跳过可选阶段';
+  if (desc.includes('Use Privilege')) {
+    const m = desc.match(/\((\d+),\s*(\d+)\)/);
+    return m ? `📜 特权拿取宝石 (${m[1]},${m[2]})` : '📜 使用特权卷轴';
+  }
+  if (desc.startsWith('Claim Royal Card')) {
+    const m = desc.match(/#(\d+)/);
+    return m ? `👑 认领王室卡 #${m[1]}` : '👑 认领王室卡';
+  }
+  if (desc.startsWith('Discard')) {
+    const m = desc.match(/Discard (\w+)/);
+    return m ? `弃置 1 标记 (${translateColor(m[1])})` : '弃置超限标记';
+  }
+  if (desc.startsWith('Steal')) {
+    const m = desc.match(/Steal (\w+) from Opponent/);
+    return m ? `夺取对手标记 (${translateColor(m[1])})` : '夺取对手标记';
+  }
+  if (desc.startsWith('Take Same Color token')) {
+    const m = desc.match(/\((\d+),\s*(\d+)\)/);
+    return m ? `拿取同色宝石 (${m[1]},${m[2]})` : '连击拿取同色宝石';
+  }
+  if (desc.startsWith('Take Gold token')) {
+    const m = desc.match(/\((\d+),\s*(\d+)\)/);
+    return m ? `拿取黄金标记 (${m[1]},${m[2]})` : '预留拿取 1 黄金';
+  }
+  if (desc.startsWith('Joker attach to')) {
+    const m = desc.match(/attach to (\w+)/);
+    return m ? `变色卡附着为 ${translateColor(m[1])}` : desc;
+  }
+  if (desc.includes('Game Started')) return '🎮 对局开始';
+  return desc;
+}
+
 export class GameController {
   constructor() {
     this.state = null;
@@ -24,6 +137,11 @@ export class GameController {
     this.autoStepAi = true;
     this.aiStepTimer = null;
     this.isActionPending = false;
+
+    // 对战操作历史状态
+    this.history = [];
+    this.lastRenderedRound = 0;
+    this.autoScrollLog = true;
 
     this.initDOMElements();
     this.bindEvents();
@@ -39,6 +157,15 @@ export class GameController {
     this.modalBody = document.getElementById('modalBody');
     this.modalOptions = document.getElementById('modalOptions');
     this.modalFooter = document.getElementById('modalFooter');
+
+    // 历史面板与单步详情 DOM
+    this.logContainer = document.getElementById('gameLogContainer');
+    this.logStepBadge = document.getElementById('gameLogStepBadge');
+    this.btnToggleLogAutoScroll = document.getElementById('btnToggleLogAutoScroll');
+    this.stepDetailModal = document.getElementById('stepDetailModal');
+    this.stepDetailTitle = document.getElementById('stepDetailTitle');
+    this.stepDetailBody = document.getElementById('stepDetailBody');
+    this.btnStepDetailClose = document.getElementById('btnStepDetailClose');
   }
 
   bindEvents() {
@@ -53,6 +180,31 @@ export class GameController {
     document.getElementById('btnToReplay').onclick = () => this.toReplay();
     document.getElementById('p0KindSelect').onchange = () => this.startNewGame();
     document.getElementById('p1KindSelect').onchange = () => this.startNewGame();
+
+    // 自动滚动控制
+    if (this.btnToggleLogAutoScroll) {
+      this.btnToggleLogAutoScroll.onclick = () => {
+        this.autoScrollLog = !this.autoScrollLog;
+        if (this.autoScrollLog) {
+          this.btnToggleLogAutoScroll.classList.add('active');
+          if (this.logContainer) {
+            this.logContainer.scrollTop = this.logContainer.scrollHeight;
+          }
+        } else {
+          this.btnToggleLogAutoScroll.classList.remove('active');
+        }
+      };
+    }
+
+    // 步骤详情弹窗关闭
+    if (this.btnStepDetailClose) {
+      this.btnStepDetailClose.onclick = () => this.closeStepDetail();
+    }
+    if (this.stepDetailModal) {
+      this.stepDetailModal.onclick = (e) => {
+        if (e.target === this.stepDetailModal) this.closeStepDetail();
+      };
+    }
 
     const badge = document.getElementById('neuralModelBadge');
     if (badge) {
@@ -159,8 +311,251 @@ export class GameController {
     if (p1Select) p1Select.value = this.playerKinds[1];
 
     this.selectedBoardPositions = [];
+
+    // 处理对战操作历史
+    if (data.history) {
+      this.syncHistoryList(data.history);
+    } else if (data.step) {
+      this.appendHistoryStep(data.step, true);
+    }
+
     this.render();
     this.handleTurnFlow();
+  }
+
+  /* 历史记录同步与展示 */
+  syncHistoryList(steps) {
+    if (!steps || !Array.isArray(steps)) return;
+    this.history = steps;
+
+    if (!this.logContainer) return;
+    this.logContainer.innerHTML = '';
+    this.lastRenderedRound = 0;
+
+    steps.forEach((s, idx) => {
+      const isLatest = (idx === steps.length - 1);
+      this.appendLogItem(s, false);
+    });
+
+    if (this.autoScrollLog && this.logContainer) {
+      this.logContainer.scrollTop = this.logContainer.scrollHeight;
+    }
+  }
+
+  appendHistoryStep(step, isNew = false) {
+    if (!step) return;
+    const summary = {
+      index: step.step_index ?? this.history.length,
+      round: step.round_number ?? 1,
+      player: step.player,
+      action: step.action_desc,
+      phase: step.phase,
+      score: step.decision?.chosen_score,
+      ai_type: step.decision?.ai_type,
+    };
+
+    if (!this.history.some(h => h.index === summary.index)) {
+      this.history.push(summary);
+    }
+
+    this.appendLogItem(summary, isNew);
+  }
+
+  appendLogItem(s, isNew = false) {
+    const container = this.logContainer;
+    if (!container) return;
+    if (container.querySelector(`[data-index="${s.index}"]`)) return;
+
+    const round = s.round || 1;
+    if (round > this.lastRenderedRound) {
+      this.lastRenderedRound = round;
+      const divider = document.createElement('div');
+      divider.className = 'log-round-divider';
+      divider.innerHTML = `<span>⏳ 第 ${round} 轮 (Round ${round})</span>`;
+      container.appendChild(divider);
+    }
+
+    const item = document.createElement('div');
+    const isAi = (s.player !== undefined && this.playerKinds[s.player] !== 'human') || (s.ai_type && s.ai_type !== 'human');
+    item.className = `log-item ${isAi ? 'ai-step' : 'human-step'} ${isNew ? 'just-executed' : ''}`;
+    item.setAttribute('data-index', s.index);
+
+    const friendlyAct = formatFriendlyAction(s.action);
+    const rawScore = s.score;
+    let scoreBadgeHtml = '';
+
+    if (rawScore !== undefined && rawScore !== null) {
+      const isNeural = (s.ai_type && s.ai_type.includes('neural'));
+      if (isNeural) {
+        const winrate = (rawScore + 100.0) / 2.0;
+        scoreBadgeHtml = `<span class="log-score-tag" title="神经网络预测胜率: ${winrate.toFixed(1)}%">${winrate.toFixed(0)}%</span>`;
+      } else {
+        const sc = rawScore;
+        const txt = sc >= 1000 ? '斩杀' : (sc >= 0 ? `+${sc.toFixed(1)}` : sc.toFixed(1));
+        scoreBadgeHtml = `<span class="log-score-tag" title="启发式估值: ${txt}">${txt}</span>`;
+      }
+    }
+
+    const pColor = (s.player === 0 ? '#38bdf8' : '#f472b6');
+    const aiIcon = isAi ? (s.ai_type?.includes('neural') ? '🧠' : '🤖') : '👤';
+
+    item.title = `第 ${round} 轮 #${s.index} [P${s.player}] ${s.action} (${s.phase || ''})\n💡 点击查看详细决策与评估候选`;
+
+    item.innerHTML = `
+      <span class="log-idx">#${s.index}</span>
+      <span class="log-p" style="color:${pColor};" title="Player ${s.player} (${isAi ? 'AI' : '人类'})">${aiIcon}P${s.player}</span>
+      <span class="log-act" title="${friendlyAct}">${friendlyAct}</span>
+      ${scoreBadgeHtml}
+    `;
+
+    item.onclick = () => this.showStepDetail(s.index);
+    container.appendChild(item);
+
+    if (this.logStepBadge) {
+      this.logStepBadge.innerText = `${s.index + 1} 步`;
+    }
+
+    const prevActive = container.querySelector('.active-step');
+    if (prevActive) prevActive.classList.remove('active-step');
+    item.classList.add('active-step');
+
+    if (this.autoScrollLog) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+
+  async showStepDetail(stepIndex) {
+    try {
+      const res = await fetch(`/api/game/step?index=${stepIndex}`);
+      if (!res.ok) return;
+      const step = await res.json();
+      this.renderStepDetailModal(step);
+    } catch (e) {
+      console.error('showStepDetail failed:', e);
+    }
+  }
+
+  renderStepDetailModal(step) {
+    if (!this.stepDetailModal || !this.stepDetailBody) return;
+
+    const round = step.round_number || 1;
+    const isP0 = (step.player === 0);
+    const pColor = isP0 ? '#38bdf8' : '#f472b6';
+    const playerKind = this.playerKinds[step.player] || '未知';
+    const friendlyAction = formatFriendlyAction(step.action_desc);
+
+    this.stepDetailTitle.innerHTML = `<span>第 ${round} 轮 · 步骤 #${step.step_index} 决策详情</span>`;
+
+    let decisionHtml = '';
+    const decision = step.decision;
+
+    if (decision) {
+      const isNeural = decision.ai_type && decision.ai_type.includes('neural');
+      const isRandom = decision.ai_type === 'random';
+      const isHuman = decision.ai_type === 'human';
+
+      let badgeText = '';
+      let badgeColor = '';
+      let evalText = '';
+
+      if (isNeural) {
+        badgeText = `🧠 神经网络 AI (${decision.ai_type})`;
+        badgeColor = '#22c55e';
+        if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
+          const winrate = (decision.chosen_score + 100.0) / 2.0;
+          evalText = `<b style="color:${winrate >= 50 ? '#22c55e' : '#f87171'}; font-size:1.05rem;">${winrate.toFixed(1)}%</b> 胜率预期`;
+        }
+      } else if (isRandom) {
+        badgeText = '🎲 随机 AI (Random)';
+        badgeColor = '#f59e0b';
+        evalText = '随机均匀抽样，无估值打分';
+      } else if (isHuman) {
+        badgeText = '👤 人类玩家自主操作';
+        badgeColor = '#38bdf8';
+        evalText = '由人类根据盘面策略手动选择';
+      } else {
+        badgeText = `🤖 启发式 AI (${decision.ai_type})`;
+        badgeColor = 'var(--primary)';
+        if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
+          const sc = decision.chosen_score;
+          evalText = `<b style="color:#22c55e; font-size:1.05rem;">${sc >= 1000 ? '+9999 斩杀' : (sc >= 0 ? `+${sc.toFixed(1)}` : sc.toFixed(1))}</b> 分`;
+        }
+      }
+
+      let candidatesHtml = '';
+      if (decision.top_candidates && decision.top_candidates.length > 0) {
+        candidatesHtml = `
+          <div style="margin-top:12px;">
+            <div style="font-size:0.75rem; color:var(--accent-gold); font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between;">
+              <span>${isNeural ? '🎯 神经网络策略分布 (Policy Head)' : '📊 备选动作估值排名 (Top Candidates)'}</span>
+              <span style="font-size:0.68rem; color:var(--text-muted); font-weight:normal;">共 ${decision.top_candidates.length} 项</span>
+            </div>
+            <div style="background:#111520; border-radius:6px; border:1px solid rgba(255,255,255,0.08); padding:4px; max-height:220px; overflow-y:auto;">
+              ${decision.top_candidates.map((c, i) => {
+                const friendlyCand = formatFriendlyAction(c.action_desc);
+                const isChosen = c.is_chosen;
+                let scoreStr = '';
+                if (isNeural) {
+                  scoreStr = `${c.score.toFixed(1)}%`;
+                } else {
+                  scoreStr = c.score >= 1000 ? '斩杀' : (c.score >= 0 ? `+${c.score.toFixed(1)}` : c.score.toFixed(1));
+                }
+                return `
+                  <div class="candidate-row ${isChosen ? 'chosen' : ''}" style="display:flex; justify-content:space-between; align-items:center; padding:5px 8px; border-radius:4px; margin-bottom:2px; font-size:0.73rem; background:${isChosen ? 'rgba(99, 102, 241, 0.2)' : 'transparent'};">
+                    <span style="color:#64748b; font-size:0.68rem; min-width:18px;">${i + 1}.</span>
+                    <span class="candidate-act" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 6px;" title="${c.action_desc}">${friendlyCand}</span>
+                    ${isChosen ? '<span class="candidate-chosen-badge" style="background:var(--accent-gold); color:#000; font-size:0.65rem; padding:1px 5px; border-radius:3px; font-weight:700; margin-right:6px;">★ 采纳</span>' : ''}
+                    <span class="candidate-score" style="color:${isChosen ? '#22c55e' : '#38bdf8'}; font-family:monospace; font-weight:700;">${scoreStr}</span>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      decisionHtml = `
+        <div style="background:#141926; border-radius:6px; border:1px solid rgba(255,255,255,0.08); padding:10px; margin-top:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">决策引擎:</span>
+            <span style="font-size:0.72rem; color:${badgeColor}; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:4px; border:1px solid ${badgeColor}; font-weight:700;">${badgeText}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">局面评估:</span>
+            <span style="font-size:0.85rem; color:var(--text-main);">${evalText}</span>
+          </div>
+          ${candidatesHtml}
+        </div>
+      `;
+    }
+
+    this.stepDetailBody.innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="background:#111520; border-radius:6px; padding:10px; border:1px solid rgba(255,255,255,0.06);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">行动方:</span>
+            <b style="color:${pColor}; font-size:0.85rem;">Player ${step.player} (${playerKind})</b>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">所属阶段:</span>
+            <span style="font-size:0.75rem; color:var(--accent-gold); font-family:monospace;">${step.phase}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">执行动作:</span>
+            <span style="font-size:0.85rem; font-weight:700; color:#fff;" title="${step.action_desc}">${friendlyAction}</span>
+          </div>
+        </div>
+        ${decisionHtml}
+      </div>
+    `;
+
+    this.stepDetailModal.style.display = 'flex';
+  }
+
+  closeStepDetail() {
+    if (this.stepDetailModal) {
+      this.stepDetailModal.style.display = 'none';
+    }
   }
 
   render() {
@@ -577,8 +972,22 @@ export class GameController {
     this.guideBadge.innerText = `👤 玩家 P${this.currentPlayer} (第 ${curRound} 轮)`;
     this.guideBadge.style.backgroundColor = '#059669';
 
+    // 检查上一条记录是否为对方 AI 的操作，若是，在指引条提示
+    let lastAiHint = '';
+    const lastStep = this.history.length > 0 ? this.history[this.history.length - 1] : null;
+    if (lastStep && lastStep.player !== this.currentPlayer && (this.playerKinds[lastStep.player] !== 'human' || (lastStep.ai_type && lastStep.ai_type !== 'human'))) {
+      const friendlyLast = formatFriendlyAction(lastStep.action);
+      let scoreTxt = '';
+      if (lastStep.score !== undefined && lastStep.score !== null) {
+        if (lastStep.ai_type && lastStep.ai_type.includes('neural')) {
+          scoreTxt = ` [预期胜率 ${((lastStep.score + 100) / 2).toFixed(0)}%]`;
+        }
+      }
+      lastAiHint = `<span style="display:inline-flex; align-items:center; gap:3px; margin-right:8px; padding:1px 6px; background:rgba(99,102,241,0.2); border:1px solid rgba(99,102,241,0.4); border-radius:4px; font-size:0.75rem; color:#a5b4fc;">🤖 AI (P${lastStep.player}) 上步: <b>${friendlyLast}</b>${scoreTxt}</span>`;
+    }
+
     if (phase === 'OptionalActions') {
-      this.guideText.innerText = '【可选阶段】可使用特权卷轴点击棋盘拿取宝石，或补充棋盘，或点击右侧跳过直接进入主阶段。';
+      this.guideText.innerHTML = `${lastAiHint}【可选阶段】可使用特权卷轴点击棋盘拿取宝石，或补充棋盘，或点击右侧跳过直接进入主阶段。`;
 
       const hasReplenish = this.legalActions.some(a => a.category === 'replenish');
       if (hasReplenish) {
@@ -617,41 +1026,41 @@ export class GameController {
         };
         this.actionBarButtons.appendChild(btnClear);
 
-        this.guideText.innerText = `已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买/预留。`;
+        this.guideText.innerHTML = `${lastAiHint}已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买/预留。`;
       } else {
-        this.guideText.innerText = '【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或直接点击金字塔中卡牌进行购买/预留。';
+        this.guideText.innerHTML = `${lastAiHint}【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或直接点击金字塔中卡牌进行购买/预留。`;
       }
       return;
     }
 
     if (phase.startsWith('CardAbilityJoker')) {
-      this.guideText.innerText = '【变色卡定色】变色卡触发连锁能力，请指定该卡附着的宝石颜色。';
+      this.guideText.innerHTML = `${lastAiHint}【变色卡定色】变色卡触发连锁能力，请指定该卡附着的宝石颜色。`;
       this.showJokerColorModal();
       return;
     }
 
     if (phase.startsWith('CardAbilitySameColor')) {
-      this.guideText.innerText = '【拿取同色宝石】请在左侧 5x5 棋盘中点击一颗发光的同色宝石完成拿取。';
+      this.guideText.innerHTML = `${lastAiHint}【拿取同色宝石】请在左侧 5x5 棋盘中点击一颗发光的同色宝石完成拿取。`;
       return;
     }
 
     if (phase === 'SelectReserveGold') {
-      this.guideText.innerText = '【选择黄金】预留卡牌成功！请在左侧 5x5 棋盘中点击选择你要拿取的 1 枚黄金。';
+      this.guideText.innerHTML = `${lastAiHint}【选择黄金】预留卡牌成功！请在左侧 5x5 棋盘中点击选择你要拿取的 1 枚黄金。`;
       return;
     }
 
     if (phase === 'CardAbilitySteal') {
-      this.guideText.innerText = '【偷取宝石】请在对手手牌区域点击任意一颗非黄金宝石进行偷取。';
+      this.guideText.innerHTML = `${lastAiHint}【偷取宝石】请在对手手牌区域点击任意一颗非黄金宝石进行偷取。`;
       return;
     }
 
     if (phase === 'SelectRoyalCard') {
-      this.guideText.innerText = '【认领王室赞助卡】王冠达到里程碑！请在上方王室赞助池中点击一张卡牌认领。';
+      this.guideText.innerHTML = `${lastAiHint}【认领王室赞助卡】王冠达到里程碑！请在上方王室赞助池中点击一张卡牌认领。`;
       return;
     }
 
     if (phase === 'DiscardTokens') {
-      this.guideText.innerText = '【手牌超限】手牌持有标记超过 10 枚，请点击自己手牌中想要弃置的标记。';
+      this.guideText.innerHTML = `${lastAiHint}【手牌超限】手牌持有标记超过 10 枚，请点击自己手牌中想要弃置的标记。`;
       return;
     }
   }
@@ -675,16 +1084,22 @@ export class GameController {
     if (jokerActions.length === 0) return;
 
     this.modalTitle.innerText = '🃏 变色复制卡 (Joker) 定色选择';
-    this.modalBody.innerText = '请选择要将该百搭变色卡附着到哪种已拥有加成的宝石颜色上：';
+    this.modalBody.innerText = '请选择要将该万能变色卡附着到哪种已拥有加成的宝石颜色上：';
     this.modalOptions.innerHTML = '';
 
     jokerActions.forEach(act => {
-      const color = act.action.AssignJokerColor.color;
+      const rawColor = act.action.AssignJokerColor.color;
+      const normColor = String(rawColor).toLowerCase();
+      const tokenClass = COLOR_CLASSES[normColor] || `token-${normColor}`;
+      const cnColor = translateColor(normColor);
+
       const btn = document.createElement('div');
       btn.className = 'gem-picker-btn';
+      btn.title = `附着为 ${cnColor}宝石 (${rawColor})`;
       btn.innerHTML = `
-        <div class="token ${COLOR_CLASSES[color]}">${color[0].toUpperCase()}</div>
-        <span style="font-size:0.75rem; font-weight:700;">${color}</span>
+        <div class="token ${tokenClass}"></div>
+        <span style="font-size:0.8rem; font-weight:700; color:var(--text-main); margin-top:2px;">${cnColor}宝石</span>
+        <span style="font-size:0.68rem; color:var(--text-muted); text-transform:capitalize;">${rawColor}</span>
       `;
       btn.onclick = () => {
         this.clearModal();
@@ -702,6 +1117,20 @@ export class GameController {
     this.modalOptions.innerHTML = '';
   }
 
+  async syncFullHistory() {
+    try {
+      const res = await fetch('/api/game/history');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.steps && data.steps.length !== this.history.length) {
+          this.syncHistoryList(data.steps);
+        }
+      }
+    } catch (e) {
+      // 静默忽略
+    }
+  }
+
   async submitAction(action) {
     if (this.isActionPending) return;
     this.isActionPending = true;
@@ -715,6 +1144,7 @@ export class GameController {
       if (res.ok) {
         const data = await res.json();
         this.updateData(data);
+        this.syncFullHistory();
       } else {
         const err = await res.json();
         console.error('Action rejected:', err);
@@ -737,6 +1167,7 @@ export class GameController {
         const data = await res.json();
         if (data.ok) {
           this.updateData(data);
+          this.syncFullHistory();
         }
       }
     } catch (e) {

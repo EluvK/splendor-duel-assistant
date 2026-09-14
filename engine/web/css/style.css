@@ -462,6 +462,89 @@ main {
   border-radius: 2px;
 }
 
+.log-item.ai-step {
+  background: #181c2c;
+  border-left: 2px solid #818cf8;
+}
+
+.log-item.ai-step:hover {
+  background: #252b42;
+}
+
+.log-item.just-executed {
+  animation: logPulse 1.2s ease-out;
+}
+
+@keyframes logPulse {
+  0% {
+    background-color: rgba(99, 102, 241, 0.5);
+    transform: scale(1.02);
+  }
+  100% {
+    background-color: #171f2f;
+    transform: scale(1);
+  }
+}
+
+.btn-scroll-toggle {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-scroll-toggle.active {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: #38bdf8;
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+.guide-details {
+  background: #131722;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  transition: all 0.2s;
+}
+
+.guide-details[open] {
+  background: #161b29;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.guide-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--accent-gold);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.guide-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.guide-details[open] .guide-toggle-arrow {
+  transform: rotate(180deg);
+}
+
+.guide-toggle-arrow {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
 /* 金字塔与卡牌展示 */
 .pyramid-section {
   display: flex;

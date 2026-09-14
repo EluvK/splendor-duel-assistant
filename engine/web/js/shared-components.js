@@ -10,7 +10,14 @@ export const COLOR_CLASSES = {
   red: 'token-red',
   black: 'token-black',
   pearl: 'token-pearl',
-  gold: 'token-gold'
+  gold: 'token-gold',
+  White: 'token-white',
+  Blue: 'token-blue',
+  Green: 'token-green',
+  Red: 'token-red',
+  Black: 'token-black',
+  Pearl: 'token-pearl',
+  Gold: 'token-gold',
 };
 
 export const COLOR_KEYS = ['white', 'blue', 'green', 'red', 'black', 'pearl', 'gold'];
@@ -161,18 +168,6 @@ export function applyBgaRoyalSprite(el, royal) {
   el.style.backgroundSize = `400% 100%`;
   el.style.backgroundPosition = `${posX.toFixed(4)}% 0%`;
   el.style.backgroundRepeat = 'no-repeat';
-}
-
-/**
- * 兼容性辅助函数
- */
-export function getCardPlatePath(card) {
-  if (!card) return 'assets/cards/plates/level-1-joker.webp';
-  const tier = card.tier || 1;
-  const rawColor = (card.color || '').toLowerCase();
-  const validColors = ['white', 'blue', 'green', 'red', 'black'];
-  const color = validColors.includes(rawColor) ? rawColor : 'joker';
-  return `assets/cards/plates/level-${tier}-${color}.webp`;
 }
 
 /**

@@ -16,6 +16,7 @@
 - `docs/engine-architecture.md`：Rust 游戏引擎架构设计文档
 - `docs/ai-architecture.md`：Python AI 模块与网络架构文档
 - `docs/action-encoding.md`：状态与动作特征编码说明
+- `docs/web-architecture.md`：Web 可视化与对战交互架构说明
 
 ## Git 提交规范
 

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 static NEURAL_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct StepSummary {
     index: usize,
     round: u32,
@@ -52,6 +52,22 @@ struct GameStateResponse {
     neural_available: bool,
     history_len: usize,
     latest_step: Option<ReplayStep>,
+    history: Vec<StepSummary>,
+}
+
+fn map_step_summaries(steps: &[ReplayStep]) -> Vec<StepSummary> {
+    steps
+        .iter()
+        .map(|s| StepSummary {
+            index: s.step_index,
+            round: s.round_number,
+            player: s.player,
+            action: s.action_desc.clone(),
+            phase: s.phase.clone(),
+            score: s.decision.as_ref().and_then(|d| d.chosen_score),
+            ai_type: s.decision.as_ref().map(|d| d.ai_type.clone()),
+        })
+        .collect()
 }
 
 struct AppState {
@@ -128,6 +144,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
         // ================= 交互对战 API =================
         ("GET", "/api/game/state") => {
             let game = state.game.read().unwrap();
+            let history = map_step_summaries(&game.history);
             let res = GameStateResponse {
                 state: game.current_state(),
                 player_kinds: [
@@ -141,9 +158,48 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 neural_available: NeuralAI::is_available(),
                 history_len: game.history.len(),
                 latest_step: game.history.last().cloned(),
+                history,
             };
             let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // 获取对战完整步骤历史列表
+        ("GET", "/api/game/history") => {
+            let game = state.game.read().unwrap();
+            let steps = map_step_summaries(&game.history);
+            let res = serde_json::json!({
+                "total_steps": steps.len(),
+                "steps": steps,
+            });
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
+        // 获取对战指定单步的完整信息（含 AI 决策候选详情）
+        ("GET", "/api/game/step") => {
+            let mut step_index: Option<usize> = None;
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "index" || k == "step" {
+                        step_index = v.parse::<usize>().ok();
+                    }
+                }
+            }
+            let game = state.game.read().unwrap();
+            let step = match step_index {
+                Some(idx) => game.history.get(idx).cloned(),
+                None => game.history.last().cloned(),
+            };
+            if let Some(s) = step {
+                let json = serde_json::to_vec(&s).unwrap();
+                respond(&mut stream, "200 OK", &json, "application/json");
+            } else {
+                let err = serde_json::json!({ "ok": false, "error": "Step not found" });
+                let json = serde_json::to_vec(&err).unwrap();
+                respond(&mut stream, "404 Not Found", &json, "application/json");
+            }
         }
 
         // 人类玩家提交执行动作
@@ -246,6 +302,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
 
             let mut game = state.game.write().unwrap();
             game.reset(seed, [p0, p1]);
+            let history = map_step_summaries(&game.history);
 
             let res = GameStateResponse {
                 state: game.current_state(),
@@ -260,6 +317,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 neural_available: NeuralAI::is_available(),
                 history_len: game.history.len(),
                 latest_step: game.history.last().cloned(),
+                history,
             };
             let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
@@ -520,9 +578,6 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 }
             } else if path == "/replay" {
                 "replay.html".to_string()
-            } else if let Some(sub) = clean_path.strip_prefix("plates/") {
-                // 兼容旧的 /plates/ 访问路径映射至 assets/cards/plates/
-                format!("assets/cards/plates/{}", sub)
             } else {
                 clean_path.to_string()
             };
