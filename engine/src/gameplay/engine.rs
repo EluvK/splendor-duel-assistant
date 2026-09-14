@@ -155,6 +155,9 @@ impl GameEngine {
         if state.players[current_player].reserved_cards.len() >= 3 {
             return Err("Reserve limit reached (max 3)".into());
         }
+        if !state.board.has_gold() {
+            return Err("Cannot reserve card: no gold token available on board".into());
+        }
 
         // 预留卡牌
         let (card, is_public) = match slot {
@@ -183,12 +186,8 @@ impl GameEngine {
             .reserved_cards
             .push(crate::model::card::ReservedCard::new(card, is_public));
 
-        // 若盘上有黄金，进入选择拿黄金阶段；若无黄金，直接走结算
-        if state.board.has_gold() {
-            state.phase = TurnPhase::SelectReserveGold;
-        } else {
-            Self::after_action_check(state);
-        }
+        // 拿黄金与预留卡牌绑定执行：盘上必然有黄金，直接进入选择拿黄金阶段
+        state.phase = TurnPhase::SelectReserveGold;
         Ok(())
     }
 

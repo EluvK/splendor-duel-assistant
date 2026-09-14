@@ -90,7 +90,7 @@ fn test_privilege_scroll_exhaustion_steal() {
 }
 
 #[test]
-fn test_reserve_card_without_gold_on_board() {
+fn test_cannot_reserve_card_without_gold_on_board() {
     let mut game = GameState::new_game(300);
     game.phase = TurnPhase::MandatoryAction;
 
@@ -107,26 +107,28 @@ fn test_reserve_card_without_gold_on_board() {
     let p0_gold_before = game.players[0].tokens.get(GemType::Gold);
     let p0_reserved_before = game.players[0].reserved_cards.len();
 
-    // 即使棋盘无黄金，只要预留卡未满 3 张，仍然可以合法预留
+    // 规则限制：当棋盘无黄金时，不应生成任何预留卡牌行动
+    let legal_actions = RuleEngine::legal_actions(&game);
+    let has_reserve = legal_actions.iter().any(|a| matches!(a, Action::ReserveCard { .. }));
+    assert!(!has_reserve, "棋盘无黄金时不能生成预留卡牌动作");
+
+    // 若强行执行预留动作，引擎应拒绝报错
     let reserve_action = Action::ReserveCard {
         tier: CardTier::Tier1,
         slot: Some(0),
     };
-    assert!(GameEngine::step(&mut game, &reserve_action).is_ok());
+    let res = GameEngine::step(&mut game, &reserve_action);
+    assert!(res.is_err(), "棋盘无黄金时强行预留应返回错误");
 
     assert_eq!(
         game.players[0].tokens.get(GemType::Gold),
         p0_gold_before,
-        "无黄金时预留不应增加黄金"
+        "失败的预留不应增加黄金"
     );
     assert_eq!(
         game.players[0].reserved_cards.len(),
-        p0_reserved_before + 1,
-        "卡牌应成功进入预留手牌"
-    );
-    assert!(
-        game.players[0].reserved_cards.last().unwrap().is_public,
-        "从金字塔明牌预留应标记为公开 (is_public == true)"
+        p0_reserved_before,
+        "失败的预留不应进入预留手牌"
     );
 }
 
@@ -199,14 +201,8 @@ fn test_blind_reserve_card_is_private() {
     let mut game = GameState::new_game(99);
     game.phase = TurnPhase::MandatoryAction;
 
-    // 清空棋盘黄金以便一步完成预留测试
-    for r in 0..5 {
-        for c in 0..5 {
-            if game.board.get(r, c) == Some(GemType::Gold) {
-                game.board.take(r, c);
-            }
-        }
-    }
+    // 确保棋盘有黄金以满足预留前提
+    assert!(game.board.has_gold());
 
     let deck_len_before = game.decks[0].len();
     assert!(deck_len_before > 0);
@@ -217,6 +213,7 @@ fn test_blind_reserve_card_is_private() {
         slot: None,
     };
     assert!(GameEngine::step(&mut game, &blind_reserve).is_ok());
+    assert_eq!(game.phase, TurnPhase::SelectReserveGold);
 
     assert_eq!(game.decks[0].len(), deck_len_before - 1);
     let reserved = game.players[0].reserved_cards.last().unwrap();

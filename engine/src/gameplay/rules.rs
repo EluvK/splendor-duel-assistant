@@ -65,8 +65,8 @@ impl RuleEngine {
             });
         }
 
-        // 选项 B：预留卡牌（预留上限 3 张；盘上有黄金则拿 1 黄金，无黄金则纯预留）
-        if player.reserved_cards.len() < 3 {
+        // 选项 B：拿 1 枚黄金 + 预留卡牌（前提：棋盘上必须至少有 1 枚黄金，且预留手牌未达上限 3 张）
+        if state.board.has_gold() && player.reserved_cards.len() < 3 {
             for tier in CardTier::ALL {
                 // 金字塔明牌
                 for slot in 0..state.pyramid[tier.index()].len() {

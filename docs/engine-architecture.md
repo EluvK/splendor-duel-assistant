@@ -114,8 +114,8 @@ TurnPhase::OptionalActions  ◄────────────────�
 TurnPhase::MandatoryAction  ◄───────────┘
    │
    ├─► Action::TakeTokens (拿 1~3 连线非黄金标记) ──────────┐
-   ├─► Action::ReserveCard (预留 1 张金字塔明牌或暗摸牌堆) ─────┼─► 若盘上有黄金 ─► TurnPhase::SelectReserveGold
-   └─► Action::PurchaseCard (打出金字塔明牌或自己预留牌) ─────┤                           │
+   ├─► Action::ReserveCard (需盘上有黄金，预留明牌或暗摸) ──────► TurnPhase::SelectReserveGold
+   └─► Action::PurchaseCard (打出金字塔明牌或自己预留牌) ─────┐                           │
          │                                               │                      Action::TakeGoldToken
          ├─► 卡牌为 Joker ──► TurnPhase::CardAbilityJoker  │                           │
          │                         │                     │                           ▼
