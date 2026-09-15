@@ -1,25 +1,122 @@
 use rand::prelude::*;
 use rand_distr::multi::{Dirichlet, MultiDistribution};
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hasher};
 
 use crate::ai::heuristic_ai::HeuristicAI;
 use crate::ai::neural_evaluator::{NeuralPrediction, TractNeuralEvaluator};
-use crate::bridge::{action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
+use crate::bridge::{action_to_id, encode_state, ACTION_SIZE};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
 use crate::gameplay::rules::RuleEngine;
 use crate::model::action::Action;
 
+/// 基于有效盘面状态的纳秒级极速 FNV-1a 哈希 (彻底消除 1005 维 f32 全字节 SipHash 开销)
 #[inline]
-fn hash_obs(obs: &[f32; OBS_SIZE]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    let bytes = unsafe {
-        std::slice::from_raw_parts(obs.as_ptr() as *const u8, std::mem::size_of_val(obs))
-    };
-    hasher.write(bytes);
-    hasher.finish()
+pub fn fast_state_hash(state: &GameState) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325; // FNV-1a 64-bit offset basis
+    const PRIME: u64 = 0x100000001b3;
+
+    macro_rules! hash_u64 {
+        ($val:expr) => {
+            h ^= ($val) as u64;
+            h = h.wrapping_mul(PRIME);
+        };
+    }
+
+    hash_u64!(state.current_player);
+    hash_u64!(state.privilege_pool);
+    hash_u64!(state.extra_turn_granted as u8);
+    hash_u64!(state.turn_number);
+
+    // 棋盘 25 格
+    for r in 0..5 {
+        for c in 0..5 {
+            let v = match state.board.grid[r][c] {
+                Some(g) => g.index() as u64 + 1,
+                None => 0,
+            };
+            hash_u64!(v);
+        }
+    }
+
+    // 金字塔明牌 ID (最多 12 张)
+    for row in &state.pyramid {
+        for card in row {
+            hash_u64!(card.id);
+        }
+    }
+
+    // 王室卡 ID (最多 4 张)
+    for royal in &state.royal_cards {
+        hash_u64!(royal.id);
+    }
+
+    // 双方玩家状态 (标记、声望、王冠、特权、永久加成、手牌与预留卡)
+    for p in &state.players {
+        for &cnt in &p.tokens.counts {
+            hash_u64!(cnt);
+        }
+        hash_u64!(p.total_points);
+        hash_u64!(p.total_crowns);
+        hash_u64!(p.privileges);
+        for &b in &p.bonuses {
+            hash_u64!(b);
+        }
+        for c in &p.cards {
+            hash_u64!(c.id);
+        }
+        for rc in &p.reserved_cards {
+            hash_u64!(((rc.card.id as u64) << 1) | (rc.is_public as u64));
+        }
+    }
+
+    h
+}
+
+/// 跨步共享的轻量固定容量神经网络评估转置表 (零锁竞争、快速命中)
+#[derive(Debug, Clone)]
+pub struct NeuralEvalCache {
+    map: HashMap<u64, ([f32; ACTION_SIZE], NeuralPrediction)>,
+    max_entries: usize,
+}
+
+impl Default for NeuralEvalCache {
+    fn default() -> Self {
+        Self::new(4096)
+    }
+}
+
+impl NeuralEvalCache {
+    pub fn new(max_entries: usize) -> Self {
+        Self {
+            map: HashMap::with_capacity(max_entries),
+            max_entries,
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, key: &u64) -> Option<&([f32; ACTION_SIZE], NeuralPrediction)> {
+        self.map.get(key)
+    }
+
+    #[inline]
+    pub fn insert(&mut self, key: u64, val: ([f32; ACTION_SIZE], NeuralPrediction)) {
+        if self.map.len() >= self.max_entries {
+            self.map.clear();
+        }
+        self.map.insert(key, val);
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
 
 /// 子节点边
@@ -391,12 +488,69 @@ impl RustMCTS {
         .map(|(a, _)| a)
     }
 
+    pub fn search_neural_with_exploration_and_legals_and_cache<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        legals: Vec<Action>,
+        evaluator: &TractNeuralEvaluator,
+        eval_cache: &mut NeuralEvalCache,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<Action> {
+        self.search_neural_policy_with_legals_and_cache(
+            state,
+            legals,
+            evaluator,
+            eval_cache,
+            num_simulations,
+            add_dirichlet,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temperature,
+            rng,
+        )
+        .map(|(a, _)| a)
+    }
+
     /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索并返回选择的动作以及完整的 288 维软策略分布
     pub fn search_neural_policy_with_legals<R: Rng + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<(Action, [f32; ACTION_SIZE])> {
+        let mut eval_cache = NeuralEvalCache::default();
+        self.search_neural_policy_with_legals_and_cache(
+            state,
+            legals,
+            evaluator,
+            &mut eval_cache,
+            num_simulations,
+            add_dirichlet,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temperature,
+            rng,
+        )
+    }
+
+    /// 执行带跨步共享评估转置表的高性能神经网络 MCTS 搜索
+    pub fn search_neural_policy_with_legals_and_cache<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        legals: Vec<Action>,
+        evaluator: &TractNeuralEvaluator,
+        eval_cache: &mut NeuralEvalCache,
         num_simulations: usize,
         add_dirichlet: bool,
         dirichlet_alpha: f32,
@@ -417,13 +571,11 @@ impl RustMCTS {
         }
 
         let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
-        let mut eval_cache: HashMap<u64, ([f32; ACTION_SIZE], NeuralPrediction)> =
-            HashMap::with_capacity(num_simulations + 1);
         let root_idx = 0;
         let is_term = matches!(state.phase, TurnPhase::GameOver(_));
 
         let (mut root_edges, _root_pred) =
-            Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut eval_cache).ok()?;
+            Self::create_edges_with_neural_priors_cached(state, legals, evaluator, eval_cache).ok()?;
 
         if add_dirichlet && root_edges.len() >= 2 {
             let alphas = vec![dirichlet_alpha; root_edges.len()];
@@ -453,6 +605,42 @@ impl RustMCTS {
         // 根节点如果也是游戏结束状态则直接返回
         if is_term {
             return None;
+        }
+
+        // 批量预热 (Batch Prefetch): 对高优先级 Top-K 子分支进行批量前向推演，一次性载入缓存
+        if num_simulations >= 15 && nodes[root_idx].edges.len() > 1 {
+            let top_k = nodes[root_idx].edges.len().min(4);
+            let mut sorted_indices: Vec<usize> = (0..nodes[root_idx].edges.len()).collect();
+            sorted_indices.sort_unstable_by(|&a, &b| {
+                nodes[root_idx].edges[b].prior
+                    .partial_cmp(&nodes[root_idx].edges[a].prior)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            let mut batch_obs = Vec::with_capacity(top_k);
+            let mut batch_keys = Vec::with_capacity(top_k);
+
+            for &idx in sorted_indices.iter().take(top_k) {
+                let mut sim_s = *state;
+                if GameEngine::step(&mut sim_s, &nodes[root_idx].edges[idx].action).is_ok() {
+                    collapse_deterministic_micro_steps(&mut sim_s);
+                    if !matches!(sim_s.phase, TurnPhase::GameOver(_)) {
+                        let key = fast_state_hash(&sim_s);
+                        if eval_cache.get(&key).is_none() {
+                            batch_obs.push(encode_state(&sim_s));
+                            batch_keys.push(key);
+                        }
+                    }
+                }
+            }
+
+            if !batch_obs.is_empty() {
+                if let Ok(preds) = evaluator.evaluate_batch(&batch_obs) {
+                    for (k, pred) in batch_keys.into_iter().zip(preds.into_iter()) {
+                        eval_cache.insert(k, pred);
+                    }
+                }
+            }
         }
 
         let mut base_sim_state = state.determinize_for_player(state.current_player, rng);
@@ -506,7 +694,7 @@ impl RustMCTS {
                         &sim_state,
                         next_legals,
                         evaluator,
-                        &mut eval_cache,
+                        eval_cache,
                     ) {
                         Ok((edges, pred)) => {
                             let v_mover = pred.combined_value(LAMBDA_TURNS);
@@ -561,19 +749,19 @@ impl RustMCTS {
         Self::extract_policy_distribution(&nodes[root_idx].edges, temperature, rng)
     }
 
-    /// 使用神经网络提供先验概率与状态估值 (带缓存支持)
+    /// 使用神经网络提供先验概率与状态估值 (带极速状态哈希与跨步缓存支持)
     fn create_edges_with_neural_priors_cached(
         state: &GameState,
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
-        cache: &mut HashMap<u64, ([f32; ACTION_SIZE], NeuralPrediction)>,
+        cache: &mut NeuralEvalCache,
     ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
-        let obs = encode_state(state);
-        let key = hash_obs(&obs);
+        let key = fast_state_hash(state);
 
         let (logits, pred) = if let Some(cached) = cache.get(&key) {
             *cached
         } else {
+            let obs = encode_state(state);
             let res = evaluator.evaluate(&obs)?;
             cache.insert(key, res);
             res
@@ -613,7 +801,7 @@ impl RustMCTS {
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
     ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
-        let mut cache = HashMap::new();
+        let mut cache = NeuralEvalCache::default();
         Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut cache)
     }
 

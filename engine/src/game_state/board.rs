@@ -1,3 +1,4 @@
+use crate::model::stack_vec::StackVec;
 use crate::model::token::GemType;
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +40,7 @@ pub struct LineCandidate {
 }
 
 /// 5x5 游戏棋盘
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
     pub grid: [[Option<GemType>; 5]; 5],
 }
@@ -108,7 +109,7 @@ impl Board {
     }
 
     /// 沿官方 25 格螺旋轨道，从布袋列表（尾部弹出）中填满空格
-    pub fn fill_spiral(&mut self, bag: &mut Vec<GemType>) {
+    pub fn fill_spiral(&mut self, bag: &mut StackVec<GemType, 25>) {
         for &(r, c) in SPIRAL_ORDER.iter() {
             if self.grid[r][c].is_none() {
                 if let Some(token) = bag.pop() {

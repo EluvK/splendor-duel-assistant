@@ -7,16 +7,22 @@ use super::phase::{TurnPhase, VictoryReason};
 use super::player::PlayerState;
 use crate::model::card::{CardTier, JewelCard, RoyalCard};
 use crate::model::data::{ALL_JEWEL_CARDS, ALL_ROYAL_CARDS};
+use crate::model::stack_vec::StackVec;
 use crate::model::token::GemType;
 
+pub const MAX_BAG_CAPACITY: usize = 25;
+pub const MAX_DECK_CAPACITY: usize = 30;
+pub const MAX_PYRAMID_CAPACITY: usize = 5;
+pub const MAX_ROYAL_CARDS: usize = 4;
+
 /// 完整游戏状态
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
     pub board: Board,
-    pub bag: Vec<GemType>,
-    pub decks: [Vec<JewelCard>; 3],
-    pub pyramid: [Vec<JewelCard>; 3],
-    pub royal_cards: Vec<RoyalCard>,
+    pub bag: StackVec<GemType, MAX_BAG_CAPACITY>,
+    pub decks: [StackVec<JewelCard, MAX_DECK_CAPACITY>; 3],
+    pub pyramid: [StackVec<JewelCard, MAX_PYRAMID_CAPACITY>; 3],
+    pub royal_cards: StackVec<RoyalCard, MAX_ROYAL_CARDS>,
     pub privilege_pool: u8,
     pub players: [PlayerState; 2],
     pub current_player: usize,
@@ -36,7 +42,7 @@ impl GameState {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
         // 1. 分别洗牌 3 个等级的珠宝卡
-        let mut decks = [Vec::new(), Vec::new(), Vec::new()];
+        let mut decks = [StackVec::new(), StackVec::new(), StackVec::new()];
         for card in ALL_JEWEL_CARDS.iter() {
             decks[card.tier.index()].push(*card);
         }
@@ -45,7 +51,7 @@ impl GameState {
         }
 
         // 2. 翻开金字塔明牌
-        let mut pyramid = [Vec::new(), Vec::new(), Vec::new()];
+        let mut pyramid = [StackVec::new(), StackVec::new(), StackVec::new()];
         for tier in CardTier::ALL {
             let cap = tier.market_capacity();
             for _ in 0..cap {
@@ -56,7 +62,7 @@ impl GameState {
         }
 
         // 3. 将全部 25 枚标记放入布袋并洗匀
-        let mut bag = Vec::with_capacity(25);
+        let mut bag = StackVec::new();
         for &gem in GemType::BASIC_FIVE.iter() {
             for _ in 0..4 {
                 bag.push(gem);
@@ -75,7 +81,8 @@ impl GameState {
         board.fill_spiral(&mut bag);
 
         // 5. 场上放置 4 张王室卡
-        let royal_cards = ALL_ROYAL_CARDS.to_vec();
+        let mut royal_cards = StackVec::new();
+        royal_cards.extend(ALL_ROYAL_CARDS.iter().copied());
 
         // 6. 后手玩家（Player 1）开局直接获得 1 个特权卷轴，公用池留 2 个
         let p0 = PlayerState::new(0);
@@ -165,9 +172,9 @@ impl GameState {
                 }
             }
 
-            // 剩余未知卡复用已有 Vec 内存 (clear + extend，消除重新开辟堆内存)
+            // 剩余未知卡复用已有 ArrayVec (clear + extend，零堆分配)
             sim_state.decks[t_idx].clear();
-            sim_state.decks[t_idx].extend_from_slice(&unseen_buf[..pop_idx]);
+            sim_state.decks[t_idx].extend(unseen_buf[..pop_idx].iter().copied());
         }
 
         sim_state

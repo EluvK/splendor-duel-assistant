@@ -11,7 +11,7 @@ pub enum VictoryReason {
 }
 
 /// 回合细粒度状态机阶段
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnPhase {
     /// 可选行动阶段（可执行 0~2 项可选行动：使用特权卷轴、补充棋盘、或跳过进入强制行动）
     OptionalActions,

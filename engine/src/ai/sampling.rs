@@ -375,6 +375,7 @@ fn simulate_single_neural_mcts_game(
     let mut raw_players = Vec::with_capacity(200);
     let mut raw_turns = Vec::with_capacity(200);
     let mut steps = 0;
+    let mut eval_cache = crate::ai::mcts::NeuralEvalCache::new(4096);
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
         steps += 1;
@@ -397,10 +398,11 @@ fn simulate_single_neural_mcts_game(
             (false, temp_final)
         };
 
-        let (action, policy_vec) = mcts.search_neural_policy_with_legals(
+        let (action, policy_vec) = mcts.search_neural_policy_with_legals_and_cache(
             &game,
             legals,
             evaluator,
+            &mut eval_cache,
             num_sims,
             add_noise,
             dirichlet_alpha,
@@ -535,6 +537,8 @@ fn simulate_single_neural_mcts_match_game(
     let mut raw_players = Vec::with_capacity(200);
     let mut raw_turns = Vec::with_capacity(200);
     let mut steps = 0;
+    let mut eval_cache0 = crate::ai::mcts::NeuralEvalCache::new(2048);
+    let mut eval_cache1 = crate::ai::mcts::NeuralEvalCache::new(2048);
 
     while !matches!(game.phase, TurnPhase::GameOver(_)) {
         steps += 1;
@@ -564,10 +568,11 @@ fn simulate_single_neural_mcts_match_game(
         };
 
         let (action, policy_vec, should_record) = if is_agent0 {
-            let (act, pol) = mcts.search_neural_policy_with_legals(
+            let (act, pol) = mcts.search_neural_policy_with_legals_and_cache(
                 &game,
                 legals,
                 evaluator0,
+                &mut eval_cache0,
                 num_sims,
                 add_noise,
                 dirichlet_alpha,
@@ -577,10 +582,11 @@ fn simulate_single_neural_mcts_match_game(
             )?;
             (act, pol, true)
         } else if let Some(eval1) = evaluator1 {
-            let (act, pol) = mcts.search_neural_policy_with_legals(
+            let (act, pol) = mcts.search_neural_policy_with_legals_and_cache(
                 &game,
                 legals,
                 eval1,
+                &mut eval_cache1,
                 num_sims,
                 add_noise,
                 dirichlet_alpha,
@@ -763,6 +769,8 @@ pub fn evaluate_neural_match_parallel(
             let mut game = GameState::new_game(seed);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let mcts = RustMCTS::default();
+            let mut eval_cache0 = crate::ai::mcts::NeuralEvalCache::new(2048);
+            let mut eval_cache1 = crate::ai::mcts::NeuralEvalCache::new(2048);
             let mut steps = 0;
             while !matches!(game.phase, TurnPhase::GameOver(_)) && steps < 400 {
                 steps += 1;
@@ -784,10 +792,17 @@ pub fn evaluate_neural_match_parallel(
 
                 let chosen_act = if is_agent0 {
                     if num_sims == 0 {
-                        let obs = encode_state(&game);
-                        let (logits, _) = match eval0.evaluate(&obs) {
-                            Ok(r) => r,
-                            Err(_) => break,
+                        let key = crate::ai::mcts::fast_state_hash(&game);
+                        let logits = if let Some(cached) = eval_cache0.get(&key) {
+                            cached.0
+                        } else {
+                            let obs = encode_state(&game);
+                            let res = match eval0.evaluate(&obs) {
+                                Ok(r) => r,
+                                Err(_) => break,
+                            };
+                            eval_cache0.insert(key, res);
+                            res.0
                         };
                         let mut best_score = f32::NEG_INFINITY;
                         let mut best_act = legals[0].clone();
@@ -801,10 +816,11 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
-                        match mcts.search_neural_with_exploration_and_legals(
+                        match mcts.search_neural_with_exploration_and_legals_and_cache(
                             &game,
                             legals,
                             &eval0,
+                            &mut eval_cache0,
                             num_sims,
                             false,
                             0.0,
@@ -818,10 +834,17 @@ pub fn evaluate_neural_match_parallel(
                     }
                 } else if let Some(ref eval1) = eval1 {
                     if num_sims == 0 {
-                        let obs = encode_state(&game);
-                        let (logits, _) = match eval1.evaluate(&obs) {
-                            Ok(r) => r,
-                            Err(_) => break,
+                        let key = crate::ai::mcts::fast_state_hash(&game);
+                        let logits = if let Some(cached) = eval_cache1.get(&key) {
+                            cached.0
+                        } else {
+                            let obs = encode_state(&game);
+                            let res = match eval1.evaluate(&obs) {
+                                Ok(r) => r,
+                                Err(_) => break,
+                            };
+                            eval_cache1.insert(key, res);
+                            res.0
                         };
                         let mut best_score = f32::NEG_INFINITY;
                         let mut best_act = legals[0].clone();
@@ -835,10 +858,11 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
-                        match mcts.search_neural_with_exploration_and_legals(
+                        match mcts.search_neural_with_exploration_and_legals_and_cache(
                             &game,
                             legals,
                             eval1,
+                            &mut eval_cache1,
                             num_sims,
                             false,
                             0.0,

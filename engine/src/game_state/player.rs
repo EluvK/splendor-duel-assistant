@@ -1,15 +1,20 @@
 use crate::model::card::{CardColor, JewelCard, ReservedCard, RoyalCard};
+use crate::model::stack_vec::StackVec;
 use crate::model::token::{GemType, TokenCollection};
 use serde::{Deserialize, Serialize};
 
+pub const MAX_PLAYER_CARDS: usize = 67;
+pub const MAX_RESERVED_CARDS: usize = 3;
+pub const MAX_PLAYER_ROYALS: usize = 4;
+
 /// 玩家状态
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerState {
     pub id: usize, // 0 或 1
     pub tokens: TokenCollection,
-    pub cards: Vec<JewelCard>,
-    pub reserved_cards: Vec<ReservedCard>, // 上限 3 张
-    pub royal_cards: Vec<RoyalCard>,
+    pub cards: StackVec<JewelCard, MAX_PLAYER_CARDS>,
+    pub reserved_cards: StackVec<ReservedCard, MAX_RESERVED_CARDS>, // 上限 3 张
+    pub royal_cards: StackVec<RoyalCard, MAX_PLAYER_ROYALS>,
     pub privileges: u8, // 上限 3 个
 
     // 缓存计算属性加速规则判定
@@ -28,9 +33,9 @@ impl PlayerState {
         Self {
             id,
             tokens: TokenCollection::new(),
-            cards: Vec::with_capacity(30),
-            reserved_cards: Vec::with_capacity(3),
-            royal_cards: Vec::with_capacity(2),
+            cards: StackVec::new(),
+            reserved_cards: StackVec::new(),
+            royal_cards: StackVec::new(),
             privileges: 0,
             bonuses: [0; 5],
             color_points: [0; 5],
@@ -58,8 +63,8 @@ impl PlayerState {
     }
 
     /// 检查并返回当前达标但尚未领取的王室卡里程碑列表（3 或 6）
-    pub fn pending_royal_milestones(&self) -> Vec<u8> {
-        let mut milestones = Vec::with_capacity(2);
+    pub fn pending_royal_milestones(&self) -> StackVec<u8, 2> {
+        let mut milestones = StackVec::new();
         if self.total_crowns >= 3 && !self.royals_claimed[0] {
             milestones.push(3);
         }

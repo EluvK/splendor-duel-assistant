@@ -38,21 +38,24 @@ pub struct TractNeuralEvaluator {
 }
 
 impl TractNeuralEvaluator {
-    /// 从 ONNX 字节切片构建并优化模型
+    /// 从 ONNX 字节切片构建并优化模型 (支持任意批大小 [B, OBS_SIZE] 的动态推理)
     pub fn from_bytes(onnx_bytes: &[u8]) -> Result<Self, String> {
         let mut cursor = Cursor::new(onnx_bytes);
         let model = tract_onnx::onnx()
             .model_for_read(&mut cursor)
-            .map_err(|e| format!("Failed to parse ONNX: {e}"))?
-            .with_input_fact(0, f32::fact([1, OBS_SIZE]).into())
-            .map_err(|e| format!("Failed to set input fact: {e}"))?
+            .map_err(|e| format!("Failed to parse ONNX: {e}"))?;
+
+        let batch = model.sym("batch");
+        let plan = model
+            .with_input_fact(0, f32::fact([batch.to_dim(), OBS_SIZE.to_dim()]).into())
+            .map_err(|e| format!("Failed to set dynamic input fact: {e}"))?
             .into_optimized()
             .map_err(|e| format!("Failed to optimize model: {e}"))?
             .into_runnable()
             .map_err(|e| format!("Failed to build runnable plan: {e}"))?;
 
         Ok(Self {
-            plan: Arc::new(model),
+            plan: Arc::new(plan),
         })
     }
 
@@ -124,5 +127,92 @@ impl TractNeuralEvaluator {
                 reason_probs,
             },
         ))
+    }
+
+    /// 批量并行评估多个观察向量 (形状 [N, OBS_SIZE])
+    /// 相比逐样本单步调用，批处理大幅摊薄前向传播与状态初始化开销
+    pub fn evaluate_batch(
+        &self,
+        obs_list: &[[f32; OBS_SIZE]],
+    ) -> Result<Vec<([f32; ACTION_SIZE], NeuralPrediction)>, String> {
+        let n = obs_list.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        if n == 1 {
+            let res = self.evaluate(&obs_list[0])?;
+            return Ok(vec![res]);
+        }
+
+        let input_tensor = unsafe {
+            let mut tensor = Tensor::uninitialized::<f32>(&[n, OBS_SIZE])
+                .map_err(|e| format!("Failed to allocate batch tensor: {e}"))?;
+            std::ptr::copy_nonoverlapping(
+                obs_list.as_ptr() as *const f32,
+                tensor.as_slice_mut_unchecked::<f32>().as_mut_ptr(),
+                n * OBS_SIZE,
+            );
+            tensor
+        };
+
+        let outputs = self
+            .plan
+            .run(tvec!(input_tensor.into()))
+            .map_err(|e| format!("Failed to run ONNX batch inference: {e}"))?;
+
+        if outputs.len() < 4 {
+            return Err(format!(
+                "Expected 4 outputs (policy_logits, win_value, turns_value, reason_logits), got {}",
+                outputs.len()
+            ));
+        }
+
+        // outputs[0]: policy_logits [n, ACTION_SIZE]
+        let logits_slice = outputs[0]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access batch logits: {e}"))?;
+
+        // outputs[1]: win_value [n, 1]
+        let win_slice = outputs[1]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access batch win_value: {e}"))?;
+
+        // outputs[2]: turns_value [n, 1]
+        let turns_slice = outputs[2]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access batch turns_value: {e}"))?;
+
+        // outputs[3]: reason_logits [n, 3]
+        let reason_slice = outputs[3]
+            .as_slice::<f32>()
+            .map_err(|e| format!("Failed to access batch reason_logits: {e}"))?;
+
+        let mut results = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut logits = [0.0f32; ACTION_SIZE];
+            logits.copy_from_slice(&logits_slice[i * ACTION_SIZE..(i + 1) * ACTION_SIZE]);
+
+            let win_value = win_slice.get(i).copied().unwrap_or(0.0);
+            let turns_value = turns_slice.get(i).copied().unwrap_or(0.5);
+
+            let mut reason_probs = [0.0f32; 3];
+            let r_start = i * 3;
+            if reason_slice.len() >= r_start + 3 {
+                for j in 0..3 {
+                    reason_probs[j] = 1.0 / (1.0 + (-reason_slice[r_start + j]).exp());
+                }
+            }
+
+            results.push((
+                logits,
+                NeuralPrediction {
+                    win_value,
+                    turns_value,
+                    reason_probs,
+                },
+            ));
+        }
+
+        Ok(results)
     }
 }
