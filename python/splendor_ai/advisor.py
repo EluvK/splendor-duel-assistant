@@ -119,13 +119,13 @@ class TrainingAdvisor:
 
     @staticmethod
     def evaluate_loss(loss: float) -> MetricEval:
-        """评估训练总 Loss (CrossEntropy + 1.0 * MSE).
+        """评估训练总 Loss (兼容恒正自适应加权多任务损失体系).
 
         - < 0.60: 🚨 异常偏低（丧失探索，网络陷入回音室）
         - 0.60 ~ 0.90: ⚠️ 偏低预警（拟合过深或多样性降低）
-        - 0.90 ~ 1.35: 🟢 绝对健康运行区间（前沿棋力健康拟合）
-        - 1.35 ~ 2.00: ⚠️ 偏高预警（欠拟合或处于学习初期）
-        - > 2.00: 🚨 异常偏高（梯度爆炸、学习率过大震荡）
+        - 0.90 ~ 1.35: 🟢 绝对健康运行区间（前沿棋力健康拟合区间）
+        - 1.35 ~ 2.00: ⚠️ 偏高预警（欠拟合或处于学习初期/样本扰动）
+        - > 2.00: 🚨 异常偏高（梯度爆炸、学习率过大震荡或发散）
         """
         if loss < 0.60:
             return MetricEval(
@@ -486,12 +486,12 @@ class TrainingAdvisor:
     ) -> AdviceReport:
         """根据异常根因自适应计算下一步超参数调整建议与 CLI 推荐命令."""
         current = record.current_args or {}
-        curr_sims = int(current.get("mcts_sims", 30))
-        curr_temp = int(current.get("temp_steps", 12))
-        curr_eps = float(current.get("dirichlet_eps", 0.25))
-        curr_lr = float(current.get("lr", 1e-3))
-        curr_buf = int(current.get("buffer_size", 100000))
-        curr_epochs = int(current.get("train_epochs", 3))
+        curr_sims = int(current.get("mcts_sims") or 30)
+        curr_temp = int(current.get("temp_steps") or 12)
+        curr_eps = float(current.get("dirichlet_eps") or 0.25)
+        curr_lr = float(current.get("lr") or getattr(record, "lr", 1e-3) or 1e-3)
+        curr_buf = int(current.get("buffer_size") or 100000)
+        curr_epochs = int(current.get("train_epochs") or 3)
 
         root_causes: List[str] = []
         rec_params: Dict[str, Any] = {}

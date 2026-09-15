@@ -62,8 +62,18 @@ def parse_args() -> argparse.Namespace:
     )
 
     # 训练超参数
-    parser.add_argument("--batch-size", type=int, default=8192, help="Batch size for training")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Batch size for training (defaults: 8192 for imitation, 512 for selfplay)",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="Learning rate (defaults: 1e-3 for imitation, 3e-4 for selfplay)",
+    )
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="L2 weight decay")
     parser.add_argument("--device", type=str, default="auto", help="Compute device ('auto', 'cuda', 'cpu')")
     parser.add_argument("--no-amp", action="store_true", help="Disable automatic mixed precision")
@@ -80,9 +90,13 @@ def train_imitation(args: argparse.Namespace) -> None:
     device_str = (
         "cuda" if (args.device == "auto" and torch.cuda.is_available()) or args.device == "cuda" else "cpu"
     )
+    if args.batch_size is None:
+        args.batch_size = 8192
+    if args.lr is None:
+        args.lr = 1e-3
     print(
         f"⚙️  硬件设备: {device_str.upper()} | 目标局数: {args.games} 局 | 分片粒度: {args.shard_games} 局/分片 "
-        f"| Batch: {args.batch_size} | 轮次: {args.epochs} Epochs"
+        f"| Batch: {args.batch_size} | 学习率: {args.lr} | 轮次: {args.epochs} Epochs"
     )
 
     buffer = ShardedBuffer(Path(args.data_dir))
@@ -248,6 +262,12 @@ def train_selfplay(args: argparse.Namespace) -> None:
     advisor = TrainingAdvisor()
     status: HealthStatus = HealthStatus.HEALTHY
     terminated_early = False
+
+    if args.batch_size is None:
+        args.batch_size = 512
+    if args.lr is None:
+        args.lr = 3e-4
+    print(f"⚙️  自博弈训练超参: Batch Size = {args.batch_size} | 初始 LR = {args.lr}")
 
     cfg = TrainerConfig(
         lr=args.lr,

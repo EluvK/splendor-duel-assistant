@@ -192,6 +192,9 @@ class Trainer:
         total_loss = 0.0
         total_p_loss = 0.0
         total_v_loss = 0.0
+        total_win_loss = 0.0
+        total_turns_loss = 0.0
+        total_reason_loss = 0.0
         correct_top1 = 0
         correct_top3 = 0
         total_samples = 0
@@ -276,6 +279,9 @@ class Trainer:
                     total_loss += loss.item() * b_size
                     total_p_loss += policy_loss.item() * b_size
                     total_v_loss += value_loss.item() * b_size
+                    total_win_loss += win_loss.item() * b_size
+                    total_turns_loss += turns_loss.item() * b_size
+                    total_reason_loss += reason_loss.item() * b_size
 
                     pred_top3 = masked_logits.topk(k=3, dim=-1).indices
                     correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
@@ -298,6 +304,9 @@ class Trainer:
             "loss": total_loss / total_samples,
             "policy_loss": total_p_loss / total_samples,
             "value_loss": total_v_loss / total_samples,
+            "win_loss": total_win_loss / total_samples,
+            "turns_loss": total_turns_loss / total_samples,
+            "reason_loss": total_reason_loss / total_samples,
             "top1_acc": correct_top1 / total_samples,
             "top3_acc": correct_top3 / total_samples,
             "lr": self.optimizer.param_groups[0]["lr"],
@@ -310,6 +319,9 @@ class Trainer:
         total_loss = 0.0
         total_p_loss = 0.0
         total_v_loss = 0.0
+        total_win_loss = 0.0
+        total_turns_loss = 0.0
+        total_reason_loss = 0.0
         correct_top1 = 0
         correct_top3 = 0
         total_samples = 0
@@ -362,6 +374,9 @@ class Trainer:
                 total_loss += loss.item() * b_size
                 total_p_loss += policy_loss.item() * b_size
                 total_v_loss += value_loss.item() * b_size
+                total_win_loss += win_loss.item() * b_size
+                total_turns_loss += turns_loss.item() * b_size
+                total_reason_loss += reason_loss.item() * b_size
 
                 pred_top3 = masked_logits.topk(k=3, dim=-1).indices
                 correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
@@ -377,6 +392,9 @@ class Trainer:
             "eval_loss": total_loss / total_samples,
             "eval_policy_loss": total_p_loss / total_samples,
             "eval_value_loss": total_v_loss / total_samples,
+            "eval_win_loss": total_win_loss / total_samples,
+            "eval_turns_loss": total_turns_loss / total_samples,
+            "eval_reason_loss": total_reason_loss / total_samples,
             "eval_top1_acc": correct_top1 / total_samples,
             "eval_top3_acc": correct_top3 / total_samples,
         }

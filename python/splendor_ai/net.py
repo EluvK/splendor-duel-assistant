@@ -298,20 +298,28 @@ class SplendorNet(nn.Module):
         turns_loss: torch.Tensor,
         reason_loss: torch.Tensor,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """同方差任务不确定性自适应多任务损失加权 (Kendall et al., CVPR 2018).
+        """同方差任务不确定性自适应多任务损失加权 (平滑恒正正则项).
 
         Loss = 0.5 * exp(-s_p) * L_p + 0.5 * exp(-s_w) * L_w + 0.5 * exp(-s_t) * L_t
-             + 0.5 * exp(-s_r) * L_r + 0.5 * sum(s_i)
-        其中 s_i 为可学习的对数方差 log(sigma_i^2).
+             + 0.5 * exp(-s_r) * L_r + 0.5 * sum(log(1 + exp(s_i)))
+        采用 log(1 + sigma^2) 保证正则项恒为正，杜绝方差崩溃与负 Loss 异常，完美适配健康度监控.
         """
         s_p, s_w, s_t, s_r = self.log_vars[0], self.log_vars[1], self.log_vars[2], self.log_vars[3]
+
+        # 软下界恒正正则项: 0.5 * sum(log(1 + exp(s)))
+        reg = 0.5 * (
+            torch.log1p(torch.exp(s_p))
+            + torch.log1p(torch.exp(s_w))
+            + torch.log1p(torch.exp(s_t))
+            + torch.log1p(torch.exp(s_r))
+        )
 
         total_loss = (
             0.5 * torch.exp(-s_p) * policy_loss
             + 0.5 * torch.exp(-s_w) * win_loss
             + 0.5 * torch.exp(-s_t) * turns_loss
             + 0.5 * torch.exp(-s_r) * reason_loss
-            + 0.5 * (s_p + s_w + s_t + s_r)
+            + reg
         )
 
         weights = {
