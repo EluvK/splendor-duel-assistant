@@ -194,6 +194,7 @@ fn simulate_single_mcts_game(
     num_sims: usize,
     seed: u64,
     temp_steps: usize,
+    temp_final: f32,
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> Option<SingleGameTrajectory> {
@@ -226,7 +227,7 @@ fn simulate_single_mcts_game(
         let (add_noise, temp) = if steps <= temp_steps {
             (true, 1.0)
         } else {
-            (false, 0.0)
+            (false, temp_final)
         };
 
         let action = mcts.search_with_exploration(
@@ -288,6 +289,7 @@ pub fn sample_mcts_games_parallel_with_config(
     num_sims: usize,
     start_seed: u64,
     temp_steps: usize,
+    temp_final: f32,
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> CompactBatchSamples {
@@ -300,6 +302,7 @@ pub fn sample_mcts_games_parallel_with_config(
                 num_sims,
                 start_seed + idx as u64,
                 temp_steps,
+                temp_final,
                 dirichlet_alpha,
                 dirichlet_eps,
             )
@@ -332,21 +335,13 @@ pub fn sample_mcts_games_parallel_with_config(
     }
 }
 
-/// 兼容老旧签名的并行 MCTS 采样
-pub fn sample_mcts_games_parallel(
-    num_games: usize,
-    num_sims: usize,
-    start_seed: u64,
-) -> CompactBatchSamples {
-    sample_mcts_games_parallel_with_config(num_games, num_sims, start_seed, 12, 0.3, 0.25)
-}
-
 fn simulate_single_neural_mcts_game(
     mcts: &RustMCTS,
     evaluator: &TractNeuralEvaluator,
     num_sims: usize,
     seed: u64,
     temp_steps: usize,
+    temp_final: f32,
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> Option<SingleGameTrajectory> {
@@ -378,7 +373,7 @@ fn simulate_single_neural_mcts_game(
         let (add_noise, temp) = if steps <= temp_steps {
             (true, 1.0)
         } else {
-            (false, 0.0)
+            (false, temp_final)
         };
 
         let action = mcts.search_neural_with_exploration_and_legals(
@@ -443,6 +438,7 @@ pub fn sample_neural_mcts_games_parallel(
     num_sims: usize,
     start_seed: u64,
     temp_steps: usize,
+    temp_final: f32,
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> Result<CompactBatchSamples, String> {
@@ -458,6 +454,7 @@ pub fn sample_neural_mcts_games_parallel(
                 num_sims,
                 start_seed + idx as u64,
                 temp_steps,
+                temp_final,
                 dirichlet_alpha,
                 dirichlet_eps,
             )

@@ -401,7 +401,7 @@ class TrainingAdvisor:
             return HealthStatus.BASELINE_FAULT
 
         # 7. 连续未晋升停滞
-        if self.consecutive_failures >= 10:
+        if self.consecutive_failures >= 15:
             return HealthStatus.STAGNANT
 
         return HealthStatus.HEALTHY

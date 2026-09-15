@@ -215,13 +215,14 @@ pub fn generate_heuristic_samples(
 
 /// 批量多线程并行生成带 MCTS 深度推演与 AlphaZero 探索机制的自博弈样本 (8 线程全速并发)
 #[pyfunction]
-#[pyo3(signature = (num_games=100, num_sims=30, start_seed=42, temp_steps=12, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
+#[pyo3(signature = (num_games=100, num_sims=30, start_seed=42, temp_steps=12, temp_final=0.25, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
 pub fn generate_mcts_samples(
     py: Python<'_>,
     num_games: usize,
     num_sims: usize,
     start_seed: u64,
     temp_steps: usize,
+    temp_final: f32,
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> PyResult<(
@@ -238,6 +239,7 @@ pub fn generate_mcts_samples(
             num_sims,
             start_seed,
             temp_steps,
+            temp_final,
             dirichlet_alpha,
             dirichlet_eps,
         )
@@ -257,7 +259,7 @@ pub fn generate_mcts_samples(
 }
 
 #[pyfunction]
-#[pyo3(signature = (model_bytes, num_games=100, num_sims=30, start_seed=42, temp_steps=12, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
+#[pyo3(signature = (model_bytes, num_games=100, num_sims=30, start_seed=42, temp_steps=12, temp_final=0.25, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
 pub fn generate_neural_mcts_samples(
     py: Python<'_>,
     model_bytes: &[u8],
@@ -265,6 +267,7 @@ pub fn generate_neural_mcts_samples(
     num_sims: usize,
     start_seed: u64,
     temp_steps: usize,
+    temp_final: f32,
     dirichlet_alpha: f32,
     dirichlet_eps: f32,
 ) -> PyResult<(
@@ -283,6 +286,7 @@ pub fn generate_neural_mcts_samples(
                 num_sims,
                 start_seed,
                 temp_steps,
+                temp_final,
                 dirichlet_alpha,
                 dirichlet_eps,
             )

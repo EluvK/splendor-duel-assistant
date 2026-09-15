@@ -40,6 +40,7 @@ def generate_rust_neural_mcts_compact_batch(
     num_simulations: int = 30,
     start_seed: int = 42,
     temp_steps: int = 12,
+    temp_final: float = 0.25,
     dirichlet_alpha: float = 0.3,
     dirichlet_eps: float = 0.25,
 ) -> CompactBatch:
@@ -55,6 +56,7 @@ def generate_rust_neural_mcts_compact_batch(
         num_simulations,
         start_seed,
         temp_steps,
+        temp_final,
         dirichlet_alpha,
         dirichlet_eps,
     )
