@@ -79,13 +79,30 @@ class Trainer:
         for step_i, batch in enumerate(dataloader):
             obs = batch["obs"].to(self.device, non_blocking=True)
             mask = batch["mask"].to(self.device, non_blocking=True)
-            target_action = batch["action"].to(self.device, non_blocking=True)
             target_value = batch["value"].to(self.device, non_blocking=True)
+
+            target_policy = batch.get("target_policy")
+            if target_policy is not None:
+                target_policy = target_policy.to(self.device, non_blocking=True).float()
+
+            target_action = batch.get("action")
+            if target_action is not None:
+                target_action = target_action.to(self.device, non_blocking=True).long()
+            elif target_policy is not None:
+                target_action = target_policy.argmax(dim=-1).long()
+            else:
+                target_action = torch.zeros(obs.shape[0], dtype=torch.long, device=self.device)
+
             target_reason = batch.get("reason")
             if target_reason is not None:
-                target_reason = target_reason.to(self.device, non_blocking=True)
+                target_reason = target_reason.to(self.device, non_blocking=True).float()
+                if target_reason.ndim == 1:
+                    # 单标量兼容转换
+                    target_reason = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
+                elif target_reason.shape[-1] == 4:
+                    target_reason = target_reason[:, :3]
             else:
-                target_reason = torch.zeros(obs.shape[0], dtype=torch.long, device=self.device)
+                target_reason = torch.zeros((obs.shape[0], 3), dtype=torch.float32, device=self.device)
 
             target_win = target_value[:, 0:1]
             target_turns = target_value[:, 1:2]
@@ -97,10 +114,17 @@ class Trainer:
                 logits, win_v, turns_v, reason_logits = self.net(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
-                policy_loss = F.cross_entropy(masked_logits, target_action)
+                # M7: 软标签交叉熵损失；若无软分布则回退为传统交叉熵
+                if target_policy is not None:
+                    log_probs = F.log_softmax(masked_logits, dim=-1)
+                    policy_loss = -(target_policy * log_probs).sum(dim=-1).mean()
+                else:
+                    policy_loss = F.cross_entropy(masked_logits, target_action)
+
                 win_loss = F.mse_loss(win_v, target_win)
                 turns_loss = F.smooth_l1_loss(turns_v, target_turns)
-                reason_loss = F.cross_entropy(reason_logits, target_reason)
+                # M2: 3 维独立 Sigmoid 多标签二值交叉熵损失
+                reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason)
 
                 value_loss = (
                     self.cfg.win_loss_coeff * win_loss

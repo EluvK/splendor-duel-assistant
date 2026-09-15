@@ -17,7 +17,7 @@ def test_net_forward_shapes():
     assert logits.shape == (1, 288)
     assert win_v.shape == (1, 1)
     assert turns_v.shape == (1, 1)
-    assert reason_logits.shape == (1, 4)
+    assert reason_logits.shape == (1, 3)
     assert (-1.0 <= win_v.item() <= 1.0)
     assert (0.0 <= turns_v.item() <= 1.0)
 
@@ -27,7 +27,7 @@ def test_net_forward_shapes():
     assert b_logits.shape == (8, 288)
     assert b_win.shape == (8, 1)
     assert b_turns.shape == (8, 1)
-    assert b_reason.shape == (8, 4)
+    assert b_reason.shape == (8, 3)
     assert (b_win >= -1.0).all() and (b_win <= 1.0).all()
     assert (b_turns >= 0.0).all() and (b_turns <= 1.0).all()
 
@@ -45,7 +45,7 @@ def test_net_action_masking():
     assert probs.shape == (1, 288)
     assert win_v.shape == (1, 1)
     assert turns_v.shape == (1, 1)
-    assert reason_logits.shape == (1, 4)
+    assert reason_logits.shape == (1, 3)
     probs_np = probs.detach().cpu().numpy()[0]
 
     # 验证非法动作的概率为 0

@@ -8,7 +8,7 @@ use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard, RoyalAbili
 use crate::model::token::GemType;
 
 /// 观察向量维度
-pub const OBS_SIZE: usize = 742;
+pub const OBS_SIZE: usize = 879;
 
 /// 动作空间大小（离散动作总维度）
 pub const ACTION_SIZE: usize = 288;
@@ -142,11 +142,11 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     offset += 20;
 
     // -------------------------------------------------------------
-    // 分块 4: 双方玩家状态 (2 玩家 × 42 维 = 84 维) [625..709]
+    // 分块 4: 双方玩家仪表板 (2 玩家 × 105 维 = 210 维) [625..835]
     // -------------------------------------------------------------
     for (p_order, &p_idx) in [cp, op].iter().enumerate() {
         let p = &state.players[p_idx];
-        let p_base = offset + p_order * 42;
+        let p_base = offset + p_order * 105;
 
         // 标记库存 (8维，超限弃牌前可能短暂超过 10，钳位至 1.0)
         for i in 0..7 {
@@ -174,55 +174,25 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
         out[p_base + 22] = p.royal_cards.len() as f32 / 2.0;
         out[p_base + 23] = if p.royals_claimed[0] { 1.0 } else { 0.0 };
 
-        // 预留手牌 (3 槽位 × 6 维 = 18维)
-        // 编码规范: [present, is_public, points/6, crowns/3, bonus_color/5, can_afford]
+        // 预留手牌 (3 槽位 × 27 维 = 81维)
         for slot in 0..3 {
-            let slot_base = p_base + 24 + slot * 6;
+            let slot_slice = &mut out[p_base + 24 + slot * 27..p_base + 24 + (slot + 1) * 27];
             if let Some(rc) = p.reserved_cards.get(slot) {
-                out[slot_base] = 1.0; // present
-
                 let is_self = p_idx == cp;
-                if is_self {
-                    // 我方手牌：自己完全知晓具体信息，但需如实编码该手牌是否对局公开
-                    out[slot_base + 1] = if rc.is_public { 1.0 } else { 0.0 };
-                    out[slot_base + 2] = rc.card.points as f32 / 6.0;
-                    out[slot_base + 3] = rc.card.crowns as f32 / 3.0;
-                    if let Some(gem) = rc.card.color.to_gem_type() {
-                        out[slot_base + 4] = gem.index() as f32 / 5.0;
-                    }
-                    out[slot_base + 5] = if state.players[cp].can_afford(&rc.card) {
-                        1.0
-                    } else {
-                        0.0
-                    };
+                if is_self || rc.is_public {
+                    // 我方全部手牌，或对手公开明牌预留：写入完整 27 维卡牌特征
+                    encode_card_slot(slot_slice, Some(&rc.card), rc.card.tier, &state.players[p_idx]);
                 } else {
-                    // 对手手牌：
-                    if rc.is_public {
-                        // 来自金字塔明牌预留（公开信息）：双方均可见卡牌明细及对手能否买得起
-                        out[slot_base + 1] = 1.0;
-                        out[slot_base + 2] = rc.card.points as f32 / 6.0;
-                        out[slot_base + 3] = rc.card.crowns as f32 / 3.0;
-                        if let Some(gem) = rc.card.color.to_gem_type() {
-                            out[slot_base + 4] = gem.index() as f32 / 5.0;
-                        }
-                        out[slot_base + 5] = if state.players[op].can_afford(&rc.card) {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                    } else {
-                        // 来自牌堆顶盲抽（私有暗牌）：对我方不可见，属性完全掩蔽为 0，杜绝信息泄露
-                        out[slot_base + 1] = 0.0;
-                        // slot_base + 2..=5 保持 0.0
-                    }
+                    // 对手盲抽暗牌 (M4): 保留 present 与 tier，其余私密属性掩蔽
+                    encode_opponent_hidden_slot(slot_slice, rc.card.tier);
                 }
             }
         }
     }
-    offset += 84;
+    offset += 210;
 
     // -------------------------------------------------------------
-    // 分块 5: 全局环境、博弈差值与胜负威胁 (33 维) [709..742]
+    // 分块 5: 全局环境、博弈差值与胜负威胁 (44 维) [835..879]
     // -------------------------------------------------------------
     match state.phase {
         TurnPhase::OptionalActions => out[offset] = 1.0,
@@ -237,33 +207,51 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     }
     out[offset + 9] = state.privilege_pool as f32 / 3.0;
     out[offset + 10] = state.bag.len() as f32 / 25.0;
-    out[offset + 11] = state.board.count_tokens() as f32 / 25.0;
-    out[offset + 12] = (state.turn_number as f32 / 60.0).min(1.0);
-    out[offset + 13] = if state.extra_turn_granted { 1.0 } else { 0.0 };
-    out[offset + 14] = state.decks[0].len() as f32 / 30.0;
-    out[offset + 15] = state.decks[1].len() as f32 / 24.0;
-    out[offset + 16] = state.decks[2].len() as f32 / 13.0;
+
+    // 11..17: 布袋中 7 种标记各自具体剩余数量 (7 维)
+    let mut bag_counts = [0u8; 7];
+    for &gem in &state.bag {
+        bag_counts[gem.index()] += 1;
+    }
+    out[offset + 11] = bag_counts[0] as f32 / 4.0; // White
+    out[offset + 12] = bag_counts[1] as f32 / 4.0; // Blue
+    out[offset + 13] = bag_counts[2] as f32 / 4.0; // Green
+    out[offset + 14] = bag_counts[3] as f32 / 4.0; // Red
+    out[offset + 15] = bag_counts[4] as f32 / 4.0; // Black
+    out[offset + 16] = bag_counts[5] as f32 / 2.0; // Pearl
+    out[offset + 17] = bag_counts[6] as f32 / 3.0; // Gold
+
+    // 18: 棋盘剩余标记数 / 25.0
+    out[offset + 18] = state.board.count_tokens() as f32 / 25.0;
+    // 19: 全局回合数归一化 turn_number / 80.0
+    out[offset + 19] = (state.turn_number as f32 / 80.0).min(1.0);
+    // 20: 额外回合标志位
+    out[offset + 20] = if state.extra_turn_granted { 1.0 } else { 0.0 };
+    // 21..23: 牌堆剩余比例
+    out[offset + 21] = state.decks[0].len() as f32 / 30.0;
+    out[offset + 22] = state.decks[1].len() as f32 / 24.0;
+    out[offset + 23] = state.decks[2].len() as f32 / 13.0;
 
     let p_act = &state.players[cp];
     let p_opp = &state.players[op];
 
-    // 17. 双方声望差归一化 [-20, 20] -> [0, 1]
-    out[offset + 17] = (p_act.total_points as f32 - p_opp.total_points as f32 + 20.0) / 40.0;
-    // 18. 双方皇冠差归一化 [-10, 10] -> [0, 1]
-    out[offset + 18] = (p_act.total_crowns as f32 - p_opp.total_crowns as f32 + 10.0) / 20.0;
-    // 19. 单色最大分差归一化 [-10, 10] -> [0, 1]
+    // 24..27: 双方胜负指标差值归一化 (分差、皇冠差、单色差、特权差)
+    out[offset + 24] = (p_act.total_points as f32 - p_opp.total_points as f32 + 20.0) / 40.0;
+    out[offset + 25] = (p_act.total_crowns as f32 - p_opp.total_crowns as f32 + 10.0) / 20.0;
     let cp_max_c = p_act.color_points.iter().copied().max().unwrap_or(0);
     let op_max_c = p_opp.color_points.iter().copied().max().unwrap_or(0);
-    out[offset + 19] = (cp_max_c as f32 - op_max_c as f32 + 10.0) / 20.0;
-    // 20. 特权差归一化 [-3, 3] -> [0, 1]
-    out[offset + 20] = (p_act.privileges as f32 - p_opp.privileges as f32 + 3.0) / 6.0;
+    out[offset + 26] = (cp_max_c as f32 - op_max_c as f32 + 10.0) / 20.0;
+    out[offset + 27] = (p_act.privileges as f32 - p_opp.privileges as f32 + 3.0) / 6.0;
 
-    // 21. 我方手牌余量 (10 - total) / 10.0
-    out[offset + 21] = ((10 - (p_act.tokens.total() as isize)).clamp(0, 10) as f32) / 10.0;
-    // 22. 对手手牌余量 (10 - total) / 10.0
-    out[offset + 22] = ((10 - (p_opp.tokens.total() as isize)).clamp(0, 10) as f32) / 10.0;
+    // 28..29: 双方手牌余量 max(0, 10 - total) / 10.0
+    out[offset + 28] = ((10.0 - p_act.tokens.total() as f32).max(0.0)) / 10.0;
+    out[offset + 29] = ((10.0 - p_opp.tokens.total() as f32).max(0.0)) / 10.0;
 
-    // 23..=28. 双方胜利距离 (Gap to Win)
+    // 30..31: 双方手牌超限数量 max(0, total - 10) / 5.0
+    out[offset + 30] = ((p_act.tokens.total() as f32 - 10.0).max(0.0)) / 5.0;
+    out[offset + 31] = ((p_opp.tokens.total() as f32 - 10.0).max(0.0)) / 5.0;
+
+    // 32..37: 双方胜利距离 (Gap to Win: 分数/20, 皇冠/10, 单色/10)
     let cp_pts_gap = (20.0 - p_act.total_points as f32).max(0.0) / 20.0;
     let op_pts_gap = (20.0 - p_opp.total_points as f32).max(0.0) / 20.0;
     let cp_crown_gap = (10.0 - p_act.total_crowns as f32).max(0.0) / 10.0;
@@ -271,31 +259,29 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     let cp_col_gap = (10.0 - cp_max_c as f32).max(0.0) / 10.0;
     let op_col_gap = (10.0 - op_max_c as f32).max(0.0) / 10.0;
 
-    out[offset + 23] = cp_pts_gap;
-    out[offset + 24] = op_pts_gap;
-    out[offset + 25] = cp_crown_gap;
-    out[offset + 26] = op_crown_gap;
-    out[offset + 27] = cp_col_gap;
-    out[offset + 28] = op_col_gap;
+    out[offset + 32] = cp_pts_gap;
+    out[offset + 33] = op_pts_gap;
+    out[offset + 34] = cp_crown_gap;
+    out[offset + 35] = op_crown_gap;
+    out[offset + 36] = cp_col_gap;
+    out[offset + 37] = op_col_gap;
 
-    // 29..=30. 双方离胜利的最小归一化差距
+    // 38..39: 双方离胜利的最小归一化差距
     let cp_min_gap = cp_pts_gap.min(cp_crown_gap).min(cp_col_gap);
     let op_min_gap = op_pts_gap.min(op_crown_gap).min(op_col_gap);
-    out[offset + 29] = cp_min_gap;
-    out[offset + 30] = op_min_gap;
+    out[offset + 38] = cp_min_gap;
+    out[offset + 39] = op_min_gap;
 
-    // 31. 我方当前是否存在即刻买卡斩杀动作 (Lethal)
-    // 高效轻量判定金字塔与自身所有预留手牌，避免在特征编码层高频调用昂贵的 RuleEngine::legal_actions
+    // 40: 我方当前是否存在即刻买卡斩杀动作 (Lethal)
     let cp_can_win_now = state
         .pyramid
         .iter()
         .flat_map(|row| row.iter())
         .chain(p_act.reserved_cards.iter().map(|rc| &rc.card))
         .any(|c| can_player_win_with_card(p_act, c));
-    out[offset + 31] = if cp_can_win_now { 1.0 } else { 0.0 };
+    out[offset + 40] = if cp_can_win_now { 1.0 } else { 0.0 };
 
-    // 32. 对手当前场上/公开手牌是否已经有买得起的致胜牌 (Opponent Lethal Threat)
-    // 严格遵守 POMDP 部分可观测设计：仅检查金字塔公开牌及对手明牌预留（is_public == true），杜绝暗抽私密手牌泄露
+    // 41: 对手当前场上/公开手牌是否已经有买得起的致胜牌 (Opponent Lethal Threat)
     let op_can_win_now = state
         .pyramid
         .iter()
@@ -308,7 +294,13 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
                 .map(|rc| &rc.card),
         )
         .any(|c| can_player_win_with_card(p_opp, c));
-    out[offset + 32] = if op_can_win_now { 1.0 } else { 0.0 };
+    out[offset + 41] = if op_can_win_now { 1.0 } else { 0.0 };
+
+    // 42: 本回合是否已补充棋盘 replenished_this_turn (1.0 或 0.0)
+    out[offset + 42] = if state.replenished_this_turn { 1.0 } else { 0.0 };
+
+    // 43: 本回合已消耗特权数 privileges_used_this_turn / 3.0
+    out[offset + 43] = (state.privileges_used_this_turn as f32 / 3.0).min(1.0);
 
     out
 }
@@ -388,6 +380,14 @@ fn encode_card_slot(
             0.0
         };
     }
+}
+
+/// 对手盲抽暗牌编码 (M4 POMDP 设计: 仅暴露 present 和公开可见的 tier，其余私密属性全部掩蔽为 0.0)
+#[inline]
+fn encode_opponent_hidden_slot(slice: &mut [f32], tier: CardTier) {
+    slice[0] = 1.0; // present: 明确知晓对手此槽位持有暗牌
+    slice[1 + tier.index()] = 1.0; // tier: 盲抽来源牌堆等级是公开操作 (Tier 1/2/3)
+    // slice[4..27] 保持 0.0 (费用、点数、皇冠、加成、技能及支付能力严格掩蔽)
 }
 
 /// 动作空间映射：将高层 Action 映射到 [0, 248] 离散 ID

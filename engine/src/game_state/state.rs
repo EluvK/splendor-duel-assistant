@@ -24,6 +24,8 @@ pub struct GameState {
     pub turn_number: u32,
     pub extra_turn_granted: bool,
     pub winner: Option<(usize, VictoryReason)>,
+    pub replenished_this_turn: bool,
+    pub privileges_used_this_turn: u8,
     pub rng_seed: u64,
     pub rng_counter: u64,
 }
@@ -93,6 +95,8 @@ impl GameState {
             turn_number: 1,
             extra_turn_granted: false,
             winner: None,
+            replenished_this_turn: false,
+            privileges_used_this_turn: 0,
             rng_seed: seed,
             rng_counter: 0,
         }

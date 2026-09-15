@@ -117,7 +117,7 @@ class ModelInferenceService:
         mask_t = torch.tensor(mask_list, dtype=torch.bool, device=self.device).unsqueeze(0)
 
         with self._lock:
-            logits, value = self.net(obs_t)
+            logits, value, _turns, _reasons = self.net(obs_t)
             masked_logits = self.net.mask_logits(logits, mask_t)
 
             if temperature <= 0.01:

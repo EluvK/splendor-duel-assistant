@@ -29,15 +29,17 @@ class ResidualBlock2D(nn.Module):
 class SplendorNet(nn.Module):
     """璀璨宝石：对决 Policy-Value 神经网络.
 
-    输入: OBS_SIZE (742) 维扁平状态观察向量
+    输入: OBS_SIZE (879) 维扁平状态观察向量
       - 前 200 维拆解为 (B, 8, 5, 5) 棋盘空间网格，经由 2D ResNet + 1x1 Conv 提取全分辨率 3 连相邻几何特征
-      - 后 542 维经由多层感知机 (MLP) 提取卡牌市场、双方手牌、胜负紧迫度与相对博弈差值特征
+      - 后 679 维经由多层感知机 (MLP) 提取卡牌市场、双方手牌、胜负紧迫度与相对博弈差值特征
     输出:
       - policy_logits: [B, 288] 动作概率对数
-      - value: [B, 1] 行动方带时间衰减的终局估值预测 ([-1.0, 1.0])
+      - win_value: [B, 1] 纯胜率预期 ([-1.0, 1.0])
+      - turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
+      - reason_logits: [B, 3] 终局多标签独立胜因 Logits ([20_pts, 10_crowns, 10_color])
     """
 
-    OBS_SIZE = SplendorDuelEnv.OBS_SIZE       # 742
+    OBS_SIZE = SplendorDuelEnv.OBS_SIZE       # 879
     ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE # 288
     BOARD_CHANNELS = 8
     BOARD_GRID = 5
@@ -116,12 +118,12 @@ class SplendorNet(nn.Module):
             nn.Sigmoid(),
         )
 
-        # (4) Reason Head: 终局胜因 4 分类 Logits [20_pts, 10_crowns, 10_color, draw]
+        # (4) Reason Head: 终局胜因 3 分类独立多标签 Logits [20_pts, 10_crowns, 10_color]
         self.reason_head = nn.Sequential(
             nn.Linear(fusion_hidden, 128),
             nn.LayerNorm(128),
             nn.ReLU(),
-            nn.Linear(128, 4),
+            nn.Linear(128, 3),
         )
 
     def forward(
@@ -136,7 +138,7 @@ class SplendorNet(nn.Module):
             policy_logits: [B, 288] 未掩码动作 logits
             win_value: [B, 1] 纯胜率期望 ([-1.0, 1.0])
             turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
-            reason_logits: [B, 4] 终局胜因 4 分类 logits
+            reason_logits: [B, 3] 终局胜因 3 维独立多标签 logits
         """
         if obs.dim() == 1:
             obs = obs.unsqueeze(0)
@@ -192,7 +194,7 @@ class SplendorNet(nn.Module):
             probs: [B, 288] 合法动作概率分布
             win_value: [B, 1] 纯胜率预期 ([-1.0, 1.0])
             turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
-            reason_logits: [B, 4] 终局胜因 Logits
+            reason_logits: [B, 3] 终局胜因 Logits
         """
         policy_logits, win_value, turns_value, reason_logits = self.forward(obs)
         if mask is not None:

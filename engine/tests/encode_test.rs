@@ -105,38 +105,38 @@ fn test_reserved_cards_anti_leakage_and_encoding() {
     game.current_player = 0;
     let obs = encode_state(&game);
 
-    // P0 (自己) 槽位 0: [649..655]
-    // 应该编码: present=1.0, is_public=0.0 (因为是暗抽), points=2/6, crowns=1/3, color=Red(3)/5, can_afford=1.0
-    let p0_slot0 = &obs[649..655];
+    // P0 (自己) 槽位 0: [649..676] (27 维标准卡牌槽位)
+    // 应该编码: present=1.0, tier1=1.0, points=2/6, crowns=1/3, bonus_color=Red(15)=1.0, can_afford=1.0
+    let p0_slot0 = &obs[649..676];
     assert_eq!(p0_slot0[0], 1.0, "P0 槽位 0 present 应为 1.0");
-    assert_eq!(p0_slot0[1], 0.0, "P0 槽位 0 暗抽 is_public 应为 0.0");
-    assert!((p0_slot0[2] - 2.0 / 6.0).abs() < 1e-5, "P0 槽位 0 点数自己可见");
-    assert!((p0_slot0[3] - 1.0 / 3.0).abs() < 1e-5, "P0 槽位 0 皇冠自己可见");
-    assert!((p0_slot0[4] - 3.0 / 5.0).abs() < 1e-5, "P0 槽位 0 颜色自己可见");
-    assert_eq!(p0_slot0[5], 1.0, "P0 槽位 0 can_afford 自己可见且能买得起");
+    assert_eq!(p0_slot0[1], 1.0, "P0 槽位 0 Tier 1 应为 1.0");
+    assert!((p0_slot0[4] - 2.0 / 6.0).abs() < 1e-5, "P0 槽位 0 点数自己可见");
+    assert!((p0_slot0[5] - 1.0 / 3.0).abs() < 1e-5, "P0 槽位 0 皇冠自己可见");
+    assert_eq!(p0_slot0[15], 1.0, "P0 槽位 0 红色 Bonus 颜色自己可见");
+    assert_eq!(p0_slot0[26], 1.0, "P0 槽位 0 can_afford 自己可见且能买得起");
 
-    // P1 (对手) 槽位 0 (盲抽暗牌): [691..697]
-    // 必须掩蔽所有私有信息！
-    // present=1.0, is_public=0.0, 其余字段全部为 0.0
-    let p1_slot0 = &obs[691..697];
+    // P1 (对手) 槽位 0 (盲抽暗牌): [754..781]
+    // 必须掩蔽私有信息，但保留公开的 present 与 tier (M4 POMDP 设计)
+    let p1_slot0 = &obs[754..781];
     assert_eq!(p1_slot0[0], 1.0, "P1 槽位 0 present 应为 1.0");
-    assert_eq!(p1_slot0[1], 0.0, "P1 槽位 0 暗抽 is_public 应为 0.0");
-    assert_eq!(p1_slot0[2], 0.0, "P1 暗抽卡点数对 P0 必须完全保密 (0.0)");
-    assert_eq!(p1_slot0[3], 0.0, "P1 暗抽卡皇冠对 P0 必须完全保密 (0.0)");
-    assert_eq!(p1_slot0[4], 0.0, "P1 暗抽卡颜色对 P0 必须完全保密 (0.0)");
-    assert_eq!(p1_slot0[5], 0.0, "P1 暗抽卡支付能力对 P0 必须完全保密 (0.0)");
+    assert_eq!(p1_slot0[1], 1.0, "P1 槽位 0 盲抽牌堆等级 Tier 1 公开可见 (1.0)");
+    assert_eq!(p1_slot0[2], 0.0, "P1 暗抽卡 Tier 2 应为 0.0");
+    assert_eq!(p1_slot0[3], 0.0, "P1 暗抽卡 Tier 3 应为 0.0");
+    for (i, &val) in p1_slot0[4..27].iter().enumerate() {
+        assert_eq!(val, 0.0, "P1 暗抽卡私密属性 (偏移 {}) 必须严格掩蔽为 0.0", 4 + i);
+    }
 
-    // P1 (对手) 槽位 1 (金字塔明牌公开预留): [697..703]
-    // present=1.0, is_public=1.0, points=3/6, crowns=2/3, color=Blue(1)/5, can_afford=0.0 (买不起)
-    let p1_slot1 = &obs[697..703];
+    // P1 (对手) 槽位 1 (金字塔明牌公开预留): [781..808]
+    // present=1.0, tier2=1.0, points=3/6, crowns=2/3, color=Blue(13)=1.0, can_afford=0.0 (买不起)
+    let p1_slot1 = &obs[781..808];
     assert_eq!(p1_slot1[0], 1.0, "P1 槽位 1 present 应为 1.0");
-    assert_eq!(p1_slot1[1], 1.0, "P1 槽位 1 明牌预留 is_public 应为 1.0");
-    assert!((p1_slot1[2] - 3.0 / 6.0).abs() < 1e-5, "P1 公开牌点数双方可见");
-    assert!((p1_slot1[3] - 2.0 / 3.0).abs() < 1e-5, "P1 公开牌皇冠双方可见");
-    assert!((p1_slot1[4] - 1.0 / 5.0).abs() < 1e-5, "P1 公开牌颜色双方可见");
-    assert_eq!(p1_slot1[5], 0.0, "P1 买不起该昂贵牌，can_afford 应为 0.0 (且反映的是对手支付能力)");
+    assert_eq!(p1_slot1[2], 1.0, "P1 槽位 1 Tier 2 应为 1.0");
+    assert!((p1_slot1[4] - 3.0 / 6.0).abs() < 1e-5, "P1 公开牌点数双方可见");
+    assert!((p1_slot1[5] - 2.0 / 3.0).abs() < 1e-5, "P1 公开牌皇冠双方可见");
+    assert_eq!(p1_slot1[13], 1.0, "P1 公开牌蓝色 Bonus 颜色双方可见");
+    assert_eq!(p1_slot1[26], 0.0, "P1 买不起该昂贵牌，can_afford 应为 0.0 (且反映的是对手支付能力)");
 
-    // 特征 32: op_has_winning_purchase [741]
+    // 特征 41: op_has_winning_purchase [835 + 41 = 876]
     // P1 拥有一张免费直接斩杀卡 (secret_card 若为 20 分)，但由于是暗抽，P0 绝不能知晓！
     let mut lethal_secret_card = secret_card;
     lethal_secret_card.points = 20; // 满足 20 分胜负条件
@@ -147,18 +147,18 @@ fn test_reserved_cards_anti_leakage_and_encoding() {
     }
     let obs_secret = encode_state(&game);
     assert_eq!(
-        obs_secret[709 + 32],
+        obs_secret[835 + 41],
         0.0,
-        "对手暗抽即使持有斩杀牌，特征 32 也必须为 0.0 (严禁 POMDP 私密信息泄露)"
+        "对手暗抽即使持有斩杀牌，特征 41 也必须为 0.0 (严禁 POMDP 私密信息泄露)"
     );
 
-    // 反之，若该斩杀牌公开 (is_public: true)，特征 32 应感知到对手斩杀威胁 (1.0)
+    // 反之，若该斩杀牌公开 (is_public: true)，特征 41 应感知到对手斩杀威胁 (1.0)
     game.players[1].reserved_cards[0] = ReservedCard::new(lethal_secret_card, true);
     let obs_public = encode_state(&game);
     assert_eq!(
-        obs_public[709 + 32],
+        obs_public[835 + 41],
         1.0,
-        "对手若持有公开可买的斩杀牌，特征 32 应为 1.0"
+        "对手若持有公开可买的斩杀牌，特征 41 应为 1.0"
     );
 }
 

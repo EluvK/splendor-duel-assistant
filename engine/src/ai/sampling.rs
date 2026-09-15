@@ -18,11 +18,12 @@ pub const MAX_GAME_STEPS: usize = 400;
 
 /// 单局紧凑对弈轨迹
 struct SingleGameTrajectory {
-    obs: Vec<f32>,     // steps * OBS_SIZE
-    masks: Vec<u8>,    // steps * ACTION_SIZE (0 或 1)
-    actions: Vec<i32>, // steps (0..ACTION_SIZE-1)
-    values: Vec<f32>,  // steps * 2: [win_value, turns_value]
-    reasons: Vec<i32>, // steps: [0=20_pts, 1=10_crowns, 2=10_color, 3=draw]
+    obs: Vec<f32>,       // steps * OBS_SIZE
+    masks: Vec<u8>,      // steps * ACTION_SIZE (0 或 1)
+    policies: Vec<f32>,  // steps * ACTION_SIZE (288 维软概率分布)
+    actions: Vec<i32>,   // steps (0..ACTION_SIZE-1)
+    values: Vec<f32>,    // steps * 2: [win_value, turns_value]
+    reasons: Vec<f32>,   // steps * 3: 多标签独立胜因 [20_pts, 10_crowns, 10_color]
     steps: usize,
 }
 
@@ -31,39 +32,45 @@ pub struct CompactBatchSamples {
     pub total_steps: usize,
     pub obs: Vec<f32>,
     pub masks: Vec<u8>,
+    pub policies: Vec<f32>,
     pub actions: Vec<i32>,
     pub values: Vec<f32>,
-    pub reasons: Vec<i32>,
+    pub reasons: Vec<f32>,
 }
 
-#[inline]
-fn victory_reason_to_id(reason_opt: Option<VictoryReason>) -> i32 {
-    match reason_opt {
-        Some(VictoryReason::TwentyPrestigePoints) => 0,
-        Some(VictoryReason::TenCrowns) => 1,
-        Some(VictoryReason::TenPointsSameColor(_)) => 2,
-        None => 3, // 超时平局 / 无胜因
-    }
-}
-
-/// 计算多任务目标标签 (纯胜率期望、归一化剩余轮数、终局胜因类别)
+/// 计算多任务目标标签 (纯胜率期望、归一化剩余轮数、终局多标签独立胜因)
 #[inline]
 fn compute_multi_target_labels(
+    game: &GameState,
     raw_players: &[usize],
     raw_turns: &[u32],
     winner_opt: Option<usize>,
-    reason_opt: Option<VictoryReason>,
     final_turn: u32,
-) -> (Vec<f32>, Vec<i32>) {
+) -> (Vec<f32>, Vec<f32>) {
     let steps = raw_players.len();
     let mut values = Vec::with_capacity(steps * 2);
-    let mut reasons = Vec::with_capacity(steps);
-    let reason_id = victory_reason_to_id(reason_opt);
+    let mut reasons = Vec::with_capacity(steps * 3);
+
+    // 计算终局多标签胜因 [20_points, 10_crowns, 10_color]
+    let mut reason_multi_hot = [0.0f32; 3];
+    if let Some(winner) = winner_opt {
+        let p_win = &game.players[winner];
+        if p_win.total_points >= 20 {
+            reason_multi_hot[0] = 1.0;
+        }
+        if p_win.total_crowns >= 10 {
+            reason_multi_hot[1] = 1.0;
+        }
+        let max_color = p_win.color_points.iter().copied().max().unwrap_or(0);
+        if max_color >= 10 {
+            reason_multi_hot[2] = 1.0;
+        }
+    }
 
     for i in 0..steps {
         let p = raw_players[i];
         let turn = raw_turns[i];
-        // 1. 纯胜率期望 (不带任何时间折现，消除苟活负折扣漏洞)
+        // 1. 纯胜率期望 (超时平局双败惩罚 -1.0，彻底消除苟活拖延漏洞)
         let win_target = match winner_opt {
             Some(winner) => {
                 if p == winner {
@@ -72,7 +79,7 @@ fn compute_multi_target_labels(
                     -1.0
                 }
             }
-            None => 0.0, // 超时平局
+            None => -1.0, // 超时双败惩罚
         };
         // 2. 剩余对局轮数归一化 (当前步距离终局的回合数 / 80.0，范围 [0.0, 1.0])
         let rem_turns = final_turn.saturating_sub(turn) as f32;
@@ -80,7 +87,7 @@ fn compute_multi_target_labels(
 
         values.push(win_target);
         values.push(turns_target);
-        reasons.push(reason_id);
+        reasons.extend_from_slice(&reason_multi_hot);
     }
     (values, reasons)
 }
@@ -91,6 +98,7 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
 
     let mut raw_obs = Vec::with_capacity(200 * OBS_SIZE);
     let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
+    let mut raw_policies = Vec::with_capacity(200 * ACTION_SIZE);
     let mut raw_actions = Vec::with_capacity(200);
     let mut raw_players = Vec::with_capacity(200);
     let mut raw_turns = Vec::with_capacity(200);
@@ -117,10 +125,14 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
             return None;
         }
 
+        let mut policy_vec = [0.0f32; ACTION_SIZE];
+        policy_vec[action_id] = 1.0;
+
         raw_obs.extend_from_slice(&obs);
         for &b in mask.iter() {
             raw_masks.push(if b { 1 } else { 0 });
         }
+        raw_policies.extend_from_slice(&policy_vec);
         raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
         raw_turns.push(game.turn_number);
@@ -136,19 +148,19 @@ fn simulate_single_heuristic_game(seed: u64) -> Option<SingleGameTrajectory> {
     }
 
     let winner_opt = game.winner.map(|(w, _)| w);
-    let reason_opt = game.winner.map(|(_, r)| r);
     let final_turn = game.turn_number;
     let (values, reasons) = compute_multi_target_labels(
+        &game,
         &raw_players,
         &raw_turns,
         winner_opt,
-        reason_opt,
         final_turn,
     );
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
+        policies: raw_policies,
         actions: raw_actions,
         values,
         reasons,
@@ -167,13 +179,15 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
 
     let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
     let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
     let mut all_values = Vec::with_capacity(total_steps * 2);
-    let mut all_reasons = Vec::with_capacity(total_steps);
+    let mut all_reasons = Vec::with_capacity(total_steps * 3);
 
     for t in trajectories {
         all_obs.extend(t.obs);
         all_masks.extend(t.masks);
+        all_policies.extend(t.policies);
         all_actions.extend(t.actions);
         all_values.extend(t.values);
         all_reasons.extend(t.reasons);
@@ -183,6 +197,7 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
         total_steps,
         obs: all_obs,
         masks: all_masks,
+        policies: all_policies,
         actions: all_actions,
         values: all_values,
         reasons: all_reasons,
@@ -203,6 +218,7 @@ fn simulate_single_mcts_game(
 
     let mut raw_obs = Vec::with_capacity(200 * OBS_SIZE);
     let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
+    let mut raw_policies = Vec::with_capacity(200 * ACTION_SIZE);
     let mut raw_actions = Vec::with_capacity(200);
     let mut raw_players = Vec::with_capacity(200);
     let mut raw_turns = Vec::with_capacity(200);
@@ -230,7 +246,7 @@ fn simulate_single_mcts_game(
             (false, temp_final)
         };
 
-        let action = mcts.search_with_exploration(
+        let (action, policy_vec) = mcts.search_with_exploration_policy(
             &game,
             num_sims,
             add_noise,
@@ -248,6 +264,7 @@ fn simulate_single_mcts_game(
         for &b in mask.iter() {
             raw_masks.push(if b { 1 } else { 0 });
         }
+        raw_policies.extend_from_slice(&policy_vec);
         raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
         raw_turns.push(game.turn_number);
@@ -263,19 +280,19 @@ fn simulate_single_mcts_game(
     }
 
     let winner_opt = game.winner.map(|(w, _)| w);
-    let reason_opt = game.winner.map(|(_, r)| r);
     let final_turn = game.turn_number;
     let (values, reasons) = compute_multi_target_labels(
+        &game,
         &raw_players,
         &raw_turns,
         winner_opt,
-        reason_opt,
         final_turn,
     );
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
+        policies: raw_policies,
         actions: raw_actions,
         values,
         reasons,
@@ -313,13 +330,15 @@ pub fn sample_mcts_games_parallel_with_config(
 
     let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
     let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
     let mut all_values = Vec::with_capacity(total_steps * 2);
-    let mut all_reasons = Vec::with_capacity(total_steps);
+    let mut all_reasons = Vec::with_capacity(total_steps * 3);
 
     for t in trajectories {
         all_obs.extend(t.obs);
         all_masks.extend(t.masks);
+        all_policies.extend(t.policies);
         all_actions.extend(t.actions);
         all_values.extend(t.values);
         all_reasons.extend(t.reasons);
@@ -329,6 +348,7 @@ pub fn sample_mcts_games_parallel_with_config(
         total_steps,
         obs: all_obs,
         masks: all_masks,
+        policies: all_policies,
         actions: all_actions,
         values: all_values,
         reasons: all_reasons,
@@ -350,6 +370,7 @@ fn simulate_single_neural_mcts_game(
 
     let mut raw_obs = Vec::with_capacity(200 * OBS_SIZE);
     let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
+    let mut raw_policies = Vec::with_capacity(200 * ACTION_SIZE);
     let mut raw_actions = Vec::with_capacity(200);
     let mut raw_players = Vec::with_capacity(200);
     let mut raw_turns = Vec::with_capacity(200);
@@ -376,7 +397,7 @@ fn simulate_single_neural_mcts_game(
             (false, temp_final)
         };
 
-        let action = mcts.search_neural_with_exploration_and_legals(
+        let (action, policy_vec) = mcts.search_neural_policy_with_legals(
             &game,
             legals,
             evaluator,
@@ -396,6 +417,7 @@ fn simulate_single_neural_mcts_game(
         for &b in mask.iter() {
             raw_masks.push(if b { 1 } else { 0 });
         }
+        raw_policies.extend_from_slice(&policy_vec);
         raw_actions.push(action_id as i32);
         raw_players.push(acting_player);
         raw_turns.push(game.turn_number);
@@ -411,19 +433,19 @@ fn simulate_single_neural_mcts_game(
     }
 
     let winner_opt = game.winner.map(|(w, _)| w);
-    let reason_opt = game.winner.map(|(_, r)| r);
     let final_turn = game.turn_number;
     let (values, reasons) = compute_multi_target_labels(
+        &game,
         &raw_players,
         &raw_turns,
         winner_opt,
-        reason_opt,
         final_turn,
     );
 
     Some(SingleGameTrajectory {
         obs: raw_obs,
         masks: raw_masks,
+        policies: raw_policies,
         actions: raw_actions,
         values,
         reasons,
@@ -465,13 +487,15 @@ pub fn sample_neural_mcts_games_parallel(
 
     let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
     let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
     let mut all_values = Vec::with_capacity(total_steps * 2);
-    let mut all_reasons = Vec::with_capacity(total_steps);
+    let mut all_reasons = Vec::with_capacity(total_steps * 3);
 
     for t in trajectories {
         all_obs.extend(t.obs);
         all_masks.extend(t.masks);
+        all_policies.extend(t.policies);
         all_actions.extend(t.actions);
         all_values.extend(t.values);
         all_reasons.extend(t.reasons);
@@ -481,6 +505,7 @@ pub fn sample_neural_mcts_games_parallel(
         total_steps,
         obs: all_obs,
         masks: all_masks,
+        policies: all_policies,
         actions: all_actions,
         values: all_values,
         reasons: all_reasons,

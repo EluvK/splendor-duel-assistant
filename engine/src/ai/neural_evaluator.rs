@@ -11,14 +11,23 @@ pub type RunnableModel = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact
 pub struct NeuralPrediction {
     pub win_value: f32,        // 纯胜率预期 [-1.0, 1.0]
     pub turns_value: f32,      // 归一化剩余轮数预期 [0.0, 1.0] (0..80 轮)
-    pub reason_probs: [f32; 4], // 胜因概率分布: [20_points, 10_crowns, 10_color, draw]
+    pub reason_probs: [f32; 3], // 多标签独立胜因概率: [20_points, 10_crowns, 10_color]
 }
 
 impl NeuralPrediction {
-    /// 计算用于 MCTS 驱动的综合搜索价值 (结合时间敏感度惩罚)
+    /// 计算用于 MCTS 驱动的综合搜索价值 (结合时间敏感度惩罚与逆风拖延激励)
     #[inline]
     pub fn combined_value(&self, lambda_turns: f32) -> f32 {
-        self.win_value - lambda_turns * self.turns_value
+        if self.win_value > 0.05 {
+            // 优势局：剩余步数越少，速胜奖励越高 [win_value, win_value + lambda]
+            self.win_value + lambda_turns * (1.0 - self.turns_value)
+        } else if self.win_value < -0.05 {
+            // 劣势局：剩余步数越多，拖延奖励越高 (使 -1.0 趋向 -1.0 + lambda)
+            self.win_value + lambda_turns * self.turns_value
+        } else {
+            // 胶着均势局：以纯胜率为准，不施加步数偏置
+            self.win_value
+        }
     }
 }
 
@@ -95,23 +104,15 @@ impl TractNeuralEvaluator {
             .map_err(|e| format!("Failed to access turns_value slice: {e}"))?;
         let turns_value = turns_slice.first().copied().unwrap_or(0.5);
 
-        // outputs[3]: reason_logits [1, 4]
+        // outputs[3]: reason_logits [1, 3]
         let reason_slice = outputs[3]
             .as_slice::<f32>()
             .map_err(|e| format!("Failed to access reason_logits slice: {e}"))?;
-        let mut reason_probs = [0.25f32; 4];
-        if reason_slice.len() >= 4 {
-            let max_logit = reason_slice[..4].iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            let mut sum_exp = 0.0f32;
-            for (i, &l) in reason_slice[..4].iter().enumerate() {
-                let exp_val = (l - max_logit).exp();
-                reason_probs[i] = exp_val;
-                sum_exp += exp_val;
-            }
-            if sum_exp > 1e-6 {
-                for p in reason_probs.iter_mut() {
-                    *p /= sum_exp;
-                }
+        let mut reason_probs = [0.0f32; 3];
+        if reason_slice.len() >= 3 {
+            for i in 0..3 {
+                // Sigmoid 映射为独立多标签胜因概率
+                reason_probs[i] = 1.0 / (1.0 + (-reason_slice[i]).exp());
             }
         }
 

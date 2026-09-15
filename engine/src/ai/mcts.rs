@@ -97,13 +97,41 @@ impl RustMCTS {
         temperature: f32,
         rng: &mut R,
     ) -> Option<Action> {
+        self.search_with_exploration_policy(
+            state,
+            num_simulations,
+            add_dirichlet,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temperature,
+            rng,
+        )
+        .map(|(a, _)| a)
+    }
+
+    /// 执行带启发式评估的 MCTS 搜索并返回选择的动作以及完整的 288 维访问频次软策略分布
+    pub fn search_with_exploration_policy<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<(Action, [f32; ACTION_SIZE])> {
         let legals = RuleEngine::legal_actions(state);
         if legals.is_empty() {
             return None;
         }
         // 零开销快捷路径：单一动作免搜索直接返回
         if legals.len() == 1 {
-            return Some(legals[0].clone());
+            let mut policy = [0.0f32; ACTION_SIZE];
+            let id = action_to_id(&legals[0]);
+            if id < ACTION_SIZE {
+                policy[id] = 1.0;
+            }
+            return Some((legals[0].clone(), policy));
         }
 
         let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
@@ -217,36 +245,62 @@ impl RustMCTS {
             }
         }
 
-        // 根据温度参数进行动作选取
+        Self::extract_policy_distribution(&nodes[root_idx].edges, temperature, rng)
+    }
+
+    /// 从根节点分支访问量中提取完整的 288 维软策略分布并进行采样
+    #[inline]
+    fn extract_policy_distribution<R: Rng + ?Sized>(
+        edges: &[Edge],
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<(Action, [f32; ACTION_SIZE])> {
+        if edges.is_empty() {
+            return None;
+        }
+        let mut policy = [0.0f32; ACTION_SIZE];
         if temperature <= 0.01 {
-            // 贪婪选择根节点下访问次数最多 (最稳健) 的动作
-            let best_edge = nodes[root_idx]
-                .edges
-                .iter()
-                .max_by_key(|e| e.visits);
-            best_edge.map(|e| e.action.clone())
+            let best_edge = edges.iter().max_by_key(|e| e.visits)?;
+            let best_id = action_to_id(&best_edge.action);
+            if best_id < ACTION_SIZE {
+                policy[best_id] = 1.0;
+            }
+            Some((best_edge.action.clone(), policy))
         } else {
-            // 温度轮盘赌采样 (前 10~15 步破除死板套路)
-            let root_edges = &nodes[root_idx].edges;
             let inv_temp = 1.0 / temperature;
-            let mut exp_visits = Vec::with_capacity(root_edges.len());
+            let mut exp_visits = Vec::with_capacity(edges.len());
             let mut sum_v = 0.0f32;
-            for edge in root_edges.iter() {
+            for edge in edges.iter() {
                 let v = (edge.visits as f32).powf(inv_temp);
                 exp_visits.push(v);
                 sum_v += v;
             }
             if sum_v <= 1e-6 {
-                return nodes[root_idx].edges.first().map(|e| e.action.clone());
+                let first_edge = edges.first()?;
+                let first_id = action_to_id(&first_edge.action);
+                if first_id < ACTION_SIZE {
+                    policy[first_id] = 1.0;
+                }
+                return Some((first_edge.action.clone(), policy));
             }
+
+            for (i, edge) in edges.iter().enumerate() {
+                let id = action_to_id(&edge.action);
+                if id < ACTION_SIZE {
+                    policy[id] = exp_visits[i] / sum_v;
+                }
+            }
+
             let mut pick = rng.random_range(0.0..sum_v);
+            let mut chosen_action = edges.last().unwrap().action.clone();
             for (i, &v) in exp_visits.iter().enumerate() {
                 if pick <= v {
-                    return Some(root_edges[i].action.clone());
+                    chosen_action = edges[i].action.clone();
+                    break;
                 }
                 pick -= v;
             }
-            root_edges.last().map(|e| e.action.clone())
+            Some((chosen_action, policy))
         }
     }
 
@@ -289,11 +343,43 @@ impl RustMCTS {
         temperature: f32,
         rng: &mut R,
     ) -> Option<Action> {
+        self.search_neural_policy_with_legals(
+            state,
+            legals,
+            evaluator,
+            num_simulations,
+            add_dirichlet,
+            dirichlet_alpha,
+            dirichlet_eps,
+            temperature,
+            rng,
+        )
+        .map(|(a, _)| a)
+    }
+
+    /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索并返回选择的动作以及完整的 288 维软策略分布
+    pub fn search_neural_policy_with_legals<R: Rng + ?Sized>(
+        &self,
+        state: &GameState,
+        legals: Vec<Action>,
+        evaluator: &TractNeuralEvaluator,
+        num_simulations: usize,
+        add_dirichlet: bool,
+        dirichlet_alpha: f32,
+        dirichlet_eps: f32,
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<(Action, [f32; ACTION_SIZE])> {
         if legals.is_empty() {
             return None;
         }
         if legals.len() == 1 {
-            return Some(legals[0].clone());
+            let mut policy = [0.0f32; ACTION_SIZE];
+            let id = action_to_id(&legals[0]);
+            if id < ACTION_SIZE {
+                policy[id] = 1.0;
+            }
+            return Some((legals[0].clone(), policy));
         }
 
         let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
@@ -433,32 +519,7 @@ impl RustMCTS {
             }
         }
 
-        // 根据温度参数进行动作选取
-        if temperature <= 0.01 {
-            let best_edge = nodes[root_idx].edges.iter().max_by_key(|e| e.visits);
-            best_edge.map(|e| e.action.clone())
-        } else {
-            let root_edges = &nodes[root_idx].edges;
-            let inv_temp = 1.0 / temperature;
-            let mut exp_visits = Vec::with_capacity(root_edges.len());
-            let mut sum_v = 0.0f32;
-            for edge in root_edges.iter() {
-                let v = (edge.visits as f32).powf(inv_temp);
-                exp_visits.push(v);
-                sum_v += v;
-            }
-            if sum_v <= 1e-6 {
-                return nodes[root_idx].edges.first().map(|e| e.action.clone());
-            }
-            let mut pick = rng.random_range(0.0..sum_v);
-            for (i, &v) in exp_visits.iter().enumerate() {
-                if pick <= v {
-                    return Some(root_edges[i].action.clone());
-                }
-                pick -= v;
-            }
-            root_edges.last().map(|e| e.action.clone())
-        }
+        Self::extract_policy_distribution(&nodes[root_idx].edges, temperature, rng)
     }
 
     /// 使用神经网络提供先验概率与状态估值 (带缓存支持)

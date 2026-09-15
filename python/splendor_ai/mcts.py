@@ -47,7 +47,7 @@ class PolicyNetAgent(Agent):
         obs_t = torch.tensor(env.game.observe(), dtype=torch.float32, device=self.device).unsqueeze(0)
         mask_t = torch.from_numpy(env.action_mask).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            probs, _ = self.net.predict_action_probs(obs_t, mask_t, temperature=self.temperature)
+            probs, _, _, _ = self.net.predict_action_probs(obs_t, mask_t, temperature=self.temperature)
             if self.temperature <= 1e-3:
                 return int(probs.argmax().item())
             probs_np = probs.cpu().numpy()[0]

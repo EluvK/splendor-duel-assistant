@@ -69,6 +69,7 @@ impl GameEngine {
         // 取走标记
         state.board.take(r, c);
         state.players[current_player].tokens.add(gem, 1);
+        state.privileges_used_this_turn = state.privileges_used_this_turn.saturating_add(1);
 
         Ok(())
     }
@@ -90,6 +91,7 @@ impl GameEngine {
         // 对手获得 1 特权卷轴
         let opponent = state.opponent_idx();
         state.grant_privilege_to(opponent);
+        state.replenished_this_turn = true;
 
         // 若处于 MandatoryAction（因无合法行动被迫补板），补板后留在 MandatoryAction
         // 若处于 OptionalActions，补板后留在 OptionalActions
@@ -491,6 +493,8 @@ impl GameEngine {
             state.current_player = 1 - state.current_player;
         }
 
+        state.replenished_this_turn = false;
+        state.privileges_used_this_turn = 0;
         state.turn_number += 1;
         state.phase = TurnPhase::OptionalActions;
     }

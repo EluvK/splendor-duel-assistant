@@ -8,20 +8,71 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from splendor_ai.env import SplendorDuelEnv
 
-@dataclass
+
 class CompactBatch:
     """紧凑内存样本块 (零多余对象开销，纯连续扁平数组)."""
 
-    obs: np.ndarray  # [N, OBS_SIZE] (742) float32
+    obs: np.ndarray  # [N, OBS_SIZE] (879) float32
     mask: np.ndarray  # [N, 288] bool
-    action: np.ndarray  # [N] int64 (标量整数动作 ID)
+    target_policy: np.ndarray  # [N, 288] float32 (MCTS visits 软概率分布)
     value: np.ndarray  # [N, 2] float32 (col 0: 纯胜负期望, col 1: 归一化剩余轮数)
-    reason: np.ndarray  # [N] int64 (0: 20_points, 1: 10_crowns, 2: 10_color, 3: draw)
+    reason: np.ndarray  # [N, 3] float32 多标签独立胜因 (20_pts, 10_crowns, 10_color)
+
+    def __init__(
+        self,
+        obs: np.ndarray,
+        mask: np.ndarray,
+        value: np.ndarray,
+        reason: np.ndarray,
+        target_policy: Optional[np.ndarray] = None,
+        action: Optional[np.ndarray] = None,
+    ) -> None:
+        self.obs = obs
+        self.mask = mask
+        self.value = value
+        n = len(obs)
+
+        # 适配 reason 形状 (兼容 1D 标量转为 2D 3维多标签)
+        if reason.ndim == 1:
+            r_2d = np.zeros((n, 3), dtype=np.float32)
+            for i, r in enumerate(reason):
+                if 0 <= r < 3:
+                    r_2d[i, r] = 1.0
+            self.reason = r_2d
+        elif reason.shape[1] == 4:
+            self.reason = reason[:, :3].astype(np.float32)
+        else:
+            self.reason = reason.astype(np.float32)
+
+        if target_policy is not None:
+            self.target_policy = target_policy
+            self._action = action
+        elif action is not None:
+            # 由 action 自动构造 one-hot 策略分布以保持兼容
+            tp = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+            for i, a in enumerate(action):
+                if 0 <= a < SplendorDuelEnv.ACTION_SIZE:
+                    tp[i, a] = 1.0
+            self.target_policy = tp
+            self._action = action
+        else:
+            self.target_policy = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+            self._action = None
+
+    @property
+    def action(self) -> np.ndarray:
+        """保持向后兼容的标量动作索引 (从软概率分布中提取最大概率动作)."""
+        if self._action is not None:
+            return self._action
+        if self.target_policy.ndim == 2 and len(self.target_policy) > 0:
+            return self.target_policy.argmax(axis=-1).astype(np.int64)
+        return np.zeros(len(self.obs), dtype=np.int64)
 
     @property
     def num_samples(self) -> int:
-        return len(self.action)
+        return len(self.obs)
 
     def save_npz(self, path: Path, compressed: bool = False) -> None:
         """持久化保存为分片文件 (默认未压缩以取得最大读写吞吐)."""
@@ -31,6 +82,7 @@ class CompactBatch:
             path,
             obs=self.obs,
             mask=self.mask,
+            target_policy=self.target_policy,
             action=self.action,
             value=self.value,
             reason=self.reason,
@@ -38,29 +90,56 @@ class CompactBatch:
 
     @classmethod
     def load_npz(cls, path: Path) -> "CompactBatch":
-        """从分片文件加载样本 (平滑兼容老旧单头分片)."""
+        """从分片文件加载样本 (平滑兼容老旧单动作与单标签分片)."""
         data = np.load(path)
+        obs = data["obs"]
+        mask = data["mask"]
+        n = len(obs)
+
+        if "target_policy" in data:
+            target_policy = data["target_policy"]
+        elif "action" in data:
+            actions = data["action"]
+            target_policy = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+            for i, a in enumerate(actions):
+                if 0 <= a < SplendorDuelEnv.ACTION_SIZE:
+                    target_policy[i, a] = 1.0
+        else:
+            target_policy = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+
         raw_val = data["value"]
         if raw_val.ndim == 1:
             raw_val = raw_val.reshape(-1, 1)
         if raw_val.shape[1] == 1:
-            # 兼容老单头样本：补齐剩余轮数默认 0.5
             turns_pad = np.full_like(raw_val, 0.5, dtype=np.float32)
             val_2d = np.concatenate([raw_val, turns_pad], axis=1)
         else:
             val_2d = raw_val
 
         if "reason" in data:
-            reason = data["reason"]
+            raw_reason = data["reason"]
+            if raw_reason.ndim == 1:
+                # 兼容老单标签标量 (0..3): 映射为 3 维独立标签
+                reason = np.zeros((n, 3), dtype=np.float32)
+                for i, r in enumerate(raw_reason):
+                    if 0 <= r < 3:
+                        reason[i, r] = 1.0
+            elif raw_reason.shape[1] == 4:
+                reason = raw_reason[:, :3].astype(np.float32)
+            else:
+                reason = raw_reason.astype(np.float32)
         else:
-            reason = np.zeros(len(data["action"]), dtype=np.int64)
+            reason = np.zeros((n, 3), dtype=np.float32)
+
+        act = data["action"] if "action" in data else None
 
         return cls(
-            obs=data["obs"],
-            mask=data["mask"],
-            action=data["action"],
+            obs=obs,
+            mask=mask,
+            target_policy=target_policy,
             value=val_2d,
             reason=reason,
+            action=act,
         )
 
 
@@ -83,9 +162,10 @@ class FastTensorLoader:
         # 转为 PyTorch 张量
         self.obs = torch.from_numpy(batch.obs).float()
         self.mask = torch.from_numpy(batch.mask).bool()
+        self.target_policy = torch.from_numpy(batch.target_policy).float()
         self.action = torch.from_numpy(batch.action).long()
         self.value = torch.from_numpy(batch.value).float()
-        self.reason = torch.from_numpy(batch.reason).long()
+        self.reason = torch.from_numpy(batch.reason).float()
 
         self.resident_on_device = False
         if device is not None and device.type == "cuda":
@@ -93,6 +173,7 @@ class FastTensorLoader:
                 # 单个分片通常约几百MB，直接常驻显存，零总线传输延迟
                 self.obs = self.obs.to(device)
                 self.mask = self.mask.to(device)
+                self.target_policy = self.target_policy.to(device)
                 self.action = self.action.to(device)
                 self.value = self.value.to(device)
                 self.reason = self.reason.to(device)
@@ -123,6 +204,7 @@ class FastTensorLoader:
 
             b_obs = self.obs[idx]
             b_mask = self.mask[idx]
+            b_policy = self.target_policy[idx]
             b_action = self.action[idx]
             b_value = self.value[idx]
             b_reason = self.reason[idx]
@@ -130,6 +212,7 @@ class FastTensorLoader:
             if not self.resident_on_device and self.device is not None:
                 b_obs = b_obs.to(self.device, non_blocking=True)
                 b_mask = b_mask.to(self.device, non_blocking=True)
+                b_policy = b_policy.to(self.device, non_blocking=True)
                 b_action = b_action.to(self.device, non_blocking=True)
                 b_value = b_value.to(self.device, non_blocking=True)
                 b_reason = b_reason.to(self.device, non_blocking=True)
@@ -137,6 +220,7 @@ class FastTensorLoader:
             yield {
                 "obs": b_obs,
                 "mask": b_mask,
+                "target_policy": b_policy,
                 "action": b_action,
                 "value": b_value,
                 "reason": b_reason,
@@ -149,17 +233,19 @@ class CompactDataset(Dataset):
     def __init__(self, batch: CompactBatch) -> None:
         self.obs = torch.from_numpy(batch.obs).float()
         self.mask = torch.from_numpy(batch.mask).bool()
+        self.target_policy = torch.from_numpy(batch.target_policy).float()
         self.action = torch.from_numpy(batch.action).long()
         self.value = torch.from_numpy(batch.value).float()
-        self.reason = torch.from_numpy(batch.reason).long()
+        self.reason = torch.from_numpy(batch.reason).float()
 
     def __len__(self) -> int:
-        return len(self.action)
+        return len(self.obs)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         return {
             "obs": self.obs[idx],
             "mask": self.mask[idx],
+            "target_policy": self.target_policy[idx],
             "action": self.action[idx],
             "value": self.value[idx],
             "reason": self.reason[idx],
@@ -194,11 +280,16 @@ class ShardedBuffer:
             yield CompactBatch.load_npz(p)
 
     def count_total_samples(self) -> int:
-        """快速统计所有分片的总样本数 (仅读 action 长度)."""
+        """快速统计所有分片的总样本数."""
         total = 0
         for p in self.shard_files:
             with np.load(p) as data:
-                total += len(data["action"])
+                if "target_policy" in data:
+                    total += len(data["target_policy"])
+                elif "action" in data:
+                    total += len(data["action"])
+                else:
+                    total += len(data["obs"])
         return total
 
     def clear(self) -> None:
@@ -216,7 +307,7 @@ class ReplayBuffer:
         self.max_samples = max_samples
         self.obs_list: List[np.ndarray] = []
         self.mask_list: List[np.ndarray] = []
-        self.action_list: List[np.ndarray] = []
+        self.policy_list: List[np.ndarray] = []
         self.value_list: List[np.ndarray] = []
         self.reason_list: List[np.ndarray] = []
         self.total_samples = 0
@@ -227,48 +318,48 @@ class ReplayBuffer:
             return
         self.obs_list.append(batch.obs)
         self.mask_list.append(batch.mask)
-        self.action_list.append(batch.action)
+        self.policy_list.append(batch.target_policy)
         self.value_list.append(batch.value)
         self.reason_list.append(batch.reason)
         self.total_samples += batch.num_samples
 
         # 滑动窗口淘汰最老的一批
-        while len(self.action_list) > 1 and self.total_samples > self.max_samples:
-            removed_count = len(self.action_list[0])
+        while len(self.policy_list) > 1 and self.total_samples > self.max_samples:
+            removed_count = len(self.policy_list[0])
             self.obs_list.pop(0)
             self.mask_list.pop(0)
-            self.action_list.pop(0)
+            self.policy_list.pop(0)
             self.value_list.pop(0)
             self.reason_list.pop(0)
             self.total_samples -= removed_count
 
     def get_compact_batch(self) -> CompactBatch:
         """汇聚当前 Buffer 内全部有效样本为一个连续的 CompactBatch."""
-        if not self.action_list:
+        if not self.policy_list:
             return CompactBatch(
-                obs=np.zeros((0, 742), dtype=np.float32),
-                mask=np.zeros((0, 288), dtype=bool),
-                action=np.zeros((0,), dtype=np.int64),
+                obs=np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32),
+                mask=np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool),
+                target_policy=np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32),
                 value=np.zeros((0, 2), dtype=np.float32),
-                reason=np.zeros((0,), dtype=np.int64),
+                reason=np.zeros((0, 3), dtype=np.float32),
             )
-        if len(self.action_list) == 1:
+        if len(self.policy_list) == 1:
             return CompactBatch(
                 obs=self.obs_list[0],
                 mask=self.mask_list[0],
-                action=self.action_list[0],
+                target_policy=self.policy_list[0],
                 value=self.value_list[0],
                 reason=self.reason_list[0],
             )
         obs_all = np.concatenate(self.obs_list, axis=0)
         mask_all = np.concatenate(self.mask_list, axis=0)
-        action_all = np.concatenate(self.action_list, axis=0)
+        policy_all = np.concatenate(self.policy_list, axis=0)
         value_all = np.concatenate(self.value_list, axis=0)
         reason_all = np.concatenate(self.reason_list, axis=0)
         return CompactBatch(
             obs=obs_all,
             mask=mask_all,
-            action=action_all,
+            target_policy=policy_all,
             value=value_all,
             reason=reason_all,
         )
@@ -276,7 +367,7 @@ class ReplayBuffer:
     def clear(self) -> None:
         self.obs_list.clear()
         self.mask_list.clear()
-        self.action_list.clear()
+        self.policy_list.clear()
         self.value_list.clear()
         self.reason_list.clear()
         self.total_samples = 0
