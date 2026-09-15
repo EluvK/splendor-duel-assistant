@@ -670,8 +670,8 @@ export class GameController {
       };
     }
 
-    // 可选行动：使用特权卷轴拿取非黄金宝石
-    if (phase === 'OptionalActions' && this.state.players[this.currentPlayer].privileges > 0) {
+    // 可选行动：使用特权卷轴拿取非黄金宝石（必须在补盘前使用）
+    if (phase === 'OptionalActions' && !this.state.replenished_this_turn && this.state.players[this.currentPlayer].privileges > 0) {
       const highlightPositions = [];
       for (let r = 0; r < 5; r++) {
         for (let c = 0; c < 5; c++) {
@@ -1053,7 +1053,7 @@ export class GameController {
     }
 
     if (phase === 'OptionalActions') {
-      this.guideText.innerHTML = `${lastAiHint}【可选阶段】可使用特权卷轴点击棋盘拿取宝石，或补充棋盘，或点击右侧跳过直接进入主阶段。`;
+      this.guideText.innerHTML = `${lastAiHint}【可选阶段】可先使用特权卷轴点击棋盘拿取宝石；若补充棋盘则可选行动结束并进入强制行动；亦可直接跳过。`;
 
       const hasReplenish = this.legalActions.some(a => a.category === 'replenish');
       if (hasReplenish) {

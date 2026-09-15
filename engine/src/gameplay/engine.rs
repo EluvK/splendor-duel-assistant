@@ -53,6 +53,9 @@ impl GameEngine {
         if state.phase != TurnPhase::OptionalActions {
             return Err("Not in OptionalActions phase".into());
         }
+        if state.replenished_this_turn {
+            return Err("Cannot use privilege after replenishing board this turn".into());
+        }
         let current_player = state.current_player;
         if state.players[current_player].privileges == 0 {
             return Err("No privilege scrolls available to use".into());
@@ -78,6 +81,9 @@ impl GameEngine {
         if state.phase != TurnPhase::OptionalActions && state.phase != TurnPhase::MandatoryAction {
             return Err("Cannot replenish board in current phase".into());
         }
+        if state.replenished_this_turn {
+            return Err("Cannot replenish board more than once per turn".into());
+        }
         if state.bag.is_empty() || !state.board.has_empty_slot() {
             return Err("Cannot replenish board: bag empty or board full".into());
         }
@@ -93,8 +99,11 @@ impl GameEngine {
         state.grant_privilege_to(opponent);
         state.replenished_this_turn = true;
 
+        // 若处于 OptionalActions，补充棋盘后可选行动全部结束（特权不可再用），直接进入 MandatoryAction 阶段
         // 若处于 MandatoryAction（因无合法行动被迫补板），补板后留在 MandatoryAction
-        // 若处于 OptionalActions，补板后留在 OptionalActions
+        if state.phase == TurnPhase::OptionalActions {
+            state.phase = TurnPhase::MandatoryAction;
+        }
         Ok(())
     }
 

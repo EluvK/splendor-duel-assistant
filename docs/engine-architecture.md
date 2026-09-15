@@ -104,10 +104,10 @@ engine/
 [回合开始]
    │
    ▼
-TurnPhase::OptionalActions  ◄───────────────────┐ (执行特权卷轴后若仍有特权可再次使用)
+TurnPhase::OptionalActions  ◄───────────────────┐ (先用特权：若仍有特权且未补盘可再次使用)
    │                                             │
-   ├─► Action::UsePrivilege ─────────────────────┘
-   ├─► Action::ReplenishBoard ──────────┐ (填满棋盘，对手得 1 特权)
+   ├─► Action::UsePrivilege ─────────────────────┘ (补盘后严禁使用特权)
+   ├─► Action::ReplenishBoard ──────────┐ (后补棋盘：对手得 1 特权，可选行动直接结束)
    └─► Action::SkipOptional             │
          │                              │
          ▼                              ▼

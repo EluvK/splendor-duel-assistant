@@ -108,6 +108,21 @@ impl Board {
         false
     }
 
+    /// 棋盘上是否存在至少 1 枚非黄金标记
+    #[inline]
+    pub fn has_non_gold(&self) -> bool {
+        for r in 0..5 {
+            for c in 0..5 {
+                if let Some(gem) = self.grid[r][c] {
+                    if !gem.is_gold() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// 沿官方 25 格螺旋轨道，从布袋列表（尾部弹出）中填满空格
     pub fn fill_spiral(&mut self, bag: &mut StackVec<GemType, 25>) {
         for &(r, c) in SPIRAL_ORDER.iter() {

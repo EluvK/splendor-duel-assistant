@@ -251,4 +251,44 @@ fn test_pyramid_market_obs_and_action_alignment() {
     }
 }
 
+#[test]
+fn test_replenish_board_action_mask_and_feature_encoding() {
+    let mut game = GameState::new_game(888);
+    game.players[0].privileges = 1;
+    let taken = game.board.take(0, 0).unwrap();
+    game.bag.push(taken);
+
+    // 初始状态：尚未补盘
+    let obs_before = encode_state(&game);
+    assert_eq!(obs_before[961 + 42], 0.0, "未补盘时特征 42 应为 0.0");
+
+    let mask_before = action_mask(&game);
+    assert!(mask_before[0], "未补盘可选阶段 SkipOptional 掩码应为 true");
+    assert!(mask_before[26], "未补盘可选阶段 ReplenishBoard 掩码应为 true");
+    let has_priv_mask_before = (1..=25).any(|id| mask_before[id]);
+    assert!(has_priv_mask_before, "未补盘且有特权时，特权动作掩码应有 true");
+
+    // 执行补充棋盘
+    assert!(GameEngine::step(&mut game, &Action::ReplenishBoard).is_ok());
+
+    // 补盘后状态特征校验
+    let obs_after = encode_state(&game);
+    assert_eq!(obs_after[961 + 42], 1.0, "补盘后特征 42 必须为 1.0");
+
+    // 补盘后掩码校验：
+    let mask_after = action_mask(&game);
+    // 1. 特权动作全为 false
+    for id in 1..=25 {
+        assert!(!mask_after[id], "补盘后特权动作 ID {id} 掩码必须为 false");
+    }
+    // 2. 补盘动作本身为 false
+    assert!(!mask_after[26], "补盘后 ReplenishBoard 动作 ID 26 掩码必须为 false");
+    // 3. SkipOptional 为 false (因已自动转入 MandatoryAction)
+    assert!(!mask_after[0], "补盘后已进入强制行动，SkipOptional 掩码必须为 false");
+    // 4. 强制行动必须有合法动作可执行
+    let has_mandatory = (27..ACTION_SIZE).any(|id| mask_after[id]);
+    assert!(has_mandatory, "补盘后进入强制行动，必须存在合法的强制动作掩码");
+}
+
+
 

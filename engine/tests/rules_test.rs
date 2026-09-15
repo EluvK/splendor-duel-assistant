@@ -509,3 +509,117 @@ fn test_mcts_determinization_search() {
     );
 }
 
+#[test]
+fn test_optional_actions_order_and_privilege_restriction_after_replenish() {
+    let mut game = GameState::new_game(777);
+    assert_eq!(game.phase, TurnPhase::OptionalActions);
+
+    // 给予当前玩家 2 个特权卷轴
+    game.players[0].privileges = 2;
+    game.privilege_pool = 1;
+
+    // 1. 制造盘面空格以允许补盘
+    let taken_gem = game.board.take(0, 0).unwrap();
+    game.bag.push(taken_gem);
+
+    // 此时合法可选行动应包含：SkipOptional、UsePrivilege 以及 ReplenishBoard
+    let legals = RuleEngine::legal_actions(&game);
+    assert!(legals.contains(&Action::SkipOptional));
+    assert!(legals.contains(&Action::ReplenishBoard));
+    let has_use_priv = legals.iter().any(|a| matches!(a, Action::UsePrivilege { .. }));
+    assert!(has_use_priv, "持有特权且未补盘时，应生成 UsePrivilege 行动");
+
+    // 2. 先使用特权拿取 (0, 1) 的宝石
+    let privilege_target = (0, 1);
+    assert!(game.board.get(privilege_target.0, privilege_target.1).is_some());
+    let use_priv_action = Action::UsePrivilege {
+        r: privilege_target.0,
+        c: privilege_target.1,
+    };
+    assert!(GameEngine::step(&mut game, &use_priv_action).is_ok());
+
+    // 使用 1 个特权后，玩家特权减为 1，公用池加 1，phase 仍为 OptionalActions
+    assert_eq!(game.players[0].privileges, 1);
+    assert_eq!(game.privilege_pool, 2);
+    assert_eq!(game.phase, TurnPhase::OptionalActions);
+    assert_eq!(game.privileges_used_this_turn, 1);
+    assert!(!game.replenished_this_turn);
+
+    // 此时仍可继续使用特权或执行补盘
+    let legals_after_priv = RuleEngine::legal_actions(&game);
+    assert!(legals_after_priv.iter().any(|a| matches!(a, Action::UsePrivilege { .. })));
+    assert!(legals_after_priv.contains(&Action::ReplenishBoard));
+
+    // 3. 执行补充棋盘
+    let p1_priv_before = game.players[1].privileges;
+    assert!(GameEngine::step(&mut game, &Action::ReplenishBoard).is_ok());
+
+    // 补盘后：
+    // - 对手获得 1 个特权
+    // - replenished_this_turn 标记为 true
+    // - 阶段立即自动流转到 MandatoryAction（可选行动阶段彻底结束）
+    assert_eq!(game.players[1].privileges, p1_priv_before + 1);
+    assert!(game.replenished_this_turn);
+    assert_eq!(game.phase, TurnPhase::MandatoryAction);
+
+    // 4. 验证补盘后合法行动中绝无 UsePrivilege 或 ReplenishBoard
+    let legals_after_replenish = RuleEngine::legal_actions(&game);
+    assert!(!legals_after_replenish.iter().any(|a| matches!(a, Action::UsePrivilege { .. })));
+    assert!(!legals_after_replenish.contains(&Action::ReplenishBoard));
+
+    // 5. 验证若强行调用 step 执行 UsePrivilege，引擎必须拒绝
+    let illegal_use_priv = Action::UsePrivilege { r: 2, c: 2 };
+    let res = GameEngine::step(&mut game, &illegal_use_priv);
+    assert!(res.is_err(), "补盘后或非 OptionalActions 阶段强行使用特权必须报错");
+
+    // 6. 验证同一回合不可再次补充棋盘
+    let illegal_replenish = Action::ReplenishBoard;
+    let res_rep = GameEngine::step(&mut game, &illegal_replenish);
+    assert!(res_rep.is_err(), "同一回合重复补充棋盘必须报错");
+}
+
+#[test]
+fn test_must_replenish_when_no_mandatory_actions_available() {
+    let mut game = GameState::new_game(999);
+    assert_eq!(game.phase, TurnPhase::OptionalActions);
+
+    // 构造极端场景：棋盘上清空所有非黄金标记与黄金，玩家手中无任何标记，无预留牌，买不起任何金字塔卡牌
+    for r in 0..5 {
+        for c in 0..5 {
+            if let Some(gem) = game.board.take(r, c) {
+                game.bag.push(gem);
+            }
+        }
+    }
+    // 此时棋盘全空，袋子有全部标记
+    assert!(!game.board.has_non_gold());
+    assert!(!game.board.has_gold());
+    assert_eq!(game.players[0].tokens.total(), 0);
+
+    // 校验极速判定：当前玩家无任何合法强制行动
+    assert!(!RuleEngine::has_any_mandatory_action(&game));
+
+    // 校验可选行动列表：
+    // 规则书规定：无法执行任何强制行动时，必须在可选阶段补充棋盘，绝对不能跳过！
+    let legals = RuleEngine::legal_actions(&game);
+    assert!(
+        !legals.contains(&Action::SkipOptional),
+        "无必选操作可做时，可选阶段绝不能允许 SkipOptional 跳过！"
+    );
+    assert!(
+        legals.contains(&Action::ReplenishBoard),
+        "无必选操作可做时，可选阶段必须允许 ReplenishBoard！"
+    );
+
+    // 执行补充棋盘
+    assert!(GameEngine::step(&mut game, &Action::ReplenishBoard).is_ok());
+
+    // 补盘后棋盘被填满，自动转入 MandatoryAction，此时已有宝石可拿
+    assert_eq!(game.phase, TurnPhase::MandatoryAction);
+    assert!(game.board.has_non_gold());
+    let mandatory_legals = RuleEngine::legal_actions(&game);
+    assert!(!mandatory_legals.is_empty(), "补盘后必须有合法的拿取连线等强制行动！");
+}
+
+
+

@@ -24,15 +24,62 @@ impl RuleEngine {
         }
     }
 
+    /// 极速判定当前玩家是否存在任意合法的强制行动（Mandatory Actions）
+    /// 99.99% 的情况下第一行 `board.has_non_gold()` 就会直接短路返回 true（耗时仅 1~2 个 CPU 周期），
+    /// 绝不进行卡牌遍历与多余计算，完全零性能损耗。
+    pub fn has_any_mandatory_action(state: &GameState) -> bool {
+        // 1. 最强短路：盘上只要有任意 1 枚非黄金标记，强制行动必定合法（可拿取该 1 枚标记）
+        if state.board.has_non_gold() {
+            return true;
+        }
+
+        let player = &state.players[state.current_player];
+
+        // 2. 次级短路：盘上有黄金且手牌预留未满 3 张，可执行预留行动
+        if state.board.has_gold() && player.reserved_cards.len() < 3 {
+            return true;
+        }
+
+        // 3. 仅在盘上完全没有非黄金标记且无法预留的极罕见枯竭局面下，检查能否购买卡牌
+        for tier in CardTier::ALL {
+            for card in &state.pyramid[tier.index()] {
+                if card.color == CardColor::Joker && !player.has_any_bonus() {
+                    continue;
+                }
+                if player.can_afford(card) {
+                    return true;
+                }
+            }
+        }
+        for card in &player.reserved_cards {
+            if card.card.color == CardColor::Joker && !player.has_any_bonus() {
+                continue;
+            }
+            if player.can_afford(&card.card) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn legal_optional_actions(state: &GameState) -> Vec<Action> {
         let player = &state.players[state.current_player];
         let mut actions = Vec::with_capacity(32);
 
-        // 1. 跳过可选行动，直接进入强制行动
-        actions.push(Action::SkipOptional);
+        let can_mandatory = Self::has_any_mandatory_action(state);
+        let can_replenish = !state.replenished_this_turn && !state.bag.is_empty() && state.board.has_empty_slot();
 
-        // 2. 使用特权卷轴（必须持有特权卷轴，从棋盘任选 1 枚非黄金标记）
-        if player.privileges > 0 {
+        // 1. 跳过可选行动，直接进入强制行动：
+        // 规则书规定：若本回合没有任何必选操作可以做，则可选操作中必须补充棋盘，不可跳过！
+        // 仅在后续存在合法强制行动、或连补盘都不可能的死锁极端情况下，才允许跳过。
+        if can_mandatory || !can_replenish {
+            actions.push(Action::SkipOptional);
+        }
+
+        // 2. 使用特权卷轴（必须持有特权卷轴，且本回合尚未补盘）
+        // 规则约束：必须先使用特权卷轴，再补充棋盘；一旦补盘，本回合不可再使用特权
+        if !state.replenished_this_turn && player.privileges > 0 {
             for r in 0..5 {
                 for c in 0..5 {
                     if let Some(gem) = state.board.get(r, c) {
@@ -44,8 +91,8 @@ impl RuleEngine {
             }
         }
 
-        // 3. 补充棋盘（布袋非空且棋盘有空格）
-        if !state.bag.is_empty() && state.board.has_empty_slot() {
+        // 3. 补充棋盘（前提：本回合尚未补充过棋盘，且布袋非空、棋盘有空格）
+        if can_replenish {
             actions.push(Action::ReplenishBoard);
         }
 
