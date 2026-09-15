@@ -153,6 +153,9 @@ class SplendorNet(nn.Module):
         self.reserve_card_proj = nn.Linear(fusion_hidden, card_embed_dim)
         self.buy_market_proj = nn.Linear(fusion_hidden, card_embed_dim)
         self.buy_reserved_proj = nn.Linear(fusion_hidden, card_embed_dim)
+        # 卡牌策略打分缩放因子 1 / sqrt(d) 与可学习增益参数，平衡双线性点积与 MLP 离散头的 Logits 尺度
+        self.card_logit_scale = card_embed_dim ** -0.5
+        self.card_logit_gain = nn.Parameter(torch.ones(1))
 
         # (B) 其余离散与连线动作打分头 (共 261 维):
         # 0..171 (172维: 特权、拿标记、连线), 184..186 (3维: 盲抽), 202..287 (86维: Joker、弃牌、拿黄金等)
@@ -197,7 +200,7 @@ class SplendorNet(nn.Module):
         """前向传播.
 
         Args:
-            obs: [B, 915] 或 [915] 状态张量.
+            obs: [B, 1005] 或 [1005] 状态张量.
 
         Returns:
             policy_logits: [B, 288] 组装好的未掩码动作 logits
@@ -267,18 +270,20 @@ class SplendorNet(nn.Module):
         fused = self.fusion(torch.cat([x_board, x_card, x_context], dim=-1))  # [B, 256]
 
         # 6. 结构化动作打分
-        # (A) 卡牌相关操作
+        card_scale = self.card_logit_scale * self.card_logit_gain
+
+        # (A) 卡牌相关操作 (应用缩放 1 / sqrt(d) 与可学习增益)
         # 预留市场卡 12 张: [172..183]
         q_reserve = self.reserve_card_proj(fused)  # [B, 128]
-        logits_reserve = torch.einsum("bd,bnd->bn", q_reserve, card_tokens[:, :12])  # [B, 12]
+        logits_reserve = torch.einsum("bd,bnd->bn", q_reserve, card_tokens[:, :12]) * card_scale  # [B, 12]
 
         # 购买市场卡 12 张: [187..198]
         q_buy_market = self.buy_market_proj(fused)  # [B, 128]
-        logits_buy_market = torch.einsum("bd,bnd->bn", q_buy_market, card_tokens[:, :12])  # [B, 12]
+        logits_buy_market = torch.einsum("bd,bnd->bn", q_buy_market, card_tokens[:, :12]) * card_scale  # [B, 12]
 
         # 购买预留卡 3 张: [199..201]
         q_buy_reserved = self.buy_reserved_proj(fused)  # [B, 128]
-        logits_buy_reserved = torch.einsum("bd,bnd->bn", q_buy_reserved, card_tokens[:, 12:15])  # [B, 3]
+        logits_buy_reserved = torch.einsum("bd,bnd->bn", q_buy_reserved, card_tokens[:, 12:15]) * card_scale  # [B, 3]
 
         # (B) 其余离散动作 (261 维)
         discrete_logits = self.discrete_head(fused)  # [B, 261]

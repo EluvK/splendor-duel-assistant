@@ -108,7 +108,7 @@ Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Re
    - 通过两层 `Linear(128) + LayerNorm + ReLU` 深度提炼当前经济实力差距与斩杀线威胁。
 4. **主干融合与结构化多任务输出 (`fusion`, `policy`, `win`, `turns`, `reason`)**：
    - 将棋盘特征 (128)、卡牌特征 (128) 与上下文特征 (128) 拼接为 384 维，经由带有 LayerNorm 的主干融合层提炼为 256 维统一特征 `fused`。
-   - **Structured Policy Head**：卡牌预留（12维）、市场购买（12维）、手牌购买（3维）由 `fused` 分别投射出的 Query 向量与卡牌实体的 Attention Token 做双线性点积生成；其余 261 维动作通过 MLP 生成，拼装为完整的 288 维动作空间。
+   - **Structured Policy Head**：卡牌预留（12维）、市场购买（12维）、手牌购买（3维）由 `fused` 分别投射出的 Query 向量与卡牌实体的 Attention Token 做双线性点积生成，并统一乘以标准注意力缩放因子 $1/\sqrt{d}$（$d=128$）与可学习标量增益 `card_logit_gain`，确保卡牌与离散头的 Logits 处于同等健康的方差数量级；其余 261 维动作通过两层 MLP 生成，最终拼装为完整的 288 维动作空间。
    - **Multi-Task Valuation**：同时输出对局胜率预测 `win_value`（$[-1.0, 1.0]$）、剩余轮数预期 `turns_value`（$[0.0, 1.0]$）及三种胜负原因的多标签预测 `reason_logits`（$[20\_pts, 10\_crowns, 10\_color]$），并利用同方差不确定性损失自动平衡梯度。
 
 ### 3.3 ONNX 极速动态导出 (`export_onnx_bytes`)
@@ -134,7 +134,7 @@ Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Re
 
 ### 4.1 样本紧凑表示 (`CompactBatch`)
 放弃零散 Python 对象，所有数据以 4 个连续 NumPy 数组存储：
-- `obs`: `[N, 726]` float32
+- `obs`: `[N, 1005]` float32
 - `mask`: `[N, 288]` bool
 - `action`: `[N]` int64 (标量动作 ID)
 - `value`: `[N, 1]` float32 (终局归属视角值)

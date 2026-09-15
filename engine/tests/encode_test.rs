@@ -170,3 +170,85 @@ fn test_reserved_cards_anti_leakage_and_encoding() {
     );
 }
 
+#[test]
+fn test_pyramid_market_obs_and_action_alignment() {
+    // 验证金字塔市场卡牌在观测编码 (obs) 与动作空间 (action_to_id) 中槽位顺序严格自洽 (Tier 1 -> Tier 2 -> Tier 3)
+    let tiers = [
+        (CardTier::Tier1, 5, 0),
+        (CardTier::Tier2, 4, 5),
+        (CardTier::Tier3, 3, 9),
+    ];
+
+    let mut expected_entity_idx = 0;
+    for (tier, cap, tier_offset) in tiers {
+        assert_eq!(tier_offset, expected_entity_idx);
+        for slot in 0..cap {
+            let entity_slot = tier_offset + slot;
+            let reserve_id = action_to_id(&Action::ReserveCard {
+                tier,
+                slot: Some(slot),
+            });
+            let buy_id = action_to_id(&Action::PurchaseCard {
+                from_reserved: false,
+                tier,
+                slot,
+            });
+
+            // 预留卡牌动作 ID 必须与网络中 172 + entity_slot 严格对齐
+            assert_eq!(
+                reserve_id,
+                172 + entity_slot,
+                "ReserveCard 动作 ID 未对齐: expected {}, got {}",
+                172 + entity_slot,
+                reserve_id
+            );
+            // 购买卡牌动作 ID 必须与网络中 187 + entity_slot 严格对齐
+            assert_eq!(
+                buy_id,
+                187 + entity_slot,
+                "PurchaseCard 动作 ID 未对齐: expected {}, got {}",
+                187 + entity_slot,
+                buy_id
+            );
+        }
+        expected_entity_idx += cap;
+    }
+    assert_eq!(expected_entity_idx, 12, "总共必须正好覆盖 12 个市场槽位");
+
+    // 实际构造 GameState，在一张卡牌出现在特定 Tier 和 slot 时，检验 obs 中对应分块的 present 标志是否在准确的槽位
+    let mut game = GameState::new_game(999);
+    for row in game.pyramid.iter_mut() {
+        row.clear();
+    }
+    // 仅在 Tier 3 的 slot 0 放置一张卡牌
+    let dummy_card = JewelCard {
+        id: 77,
+        tier: CardTier::Tier3,
+        color: CardColor::Blue,
+        points: 3,
+        bonus: 1,
+        ability: None,
+        crowns: 1,
+        cost: CardCost::new(0, 0, 0, 0, 0, 0),
+    };
+    game.pyramid[CardTier::Tier3.index()].push(dummy_card);
+
+    let obs = encode_state(&game);
+    // Tier 3 位于金字塔后 3 个槽位: 9, 10, 11 (因为 Tier 1=0..5, Tier 2=5..9, Tier 3=9..12)
+    // 检查第 9 个槽位 (Tier 3 slot 0) 的 present 特征应为 1.0 (225 + 9 * CARD_FEAT_DIM)
+    let t3_s0_base = 225 + 9 * CARD_FEAT_DIM;
+    assert_eq!(obs[t3_s0_base], 1.0, "Tier 3 slot 0 卡牌 present 应为 1.0");
+
+    // 其余槽位的 present 应为 0.0
+    for entity_slot in 0..12 {
+        if entity_slot != 9 {
+            let base = 225 + entity_slot * CARD_FEAT_DIM;
+            assert_eq!(
+                obs[base], 0.0,
+                "槽位 {entity_slot} 应该为空 (present 应为 0.0)"
+            );
+        }
+    }
+}
+
+

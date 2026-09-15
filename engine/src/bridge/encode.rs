@@ -114,10 +114,11 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     // -------------------------------------------------------------
     // 分块 2: 金字塔市场卡牌 (12 槽位 × CARD_FEAT_DIM = 456 维) [225..681]
     // 剔除伪指示槽，严格保持真实可见卡牌实体，追加 5 维 ROI / 效能与动态净缺口
+    // 槽位顺序与动作空间映射严格统一 (自底向上): Tier1 (5明), Tier2 (4明), Tier3 (3明)
     // -------------------------------------------------------------
     let mut offset = 225;
-    // 12 个真实可见槽位: Tier3 (3明), Tier2 (4明), Tier1 (5明)
-    for &tier in &[CardTier::Tier3, CardTier::Tier2, CardTier::Tier1] {
+    // 12 个真实可见槽位: Tier1 (5明, 槽位 0..5), Tier2 (4明, 槽位 5..9), Tier3 (3明, 槽位 9..12)
+    for &tier in &[CardTier::Tier1, CardTier::Tier2, CardTier::Tier3] {
         let t_idx = tier.index();
         let cap = tier.market_capacity();
         let cards = &state.pyramid[t_idx];
