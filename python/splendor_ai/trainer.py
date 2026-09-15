@@ -21,6 +21,7 @@ class TrainerConfig:
     lr: float = 1e-3
     min_lr: float = 1e-5
     weight_decay: float = 1e-4
+    use_homoscedastic_loss: bool = True  # 同方差不确定性多任务动态加权
     value_loss_coeff: float = 1.0
     win_loss_coeff: float = 1.0
     turns_loss_coeff: float = 0.5
@@ -126,12 +127,18 @@ class Trainer:
                 # M2: 3 维独立 Sigmoid 多标签二值交叉熵损失
                 reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason)
 
-                value_loss = (
-                    self.cfg.win_loss_coeff * win_loss
-                    + self.cfg.turns_loss_coeff * turns_loss
-                    + self.cfg.reason_loss_coeff * reason_loss
-                )
-                loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                if getattr(self.cfg, "use_homoscedastic_loss", False) and hasattr(self.net, "compute_homoscedastic_loss"):
+                    loss, _ = self.net.compute_homoscedastic_loss(
+                        policy_loss, win_loss, turns_loss, reason_loss
+                    )
+                    value_loss = win_loss + turns_loss + reason_loss
+                else:
+                    value_loss = (
+                        self.cfg.win_loss_coeff * win_loss
+                        + self.cfg.turns_loss_coeff * turns_loss
+                        + self.cfg.reason_loss_coeff * reason_loss
+                    )
+                    loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
             self.scaler.scale(loss).backward()
             self.scaler.unscale_(self.optimizer)
@@ -226,7 +233,7 @@ class Trainer:
                     if target_reason is not None:
                         target_reason = target_reason.to(self.device, non_blocking=True)
                     else:
-                        target_reason = torch.zeros(obs.shape[0], dtype=torch.long, device=self.device)
+                        target_reason = torch.zeros((obs.shape[0], 3), dtype=torch.float32, device=self.device)
 
                     b_size = obs.shape[0]
 
@@ -239,14 +246,26 @@ class Trainer:
                         policy_loss = F.cross_entropy(masked_logits, target_action)
                         win_loss = F.mse_loss(win_v, target_win)
                         turns_loss = F.smooth_l1_loss(turns_v, target_turns)
-                        reason_loss = F.cross_entropy(reason_logits, target_reason)
+                        if target_reason.ndim == 1:
+                            target_reason_bc = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
+                        elif target_reason.shape[-1] == 4:
+                            target_reason_bc = target_reason[:, :3].float()
+                        else:
+                            target_reason_bc = target_reason.float()
+                        reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
 
-                        value_loss = (
-                            self.cfg.win_loss_coeff * win_loss
-                            + self.cfg.turns_loss_coeff * turns_loss
-                            + self.cfg.reason_loss_coeff * reason_loss
-                        )
-                        loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                        if getattr(self.cfg, "use_homoscedastic_loss", False) and hasattr(self.net, "compute_homoscedastic_loss"):
+                            loss, _ = self.net.compute_homoscedastic_loss(
+                                policy_loss, win_loss, turns_loss, reason_loss
+                            )
+                            value_loss = win_loss + turns_loss + reason_loss
+                        else:
+                            value_loss = (
+                                self.cfg.win_loss_coeff * win_loss
+                                + self.cfg.turns_loss_coeff * turns_loss
+                                + self.cfg.reason_loss_coeff * reason_loss
+                            )
+                            loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
                     self.scaler.scale(loss).backward()
                     self.scaler.unscale_(self.optimizer)
@@ -319,14 +338,26 @@ class Trainer:
                 policy_loss = F.cross_entropy(masked_logits, target_action)
                 win_loss = F.mse_loss(win_v, target_win)
                 turns_loss = F.smooth_l1_loss(turns_v, target_turns)
-                reason_loss = F.cross_entropy(reason_logits, target_reason)
+                if target_reason.ndim == 1:
+                    target_reason_bc = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
+                elif target_reason.shape[-1] == 4:
+                    target_reason_bc = target_reason[:, :3].float()
+                else:
+                    target_reason_bc = target_reason.float()
+                reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
 
-                value_loss = (
-                    self.cfg.win_loss_coeff * win_loss
-                    + self.cfg.turns_loss_coeff * turns_loss
-                    + self.cfg.reason_loss_coeff * reason_loss
-                )
-                loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                if getattr(self.cfg, "use_homoscedastic_loss", False) and hasattr(self.net, "compute_homoscedastic_loss"):
+                    loss, _ = self.net.compute_homoscedastic_loss(
+                        policy_loss, win_loss, turns_loss, reason_loss
+                    )
+                    value_loss = win_loss + turns_loss + reason_loss
+                else:
+                    value_loss = (
+                        self.cfg.win_loss_coeff * win_loss
+                        + self.cfg.turns_loss_coeff * turns_loss
+                        + self.cfg.reason_loss_coeff * reason_loss
+                    )
+                    loss = policy_loss + self.cfg.value_loss_coeff * value_loss
 
                 total_loss += loss.item() * b_size
                 total_p_loss += policy_loss.item() * b_size

@@ -97,3 +97,39 @@ def test_heuristic_ai_vs_random():
     assert win_rate >= 0.9, f"启发式 AI 胜率过低: {win_rate}"
     # 相比双随机 AI 对决的 340+ 步，单方加入启发式 AI 应能显著提速终局
     assert avg_steps < 250, f"启发式 AI 耗时过长: {avg_steps} 步"
+
+
+def test_splendornet_v2_homoscedastic_loss_and_backward():
+    """测试 SplendorNet v2 同方差自适应损失加权与结构化打分器的完整反向传播."""
+    net = SplendorNet()
+    obs = torch.randn(4, SplendorNet.OBS_SIZE)
+    target_action = torch.tensor([10, 175, 190, 200], dtype=torch.long)
+    target_win = torch.tensor([[1.0], [-1.0], [0.5], [-0.5]], dtype=torch.float32)
+    target_turns = torch.tensor([[0.2], [0.8], [0.4], [0.6]], dtype=torch.float32)
+    target_reason = torch.tensor(
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
+        dtype=torch.float32,
+    )
+
+    logits, win_v, turns_v, reason_logits = net(obs)
+    policy_loss = torch.nn.functional.cross_entropy(logits, target_action)
+    win_loss = torch.nn.functional.mse_loss(win_v, target_win)
+    turns_loss = torch.nn.functional.smooth_l1_loss(turns_v, target_turns)
+    reason_loss = torch.nn.functional.binary_cross_entropy_with_logits(reason_logits, target_reason)
+
+    total_loss, weights = net.compute_homoscedastic_loss(
+        policy_loss, win_loss, turns_loss, reason_loss
+    )
+
+    assert total_loss.item() > 0.0
+    assert len(weights) == 4
+    for k in ["w_policy", "w_win", "w_turns", "w_reason"]:
+        assert weights[k] > 0.0
+
+    total_loss.backward()
+    assert net.log_vars.grad is not None
+    assert net.reserve_card_proj.weight.grad is not None
+    assert net.buy_market_proj.weight.grad is not None
+    assert net.buy_reserved_proj.weight.grad is not None
+    assert net.card_encoder[0].weight.grad is not None
+

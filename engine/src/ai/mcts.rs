@@ -53,6 +53,35 @@ struct Node {
 /// MCTS 搜索综合价值中的时间敏感度惩罚系数 (鼓励快速斩杀，惩罚拖延苟活)
 pub const LAMBDA_TURNS: f32 = 0.20;
 
+/// 多重确定化信息集洗牌块大小 (MIS-MCTS: 每隔 K 次模拟重抽暗牌，兼顾无偏估计与局部备份一致性)
+pub const MIS_BLOCK_SIZE: usize = 8;
+
+/// 自动折叠确定性单选项微步 (预留唯一黄金、单一合法弃牌)，压缩搜索树无谓深度
+#[inline]
+fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
+    loop {
+        match sim_state.phase {
+            TurnPhase::SelectReserveGold => {
+                let legals = RuleEngine::legal_actions(sim_state);
+                if legals.len() == 1 {
+                    let _ = GameEngine::step(sim_state, &legals[0]);
+                } else {
+                    break;
+                }
+            }
+            TurnPhase::DiscardTokens => {
+                let legals = RuleEngine::legal_actions(sim_state);
+                if legals.len() == 1 {
+                    let _ = GameEngine::step(sim_state, &legals[0]);
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+}
+
 /// 基于先验剪枝的高性能 AlphaZero 风格 MCTS
 pub struct RustMCTS {
     c_puct: f32,
@@ -167,8 +196,12 @@ impl RustMCTS {
             is_terminal: is_term,
         });
 
+        let mut base_sim_state = state.determinize_for_player(state.current_player, rng);
         for sim_idx in 0..num_simulations {
-            let mut sim_state = state.determinize_for_player(state.current_player, rng);
+            if sim_idx > 0 && sim_idx % MIS_BLOCK_SIZE == 0 {
+                base_sim_state = state.determinize_for_player(state.current_player, rng);
+            }
+            let mut sim_state = base_sim_state.clone();
             let mut curr_node_idx = root_idx;
             // 记录沿途 (node_idx, edge_idx)
             let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
@@ -180,6 +213,7 @@ impl RustMCTS {
                 if GameEngine::step(&mut sim_state, &action).is_err() {
                     break;
                 }
+                collapse_deterministic_micro_steps(&mut sim_state);
                 path.push((curr_node_idx, best_edge_idx));
 
                 // 若该边已有子节点，继续向下探索；否则在当前叶子停止展开
@@ -421,8 +455,12 @@ impl RustMCTS {
             return None;
         }
 
+        let mut base_sim_state = state.determinize_for_player(state.current_player, rng);
         for sim_idx in 0..num_simulations {
-            let mut sim_state = state.determinize_for_player(state.current_player, rng);
+            if sim_idx > 0 && sim_idx % MIS_BLOCK_SIZE == 0 {
+                base_sim_state = state.determinize_for_player(state.current_player, rng);
+            }
+            let mut sim_state = base_sim_state.clone();
             let mut curr_node_idx = root_idx;
             let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
 
@@ -433,6 +471,7 @@ impl RustMCTS {
                 if GameEngine::step(&mut sim_state, &action).is_err() {
                     break;
                 }
+                collapse_deterministic_micro_steps(&mut sim_state);
                 path.push((curr_node_idx, best_edge_idx));
 
                 if let Some(child_idx) = nodes[curr_node_idx].edges[best_edge_idx].child_idx {

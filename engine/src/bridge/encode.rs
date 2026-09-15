@@ -4,14 +4,23 @@ use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
 use crate::gameplay::rules::RuleEngine;
 use crate::model::action::Action;
-use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard, RoyalAbility};
+use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard};
 use crate::model::token::GemType;
 
-/// 观察向量维度
-pub const OBS_SIZE: usize = 879;
+/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡396 + 4王室 + 双方仪表盘246 + 全局差值44 = 915)
+pub const OBS_SIZE: usize = 915;
 
 /// 动作空间大小（离散动作总维度）
 pub const ACTION_SIZE: usize = 288;
+
+/// 5x5 棋盘补盘顺时针螺旋排位归一化矩阵 (中心 (2,2) 为 0，向外顺时针扩展至 24)
+pub const SPIRAL_RANK_MATRIX: [[f32; 5]; 5] = [
+    [16.0 / 24.0, 15.0 / 24.0, 14.0 / 24.0, 13.0 / 24.0, 12.0 / 24.0],
+    [17.0 / 24.0,  4.0 / 24.0,  3.0 / 24.0,  2.0 / 24.0, 11.0 / 24.0],
+    [18.0 / 24.0,  5.0 / 24.0,  0.0 / 24.0,  1.0 / 24.0, 10.0 / 24.0],
+    [19.0 / 24.0,  6.0 / 24.0,  7.0 / 24.0,  8.0 / 24.0,  9.0 / 24.0],
+    [20.0 / 24.0, 21.0 / 24.0, 22.0 / 24.0, 23.0 / 24.0, 24.0 / 24.0],
+];
 
 /// 预计算 5x5 网格中所有 120 种可能的 2~3 连线几何线段
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,11 +82,12 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     let op = state.opponent_idx();
 
     // -------------------------------------------------------------
-    // 分块 1: 5x5 棋盘空间 (25 格 × 8 通道 = 200 维) [0..200]
+    // 分块 1: 5x5 棋盘空间 (25 格 × 9 通道 = 225 维) [0..225]
+    // 包含 8 通道标记 One-Hot 与第 9 通道螺旋时空排位拓扑特征
     // -------------------------------------------------------------
     for r in 0..5 {
         for c in 0..5 {
-            let base = (r * 5 + c) * 8;
+            let base = (r * 5 + c) * 9;
             match state.board.get(r, c) {
                 None => out[base] = 1.0,
                 Some(GemType::White) => out[base + 1] = 1.0,
@@ -88,14 +98,16 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
                 Some(GemType::Pearl) => out[base + 6] = 1.0,
                 Some(GemType::Gold) => out[base + 7] = 1.0,
             }
+            out[base + 8] = SPIRAL_RANK_MATRIX[r][c];
         }
     }
 
     // -------------------------------------------------------------
-    // 分块 2: 金字塔市场卡牌 (15 槽位 × 27 维 = 405 维) [200..605]
+    // 分块 2: 金字塔市场卡牌 (12 槽位 × 33 维 = 396 维) [225..621]
+    // 剔除伪指示槽，严格保持真实可见卡牌实体，追加 6 维动态净缺口
     // -------------------------------------------------------------
-    let mut offset = 200;
-    // 15 个槽位: Tier3 (3明+1余), Tier2 (4明+1余), Tier1 (5明+1余)
+    let mut offset = 225;
+    // 12 个真实可见槽位: Tier3 (3明), Tier2 (4明), Tier1 (5明)
     for &tier in &[CardTier::Tier3, CardTier::Tier2, CardTier::Tier1] {
         let t_idx = tier.index();
         let cap = tier.market_capacity();
@@ -103,50 +115,28 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
 
         for slot in 0..cap {
             let card_opt = cards.get(slot);
-            encode_card_slot(&mut out[offset..offset + 27], card_opt, tier, &state.players[cp]);
-            offset += 27;
+            encode_card_slot(&mut out[offset..offset + 33], card_opt, tier, &state.players[cp]);
+            offset += 33;
         }
-
-        // 牌堆指示槽（slot == cap）
-        let has_deck = !state.decks[t_idx].is_empty();
-        if has_deck {
-            out[offset] = 1.0; // present
-            out[offset + 1 + t_idx] = 1.0; // tier
-            // 牌堆剩余比例
-            let max_deck = match tier {
-                CardTier::Tier1 => 30.0,
-                CardTier::Tier2 => 24.0,
-                CardTier::Tier3 => 13.0,
-            };
-            out[offset + 4] = state.decks[t_idx].len() as f32 / max_deck;
-        }
-        offset += 27;
     }
 
     // -------------------------------------------------------------
-    // 分块 3: 场上王室卡 (4 槽位 × 5 维 = 20 维) [605..625]
+    // 分块 3: 场上王室卡 (4 维布尔向量) [621..625]
+    // 指示 4 张固定属性王室卡是否已被拿取
     // -------------------------------------------------------------
     for royal_id in 0..4u8 {
-        let base = offset + (royal_id as usize) * 5;
-        if let Some(r) = state.royal_cards.iter().find(|rc| rc.id == royal_id) {
-            out[base] = 1.0; // available
-            out[base + 1] = r.points as f32 / 3.0;
-            match r.ability {
-                Some(RoyalAbility::StealToken) => out[base + 2] = 1.0,
-                Some(RoyalAbility::TakePrivilege) => out[base + 3] = 1.0,
-                Some(RoyalAbility::ExtraTurn) => out[base + 4] = 1.0,
-                None => {}
-            }
+        if state.royal_cards.iter().any(|rc| rc.id == royal_id) {
+            out[offset + royal_id as usize] = 1.0;
         }
     }
-    offset += 20;
+    offset += 4;
 
     // -------------------------------------------------------------
-    // 分块 4: 双方玩家仪表板 (2 玩家 × 105 维 = 210 维) [625..835]
+    // 分块 4: 双方玩家仪表板 (2 玩家 × 123 维 = 246 维) [625..871]
     // -------------------------------------------------------------
     for (p_order, &p_idx) in [cp, op].iter().enumerate() {
         let p = &state.players[p_idx];
-        let p_base = offset + p_order * 105;
+        let p_base = offset + p_order * 123;
 
         // 标记库存 (8维，超限弃牌前可能短暂超过 10，钳位至 1.0)
         for i in 0..7 {
@@ -174,13 +164,13 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
         out[p_base + 22] = p.royal_cards.len() as f32 / 2.0;
         out[p_base + 23] = if p.royals_claimed[0] { 1.0 } else { 0.0 };
 
-        // 预留手牌 (3 槽位 × 27 维 = 81维)
+        // 预留手牌 (3 槽位 × 33 维 = 99维)
         for slot in 0..3 {
-            let slot_slice = &mut out[p_base + 24 + slot * 27..p_base + 24 + (slot + 1) * 27];
+            let slot_slice = &mut out[p_base + 24 + slot * 33..p_base + 24 + (slot + 1) * 33];
             if let Some(rc) = p.reserved_cards.get(slot) {
                 let is_self = p_idx == cp;
                 if is_self || rc.is_public {
-                    // 我方全部手牌，或对手公开明牌预留：写入完整 27 维卡牌特征
+                    // 我方全部手牌，或对手公开明牌预留：写入完整 33 维卡牌特征
                     encode_card_slot(slot_slice, Some(&rc.card), rc.card.tier, &state.players[p_idx]);
                 } else {
                     // 对手盲抽暗牌 (M4): 保留 present 与 tier，其余私密属性掩蔽
@@ -189,10 +179,10 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
             }
         }
     }
-    offset += 210;
+    offset += 246;
 
     // -------------------------------------------------------------
-    // 分块 5: 全局环境、博弈差值与胜负威胁 (44 维) [835..879]
+    // 分块 5: 全局环境、博弈差值与胜负威胁 (44 维) [871..915]
     // -------------------------------------------------------------
     match state.phase {
         TurnPhase::OptionalActions => out[offset] = 1.0,
@@ -379,6 +369,27 @@ fn encode_card_slot(
         } else {
             0.0
         };
+
+        // 动态净缺口特征 (6 维: 5 基础宝石各自净缺口 + 珍珠缺口)
+        // Deficit_gem = max(0, Cost_gem - Bonus_gem - Tokens_gem) / 8.0
+        let basic_costs = [
+            c.cost.white,
+            c.cost.blue,
+            c.cost.green,
+            c.cost.red,
+            c.cost.black,
+        ];
+        for i in 0..5 {
+            let cost_val = basic_costs[i] as f32;
+            let bonus_val = active_player.bonuses[i] as f32;
+            let token_val = active_player.tokens.counts[i] as f32;
+            let deficit = (cost_val - bonus_val - token_val).max(0.0);
+            slice[27 + i] = deficit / 8.0;
+        }
+        // 珍珠缺口 (无 Bonus 折扣): max(0, Cost_pearl - Tokens_pearl) / 2.0
+        let pearl_token = active_player.tokens.counts[GemType::Pearl.index()] as f32;
+        let pearl_deficit = (c.cost.pearl as f32 - pearl_token).max(0.0);
+        slice[32] = pearl_deficit / 2.0;
     }
 }
 
@@ -387,7 +398,7 @@ fn encode_card_slot(
 fn encode_opponent_hidden_slot(slice: &mut [f32], tier: CardTier) {
     slice[0] = 1.0; // present: 明确知晓对手此槽位持有暗牌
     slice[1 + tier.index()] = 1.0; // tier: 盲抽来源牌堆等级是公开操作 (Tier 1/2/3)
-    // slice[4..27] 保持 0.0 (费用、点数、皇冠、加成、技能及支付能力严格掩蔽)
+    // slice[4..33] 保持 0.0 (费用、点数、皇冠、加成、技能、支付能力与净缺口严格掩蔽)
 }
 
 /// 动作空间映射：将高层 Action 映射到 [0, 248] 离散 ID
