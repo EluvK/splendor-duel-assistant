@@ -7,8 +7,17 @@ use crate::model::action::Action;
 use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard};
 use crate::model::token::GemType;
 
-/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡396 + 4王室 + 双方仪表盘246 + 全局差值44 = 915)
-pub const OBS_SIZE: usize = 915;
+/// 单张卡牌的特征维度 (33基础 + 5维ROI/效能 = 38)
+pub const CARD_FEAT_DIM: usize = 38;
+
+/// 单玩家手牌槽位数
+pub const RESERVED_CARDS_SLOTS: usize = 3;
+
+/// 单玩家仪表盘特征维度 (24基础资产与胜负进度 + 3槽手牌 * CARD_FEAT_DIM = 138)
+pub const PLAYER_DASHBOARD_DIM: usize = 24 + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM;
+
+/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡(12*38=456) + 4王室 + 双方仪表盘(2*138=276) + 全局差值44 = 1005)
+pub const OBS_SIZE: usize = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + 44;
 
 /// 动作空间大小（离散动作总维度）
 pub const ACTION_SIZE: usize = 288;
@@ -103,8 +112,8 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     }
 
     // -------------------------------------------------------------
-    // 分块 2: 金字塔市场卡牌 (12 槽位 × 33 维 = 396 维) [225..621]
-    // 剔除伪指示槽，严格保持真实可见卡牌实体，追加 6 维动态净缺口
+    // 分块 2: 金字塔市场卡牌 (12 槽位 × CARD_FEAT_DIM = 456 维) [225..681]
+    // 剔除伪指示槽，严格保持真实可见卡牌实体，追加 5 维 ROI / 效能与动态净缺口
     // -------------------------------------------------------------
     let mut offset = 225;
     // 12 个真实可见槽位: Tier3 (3明), Tier2 (4明), Tier1 (5明)
@@ -115,13 +124,19 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
 
         for slot in 0..cap {
             let card_opt = cards.get(slot);
-            encode_card_slot(&mut out[offset..offset + 33], card_opt, tier, &state.players[cp]);
-            offset += 33;
+            encode_card_slot(
+                &mut out[offset..offset + CARD_FEAT_DIM],
+                card_opt,
+                tier,
+                &state.players[cp],
+                Some(&state.players[op]),
+            );
+            offset += CARD_FEAT_DIM;
         }
     }
 
     // -------------------------------------------------------------
-    // 分块 3: 场上王室卡 (4 维布尔向量) [621..625]
+    // 分块 3: 场上王室卡 (4 维布尔向量) [681..685]
     // 指示 4 张固定属性王室卡是否已被拿取
     // -------------------------------------------------------------
     for royal_id in 0..4u8 {
@@ -132,11 +147,12 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     offset += 4;
 
     // -------------------------------------------------------------
-    // 分块 4: 双方玩家仪表板 (2 玩家 × 123 维 = 246 维) [625..871]
+    // 分块 4: 双方玩家仪表板 (2 玩家 × PLAYER_DASHBOARD_DIM = 276 维) [685..961]
     // -------------------------------------------------------------
     for (p_order, &p_idx) in [cp, op].iter().enumerate() {
         let p = &state.players[p_idx];
-        let p_base = offset + p_order * 123;
+        let opp_of_p = if p_idx == cp { &state.players[op] } else { &state.players[cp] };
+        let p_base = offset + p_order * PLAYER_DASHBOARD_DIM;
 
         // 标记库存 (8维，超限弃牌前可能短暂超过 10，钳位至 1.0)
         for i in 0..7 {
@@ -164,14 +180,21 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
         out[p_base + 22] = p.royal_cards.len() as f32 / 2.0;
         out[p_base + 23] = if p.royals_claimed[0] { 1.0 } else { 0.0 };
 
-        // 预留手牌 (3 槽位 × 33 维 = 99维)
-        for slot in 0..3 {
-            let slot_slice = &mut out[p_base + 24 + slot * 33..p_base + 24 + (slot + 1) * 33];
+        // 预留手牌 (3 槽位 × CARD_FEAT_DIM)
+        for slot in 0..RESERVED_CARDS_SLOTS {
+            let slot_start = p_base + 24 + slot * CARD_FEAT_DIM;
+            let slot_slice = &mut out[slot_start..slot_start + CARD_FEAT_DIM];
             if let Some(rc) = p.reserved_cards.get(slot) {
                 let is_self = p_idx == cp;
                 if is_self || rc.is_public {
-                    // 我方全部手牌，或对手公开明牌预留：写入完整 33 维卡牌特征
-                    encode_card_slot(slot_slice, Some(&rc.card), rc.card.tier, &state.players[p_idx]);
+                    // 我方全部手牌，或对手公开明牌预留：写入完整 CARD_FEAT_DIM 维卡牌特征
+                    encode_card_slot(
+                        slot_slice,
+                        Some(&rc.card),
+                        rc.card.tier,
+                        &state.players[p_idx],
+                        Some(opp_of_p),
+                    );
                 } else {
                     // 对手盲抽暗牌 (M4): 保留 present 与 tier，其余私密属性掩蔽
                     encode_opponent_hidden_slot(slot_slice, rc.card.tier);
@@ -179,7 +202,7 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
             }
         }
     }
-    offset += 246;
+    offset += 2 * PLAYER_DASHBOARD_DIM;
 
     // -------------------------------------------------------------
     // 分块 5: 全局环境、博弈差值与胜负威胁 (44 维) [871..915]
@@ -327,6 +350,7 @@ fn encode_card_slot(
     card_opt: Option<&JewelCard>,
     tier: CardTier,
     active_player: &crate::game_state::player::PlayerState,
+    opp_player: Option<&crate::game_state::player::PlayerState>,
 ) {
     if let Some(c) = card_opt {
         slice[0] = 1.0; // present
@@ -379,17 +403,43 @@ fn encode_card_slot(
             c.cost.red,
             c.cost.black,
         ];
+        let mut sum_deficits = 0.0f32;
         for i in 0..5 {
             let cost_val = basic_costs[i] as f32;
             let bonus_val = active_player.bonuses[i] as f32;
             let token_val = active_player.tokens.counts[i] as f32;
             let deficit = (cost_val - bonus_val - token_val).max(0.0);
             slice[27 + i] = deficit / 8.0;
+            sum_deficits += deficit;
         }
         // 珍珠缺口 (无 Bonus 折扣): max(0, Cost_pearl - Tokens_pearl) / 2.0
         let pearl_token = active_player.tokens.counts[GemType::Pearl.index()] as f32;
         let pearl_deficit = (c.cost.pearl as f32 - pearl_token).max(0.0);
         slice[32] = pearl_deficit / 2.0;
+        sum_deficits += pearl_deficit;
+
+        // -------------------------------------------------------------
+        // 新增 5 维卡牌性价比与 ROI 效能特征 [33..38]
+        // -------------------------------------------------------------
+        let total_cost = (c.cost.white + c.cost.blue + c.cost.green + c.cost.red + c.cost.black + c.cost.pearl) as f32;
+        // 33: 真实总费用强度 total_cost / 10.0
+        slice[33] = (total_cost / 10.0).min(1.0);
+        // 34: 声望投资回报率 points / max(1, total_cost) (范围 0.0..1.0)
+        slice[34] = (c.points as f32 / total_cost.max(1.0)).min(1.0);
+        // 35: 王冠投资回报率 crowns / max(1, total_cost) (范围 0.0..1.0)
+        slice[35] = (c.crowns as f32 / total_cost.max(1.0)).min(1.0);
+
+        // 36: 黄金冲抵后的实际有效缺口 max(0, sum_deficits - gold) / 8.0
+        let gold_token = active_player.tokens.counts[GemType::Gold.index()] as f32;
+        let effective_shortage = (sum_deficits - gold_token).max(0.0);
+        slice[36] = (effective_shortage / 8.0).min(1.0);
+
+        // 37: 对手当前是否买得起该卡 (防守/抢位战略价值)
+        slice[37] = if let Some(opp) = opp_player {
+            if opp.can_afford(c) { 1.0 } else { 0.0 }
+        } else {
+            0.0
+        };
     }
 }
 
@@ -398,7 +448,7 @@ fn encode_card_slot(
 fn encode_opponent_hidden_slot(slice: &mut [f32], tier: CardTier) {
     slice[0] = 1.0; // present: 明确知晓对手此槽位持有暗牌
     slice[1 + tier.index()] = 1.0; // tier: 盲抽来源牌堆等级是公开操作 (Tier 1/2/3)
-    // slice[4..33] 保持 0.0 (费用、点数、皇冠、加成、技能、支付能力与净缺口严格掩蔽)
+    // slice[4..CARD_FEAT_DIM] 保持 0.0 (费用、点数、皇冠、加成、技能、支付能力、缺口与 ROI 严格掩蔽)
 }
 
 /// 动作空间映射：将高层 Action 映射到 [0, 248] 离散 ID

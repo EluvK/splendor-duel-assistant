@@ -70,12 +70,14 @@ class SplendorNet(nn.Module):
       5. 解耦多任务输出与同方差不确定性自适应损失 (Homoscedastic Loss Weighting)
     """
 
-    OBS_SIZE = SplendorDuelEnv.OBS_SIZE        # 915
-    ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE  # 288
     BOARD_CHANNELS = 9                         # 8 标记 + 1 螺旋 Rank
     BOARD_GRID = 5
-    CARD_FEAT_DIM = 33
+    CARD_FEAT_DIM = 38                         # 33 基础特征 + 5 维 ROI / 效能特征
     NUM_CARD_ENTITIES = 15                     # 12 市场明牌 + 3 我方手牌
+    RESERVED_CARDS_SLOTS = 3
+    PLAYER_DASHBOARD_DIM = 24 + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM  # 24 + 3 * 38 = 138
+    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + 44  # 1005
+    ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE  # 288
 
     def __init__(
         self,
@@ -127,8 +129,8 @@ class SplendorNet(nn.Module):
         )
 
         # 3. 标量上下文 MLP 骨干
-        # 上下文包含: 王室卡(4) + 我方基础(24) + 敌方仪表盘(123) + 全局差值环境(44) = 195 维
-        context_in_dim = 4 + 24 + 123 + 44
+        # 上下文包含: 王室卡(4) + 我方基础(24) + 敌方仪表盘(PLAYER_DASHBOARD_DIM) + 全局差值环境(44) = 210 维
+        context_in_dim = 4 + 24 + self.PLAYER_DASHBOARD_DIM + 44
         self.context_mlp = nn.Sequential(
             nn.Linear(context_in_dim, context_hidden),
             nn.LayerNorm(context_hidden),
@@ -208,21 +210,31 @@ class SplendorNet(nn.Module):
 
         b_size = obs.shape[0]
 
-        # 1. 切分特征
+        # 1. 动态自适应切分特征分块
+        c = self.CARD_FEAT_DIM
+        p_dash = self.PLAYER_DASHBOARD_DIM
+
+        idx_board_end = 225
+        idx_market_end = idx_board_end + 12 * c
+        idx_royals_end = idx_market_end + 4
+        idx_self_base_end = idx_royals_end + 24
+        idx_self_res_end = idx_self_base_end + self.RESERVED_CARDS_SLOTS * c
+        idx_opp_dash_end = idx_self_res_end + p_dash
+
         # [0..225]: 5x5 网格 x 9 通道
-        board_flat = obs[:, :225]
-        # [225..621]: 市场 12 张卡 x 33 维
-        market_cards_flat = obs[:, 225:621]
-        # [621..625]: 场上王室卡 (4维)
-        royals = obs[:, 621:625]
-        # [625..649]: 我方基础特征 (24维)
-        self_base = obs[:, 625:649]
-        # [649..748]: 我方预留卡 3 张 x 33 维
-        reserved_cards_flat = obs[:, 649:748]
-        # [748..871]: 敌方玩家仪表盘 (123维)
-        opp_dashboard = obs[:, 748:871]
-        # [871..915]: 全局环境与差值 (44维)
-        global_ctx = obs[:, 871:915]
+        board_flat = obs[:, :idx_board_end]
+        # [225..idx_market_end]: 市场 12 张卡 x CARD_FEAT_DIM 维
+        market_cards_flat = obs[:, idx_board_end:idx_market_end]
+        # [idx_market_end..idx_royals_end]: 场上王室卡 (4维)
+        royals = obs[:, idx_market_end:idx_royals_end]
+        # [idx_royals_end..idx_self_base_end]: 我方基础特征 (24维)
+        self_base = obs[:, idx_royals_end:idx_self_base_end]
+        # [idx_self_base_end..idx_self_res_end]: 我方预留卡 3 张 x CARD_FEAT_DIM 维
+        reserved_cards_flat = obs[:, idx_self_base_end:idx_self_res_end]
+        # [idx_self_res_end..idx_opp_dash_end]: 敌方玩家仪表盘 (PLAYER_DASHBOARD_DIM 维)
+        opp_dashboard = obs[:, idx_self_res_end:idx_opp_dash_end]
+        # [idx_opp_dash_end:]: 全局环境与差值 (44维)
+        global_ctx = obs[:, idx_opp_dash_end:]
 
         # 2. 棋盘空间前向
         board = board_flat.view(b_size, self.BOARD_GRID, self.BOARD_GRID, self.BOARD_CHANNELS)

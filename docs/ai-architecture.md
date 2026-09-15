@@ -49,68 +49,67 @@ python/
 
 ## 3. 策略-价值神经网络架构 (`SplendorNet`)
 
-`SplendorNet` 接收当前行动方视角的 **742 维**规范化观测向量，前向输出 **288 维**动作对数概率和 **1 维**标量对局价值。
+`SplendorNet` 接收当前行动方视角的 **1005 维**规范化观测向量，前向输出 **288 维**结构化动作对数概率、**1 维**胜负期望、**1 维**预期剩余轮数以及 **3 维**终局胜因预测。
 
 ### 3.1 网络拓扑图
 
 ```
-                输入观测向量 (742 维)
-               ┌──────────┴──────────┐
-               │                     │
-        [0..200] 棋盘分块       [200..742] 标量上下文分块
-         (200 维 -> 8×5×5)              (542 维)
-               │                     │
-         Conv2d (8->64)         Linear (542->256)
-               │                     │
-          BatchNorm             LayerNorm
-               │                     │
-             ReLU                  ReLU
-               │                     │
-      2× ResidualBlock2D        Linear (256->256)
-         (64 通道)                   │
-               │                LayerNorm
-      Conv2d 1x1 (64->16)            │
-        (保持 5×5 网格)              ReLU
-               │                     │
-         Flatten (400 维)       Context Embedding (256 维)
-               │                     │
-      Linear (400->256) + LN         │
-               │                     │
-               └──────────┬──────────┘
-                          │ Concat (512 维)
-                          ▼
-                  Fusion Trunk (MLP)
-                  Linear (512->256)
-                      LayerNorm
-                        ReLU
-                          │
-             ┌────────────┴────────────┐
-             ▼                         ▼
-        Policy Head               Value Head
-     Linear (256->256)         Linear (256->128)
-           ReLU                 LayerNorm + ReLU
-     Linear (256->288)         Linear (128->64)
-           │                         ReLU
-           │                   Linear (64->1) + Tanh
-           │                         │
-           ▼                         ▼
-   Masked Logits [B, 288]       Tanh Value [B, 1]
- (Softmax 得到动作先验 P)     (折现终局估值 [-1.0, 1.0])
+                         输入观测向量 (1005 维)
+               ┌───────────────────┼───────────────────┐
+               │                   │                   │
+        [0..225] 棋盘分块    [225..681] 市场与预留卡    [681..1005] 标量上下文分块
+         (225 维 -> 9×5×5)    (15 实体 × 38 维 ROI 特征)    (4王室+276仪表盘+44全局=324维)
+               │                   │                   │
+         Conv2d (9->64)     CardEncoder (38->128)      Linear (210->128)
+               │                   │                   │
+          BatchNorm           + Slot Embedding         LayerNorm + ReLU
+               │                   │                   │
+             ReLU           SetSelfAttention (4 heads) Linear (128->128)
+               │                   │                   │
+      2× ResidualBlock2D           ├───────────────┐   LayerNorm + ReLU
+         (64 通道)                 ▼               │   │
+               │              Mean/Max Pool        │   │
+      Conv2d 1x1 (64->16)          │               │   │
+        (保持 5×5 网格)       Linear (256->128)    │   │
+               │                   │               │   │
+         Flatten (400 维)    Card Context (128 维) │   Scalar Context (128 维)
+               │                   │               │   │
+      Linear (400->128)            │               │   │
+               └───────────────────┼───────────────┘   │
+                                   │ Concat (384 维)   │
+                                   ▼                   ▼
+                           Fusion Trunk (Linear(384->256) + LayerNorm + ReLU)
+                                   │ [B, 256] (fused)
+               ┌───────────────────┴───────────────────────────────┐
+               ▼                                                   ▼
+     Structured Policy Head                                Multi-Task Valuation
+ ┌─────────────┴──────────────┐                           ┌───────────┼───────────┐
+ ▼                            ▼                           ▼           ▼           ▼
+Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Reason Head
+(12 预留 + 12 购买市场   (261 维离散动作)             (Tanh [-1,1])(Sigmoid[0,1])(BCE [20,10,10])
+ + 3 购买预留卡)              │
+ └─────────────┬──────────────┘
+               ▼
+   Assembled Logits [B, 288]
 ```
 
 ### 3.2 分支实现细节
 
 1. **棋盘 2D 空间卷积主干 (`board_conv_in` & `board_res_blocks`)**：
-   - 5×5 棋盘每格包含 8 种状态独热（空、5 色宝石、珍珠、黄金）。重排为 `(B, 8, 5, 5)` 张量。
+   - 5×5 棋盘每格包含 8 种标记状态独热 + 第 9 通道顺时针螺旋排位拓扑特征。重排为 `(B, 9, 5, 5)` 张量。
    - 输入卷积将通道数提升至 64，后接 2 个带跳跃连接的 `ResidualBlock2D`，充分提取棋盘在水平、垂直与双对角线上的 3 连宝石几何空间特征。
-   - 经由 1×1 卷积 (`Conv2d(64->16) + BatchNorm + ReLU`) 保持 5×5 空间拓扑分辨率，全展平为 400 维后通过 `Linear(400->256) + LayerNorm + ReLU` 输出 256 维棋盘表征。
-2. **标量上下文 MLP 主干 (`context_mlp`)**：
-   - 输入包含卡牌市场金字塔（15 槽位 × 27 维）、场上王室卡（4 槽位 × 5 维）、双方玩家详细资产与胜负指标（2 × 42 维）以及全局环境、博弈差值与胜负威胁（33 维），共计 542 维。
-   - 通过两层 `Linear(256) + LayerNorm + ReLU` 深度提炼当前经济实力差距与斩杀线威胁。
-3. **主干融合与双头输出 (`fusion`, `policy_head`, `value_head`)**：
-   - 将棋盘特征 (256) 与上下文特征 (256) 拼接为 512 维，经由两层带有 LayerNorm 的主干融合层提炼为 256 维特征。
-   - **Policy Head**：输出 288 维原始 Logits。在推理时结合当前合法动作布尔掩码 `action_mask`，将非法动作置为 $-10^4$，经 Softmax 归一化为合法动作概率分布。
-   - **Value Head**：经由两层 `Linear(256->128) + LayerNorm + ReLU` 与 `Linear(128->64) + ReLU` 映射并通过 `Linear(64->1) + Tanh` 激活函数，输出当前行动方带时间衰减的终局估值预测（$[-1.0, 1.0]$）。
+   - 经由 1×1 卷积 (`Conv2d(64->16) + BatchNorm + ReLU`) 保持 5×5 空间拓扑分辨率，展平后通过 `Linear(400->128) + LayerNorm + ReLU` 输出 128 维棋盘表征。
+2. **共享卡牌实体与自注意力网络 (`card_encoder` & `set_attention`)**：
+   - 针对 12 张金字塔可见卡牌与 3 张当前玩家预留手牌，每张卡牌采用 **38 维**增强特征（包含 33 维基础点数/皇冠/费用/技能/净缺口，以及 **5 维显式 ROI 与战术效能特征**：总费用强度、声望 ROI、皇冠 ROI、黄金冲抵后真实缺口、对手可购威胁）。
+   - 共享 `CardEncoder` 将 38 维卡牌投射至 128 维，融合 15 个槽位的类型偏置后通过 4 头 `SetSelfAttention` 捕捉卡牌间的减费链条与优先争夺关系。
+   - 经由 Mean+Max 双路池化生成 128 维全局卡牌态势表征。
+3. **标量上下文 MLP 主干 (`context_mlp`)**：
+   - 输入包含场上王室卡（4 维）、我方基础资产与进度（24 维）、敌方玩家完整仪表盘（138 维）以及全局环境、博弈差值与胜负威胁（44 维），共计 210 维有效输入。
+   - 通过两层 `Linear(128) + LayerNorm + ReLU` 深度提炼当前经济实力差距与斩杀线威胁。
+4. **主干融合与结构化多任务输出 (`fusion`, `policy`, `win`, `turns`, `reason`)**：
+   - 将棋盘特征 (128)、卡牌特征 (128) 与上下文特征 (128) 拼接为 384 维，经由带有 LayerNorm 的主干融合层提炼为 256 维统一特征 `fused`。
+   - **Structured Policy Head**：卡牌预留（12维）、市场购买（12维）、手牌购买（3维）由 `fused` 分别投射出的 Query 向量与卡牌实体的 Attention Token 做双线性点积生成；其余 261 维动作通过 MLP 生成，拼装为完整的 288 维动作空间。
+   - **Multi-Task Valuation**：同时输出对局胜率预测 `win_value`（$[-1.0, 1.0]$）、剩余轮数预期 `turns_value`（$[0.0, 1.0]$）及三种胜负原因的多标签预测 `reason_logits`（$[20\_pts, 10\_crowns, 10\_color]$），并利用同方差不确定性损失自动平衡梯度。
 
 ### 3.3 ONNX 极速动态导出 (`export_onnx_bytes`)
 网络内置 `export_onnx_bytes` 方法，利用 `torch.onnx.export` 将当前 PyTorch 模型直接序列化为内存中的 ONNX 二进制流（Opset 17），开启常量折叠与动态 batch 轴。该字节流可直接无缝传递给 Rust 的 `tract-onnx` 引擎，实现零磁盘 I/O 的跨语言模型传递。

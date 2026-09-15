@@ -9,7 +9,7 @@ pub use ai::{
     LegalActionDto, NeuralAI, PlayerDto, PlayerKind, PlayerType, RandomAI, ReplaySession,
     ReplayStep, RoyalDto, RustMCTS, ScoredActionDto, StateDto,
 };
-pub use bridge::{action_mask, action_mask_from_legals, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
+pub use bridge::{action_mask, action_mask_from_legals, action_to_id, encode_state, ACTION_SIZE, CARD_FEAT_DIM, OBS_SIZE};
 #[cfg(feature = "python")]
 pub use bridge::PyGameState;
 pub use game_state::{Board, GameState, PlayerState, TurnPhase, VictoryReason};
