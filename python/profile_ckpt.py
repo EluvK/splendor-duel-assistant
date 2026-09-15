@@ -134,10 +134,13 @@ def run_benchmark(
         f"   ⚖️  先后手平衡性: 先手(P0) 胜率 {p0_wins/max(actual_games, 1)*100:.1f}% | 后手(P1) 胜率 {p1_wins/max(actual_games, 1)*100:.1f}%"
     )
     if reasons_self:
+        pts_cnt = reasons_self.get('20_points', 0)
+        crw_cnt = reasons_self.get('10_crowns', 0)
+        col_cnt = reasons_self.get('10_color_points', 0)
         print(
-            f"   🎯 终局胜因统计: 20声望胜 {reasons_self.get('20_points', 0)} 局 | "
-            f"10皇冠胜 {reasons_self.get('10_crowns', 0)} 局 | "
-            f"10单色胜 {reasons_self.get('10_color_points', 0)} 局"
+            f"   🎯 终局胜因统计: 20声望胜 {pts_cnt} 局 ({pts_cnt/max(actual_games,1)*100:.1f}%) | "
+            f"10皇冠胜 {crw_cnt} 局 ({crw_cnt/max(actual_games,1)*100:.1f}%) | "
+            f"10单色胜 {col_cnt} 局 ({col_cnt/max(actual_games,1)*100:.1f}%)"
         )
 
     # 2. 对战启发式 AI
@@ -178,10 +181,13 @@ def run_benchmark(
     print(f"   🛡️  输掉时平均坚持: {lose_rounds_str}")
     print(f"   📊 全场平均长度: {avg_rounds_heu:.1f} 轮 (共 {avg_steps_heu:.1f} 动作步)")
     if reasons_heu:
+        h_pts = reasons_heu.get('20_points', 0)
+        h_crw = reasons_heu.get('10_crowns', 0)
+        h_col = reasons_heu.get('10_color_points', 0)
         print(
-            f"   🎯 终局胜因统计: 20声望胜 {reasons_heu.get('20_points', 0)} 局 | "
-            f"10皇冠胜 {reasons_heu.get('10_crowns', 0)} 局 | "
-            f"10单色胜 {reasons_heu.get('10_color_points', 0)} 局"
+            f"   🎯 终局胜因统计: 20声望胜 {h_pts} 局 ({h_pts/max(actual_games,1)*100:.1f}%) | "
+            f"10皇冠胜 {h_crw} 局 ({h_crw/max(actual_games,1)*100:.1f}%) | "
+            f"10单色胜 {h_col} 局 ({h_col/max(actual_games,1)*100:.1f}%)"
         )
     print("=" * 80 + "\n")
 

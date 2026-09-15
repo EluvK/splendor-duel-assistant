@@ -7,6 +7,7 @@ import torch
 from splendor_ai._engine import (
     generate_heuristic_samples,
     generate_neural_mcts_samples,
+    generate_neural_mcts_match_samples,
 )
 from splendor_ai.dataset import CompactBatch
 from splendor_ai.env import SplendorDuelEnv
@@ -68,6 +69,160 @@ def generate_rust_neural_mcts_compact_batch(
     reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
 
     return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
+
+
+def generate_rust_neural_mcts_match_compact_batch(
+    net: Optional[SplendorNet] = None,
+    onnx_bytes: Optional[bytes] = None,
+    opp_net: Optional[SplendorNet] = None,
+    opp_onnx_bytes: Optional[bytes] = None,
+    num_games: int = 20,
+    num_simulations: int = 30,
+    start_seed: int = 42,
+    temp_steps: int = 12,
+    temp_final: float = 0.25,
+    dirichlet_alpha: float = 0.3,
+    dirichlet_eps: float = 0.25,
+    record_opponent: bool = False,
+) -> CompactBatch:
+    """全速调用底层 Rust 进行主模型与指定对手 (历史模型或启发式 AI) 的严格换座对抗采样."""
+    if onnx_bytes is None:
+        if net is None:
+            raise ValueError("Either net or onnx_bytes must be provided for primary agent")
+        onnx_bytes = net.export_onnx_bytes()
+
+    if opp_onnx_bytes is None and opp_net is not None:
+        opp_onnx_bytes = opp_net.export_onnx_bytes()
+
+    raw_obs, raw_masks, raw_policies, raw_values, raw_reasons, total_steps = generate_neural_mcts_match_samples(
+        onnx_bytes,
+        opp_onnx_bytes,
+        num_games,
+        num_simulations,
+        start_seed,
+        temp_steps,
+        temp_final,
+        dirichlet_alpha,
+        dirichlet_eps,
+        record_opponent,
+    )
+
+    obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
+    masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
+    target_policy = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
+    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
+    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
+
+    return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
+
+
+def concat_compact_batches(batches: List[CompactBatch]) -> CompactBatch:
+    """将多个紧凑批次高效拼接为一个统一批次 (零多余拷贝)."""
+    valid_b = [b for b in batches if b.num_samples > 0]
+    if not valid_b:
+        return CompactBatch(
+            obs=np.zeros((0, SplendorDuelEnv.OBS_SIZE), dtype=np.float32),
+            mask=np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool),
+            value=np.zeros((0, 2), dtype=np.float32),
+            reason=np.zeros((0, 3), dtype=np.float32),
+            target_policy=np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32),
+        )
+    if len(valid_b) == 1:
+        return valid_b[0]
+
+    obs = np.concatenate([b.obs for b in valid_b], axis=0)
+    mask = np.concatenate([b.mask for b in valid_b], axis=0)
+    target_policy = np.concatenate([b.target_policy for b in valid_b], axis=0)
+    value = np.concatenate([b.value for b in valid_b], axis=0)
+    reason = np.concatenate([b.reason for b in valid_b], axis=0)
+    return CompactBatch(obs=obs, mask=mask, target_policy=target_policy, value=value, reason=reason)
+
+
+def generate_league_mcts_compact_batch(
+    net: Optional[SplendorNet] = None,
+    onnx_bytes: Optional[bytes] = None,
+    history_bytes_pool: Optional[List[bytes]] = None,
+    total_games: int = 50,
+    heuristic_ratio: float = 0.15,
+    history_ratio: float = 0.15,
+    num_simulations: int = 30,
+    start_seed: int = 42,
+    temp_steps: int = 12,
+    temp_final: float = 0.25,
+    dirichlet_alpha: float = 0.3,
+    dirichlet_eps: float = 0.25,
+    record_opponent: bool = False,
+) -> CompactBatch:
+    """生成包含纯自博弈、启发式对抗和历史模型对抗的多元联赛样本 (彻底避免策略空间塌缩)."""
+    if onnx_bytes is None:
+        if net is None:
+            raise ValueError("Either net or onnx_bytes must be provided")
+        onnx_bytes = net.export_onnx_bytes()
+
+    # 计算配比 (均规整为偶数以实现严格换座)
+    n_heu = max(0, int(total_games * heuristic_ratio))
+    n_heu = (n_heu // 2) * 2
+
+    has_history = history_bytes_pool is not None and len(history_bytes_pool) > 0
+    n_hist = max(0, int(total_games * history_ratio)) if has_history else 0
+    n_hist = (n_hist // 2) * 2
+
+    n_self = max(2, total_games - n_heu - n_hist)
+    n_self = (n_self // 2) * 2
+
+    batches: List[CompactBatch] = []
+    curr_seed = start_seed
+
+    # 1. 纯自博弈批次
+    b_self = generate_rust_neural_mcts_compact_batch(
+        onnx_bytes=onnx_bytes,
+        num_games=n_self,
+        num_simulations=num_simulations,
+        start_seed=curr_seed,
+        temp_steps=temp_steps,
+        temp_final=temp_final,
+        dirichlet_alpha=dirichlet_alpha,
+        dirichlet_eps=dirichlet_eps,
+    )
+    batches.append(b_self)
+    curr_seed += n_self * 1009
+
+    # 2. 启发式对抗批次
+    if n_heu > 0:
+        b_heu = generate_rust_neural_mcts_match_compact_batch(
+            onnx_bytes=onnx_bytes,
+            opp_onnx_bytes=None,  # 对手为 HeuristicAI
+            num_games=n_heu,
+            num_simulations=num_simulations,
+            start_seed=curr_seed,
+            temp_steps=temp_steps,
+            temp_final=temp_final,
+            dirichlet_alpha=dirichlet_alpha,
+            dirichlet_eps=dirichlet_eps,
+            record_opponent=record_opponent,
+        )
+        batches.append(b_heu)
+        curr_seed += n_heu * 1009
+
+    # 3. 历史模型对抗批次
+    if n_hist > 0 and has_history:
+        import random
+        opp_bytes = random.choice(history_bytes_pool)
+        b_hist = generate_rust_neural_mcts_match_compact_batch(
+            onnx_bytes=onnx_bytes,
+            opp_onnx_bytes=opp_bytes,
+            num_games=n_hist,
+            num_simulations=num_simulations,
+            start_seed=curr_seed,
+            temp_steps=temp_steps,
+            temp_final=temp_final,
+            dirichlet_alpha=dirichlet_alpha,
+            dirichlet_eps=dirichlet_eps,
+            record_opponent=record_opponent,
+        )
+        batches.append(b_hist)
+
+    return concat_compact_batches(batches)
 
 
 def generate_selfplay_compact_batch(

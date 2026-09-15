@@ -306,6 +306,58 @@ pub fn generate_neural_mcts_samples(
     Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
 }
 
+#[pyfunction]
+#[pyo3(signature = (model_bytes_0, model_bytes_1=None, num_games=100, num_sims=30, start_seed=42, temp_steps=12, temp_final=0.25, dirichlet_alpha=0.3, dirichlet_eps=0.25, record_opponent=false))]
+pub fn generate_neural_mcts_match_samples(
+    py: Python<'_>,
+    model_bytes_0: &[u8],
+    model_bytes_1: Option<&[u8]>,
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+    temp_steps: usize,
+    temp_final: f32,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
+    record_opponent: bool,
+) -> PyResult<(
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<u8>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    usize,
+)> {
+    let batch = py
+        .detach(|| {
+            crate::ai::sample_neural_mcts_match_games_parallel(
+                model_bytes_0,
+                model_bytes_1,
+                num_games,
+                num_sims,
+                start_seed,
+                temp_steps,
+                temp_final,
+                dirichlet_alpha,
+                dirichlet_eps,
+                record_opponent,
+            )
+        })
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+
+    let (obs_arr, mask_arr, policy_arr, value_arr, reason_arr) = Python::attach(|py| {
+        (
+            numpy::PyArray1::from_vec(py, batch.obs).unbind(),
+            numpy::PyArray1::from_vec(py, batch.masks).unbind(),
+            numpy::PyArray1::from_vec(py, batch.policies).unbind(),
+            numpy::PyArray1::from_vec(py, batch.values).unbind(),
+            numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
+        )
+    });
+
+    Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
+}
+
 /// 纯 Rust 多线程 8 核并发成对严格换座对抗评测 (秒级极速完成门禁对抗，零 Python/CUDA 开销)
 /// - model_bytes_1: None 或空字节时，对抗内置 HeuristicAI
 /// - num_sims: 0 为极速纯直觉 PolicyNet 对决；> 0 时开启纯神经网络 MCTS 树搜索对抗

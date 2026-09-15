@@ -13,6 +13,8 @@ from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
     generate_rust_neural_mcts_compact_batch,
+    generate_rust_neural_mcts_match_compact_batch,
+    generate_league_mcts_compact_batch,
 )
 from splendor_ai.trainer import Trainer, TrainerConfig
 
@@ -54,6 +56,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-epochs", type=int, default=3, help="Training epochs per iteration in self-play")
     parser.add_argument("--eval-pairs", type=int, default=30, help="Paired match count in arena evaluation (2 * pairs games)")
     parser.add_argument("--promote-threshold", type=float, default=0.56, help="Win-rate threshold to promote candidate to best")
+    parser.add_argument("--heuristic-ratio", type=float, default=0.20, help="Ratio of self-play games against HeuristicAI")
+    parser.add_argument("--history-ratio", type=float, default=0.15, help="Ratio of self-play games against past checkpoints")
+    parser.add_argument(
+        "--gate-heuristic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable HeuristicAI promotion gate check to prevent regression against expert rules",
+    )
+    parser.add_argument("--gate-heuristic-threshold", type=float, default=0.50, help="Win-rate threshold against HeuristicAI in gate")
+    parser.add_argument("--gate-heuristic-pairs", type=int, default=10, help="Paired games for heuristic gate (2 * pairs)")
     parser.add_argument(
         "--pipeline",
         action=argparse.BooleanOptionalAction,
@@ -255,6 +267,20 @@ def train_selfplay(args: argparse.Namespace) -> None:
     candidate_net = SplendorNet().to(device)
     candidate_net.load_state_dict(baseline_net.state_dict())
 
+    # 构建历史联赛对手池 (League Opponents Pool)，避免自博弈策略塌缩与遗忘
+    history_bytes_pool: list[bytes] = []
+    ckpt_path_list = sorted(list(ckpt_dir.glob("iter_*.pt")), reverse=True)
+    for p in ckpt_path_list[:8]:
+        try:
+            old_net = SplendorNet()
+            ckpt_data = torch.load(p, map_location="cpu")
+            old_net.load_state_dict(ckpt_data["model_state"])
+            history_bytes_pool.append(old_net.export_onnx_bytes())
+        except Exception:
+            pass
+    if history_bytes_pool:
+        print(f"🏟️  多元联赛对手池已激活: 载入 {len(history_bytes_pool)} 个历史版本用于对抗采样防遗忘。")
+
     # 经验回放池 (滑动窗口防过拟合与遗忘)
     replay_buffer = ReplayBuffer(max_samples=args.buffer_size)
 
@@ -289,15 +315,20 @@ def train_selfplay(args: argparse.Namespace) -> None:
         t_start = time.time()
         onnx_bytes = model_net.export_onnx_bytes()
         fut = executor.submit(
-            generate_rust_neural_mcts_compact_batch,
+            generate_league_mcts_compact_batch,
             None,
             onnx_bytes,
+            history_bytes_pool,
             args.games_per_iter,
+            args.heuristic_ratio,
+            args.history_ratio,
             args.mcts_sims,
             seed,
             args.temp_steps,
+            args.temp_final,
             args.dirichlet_alpha,
             args.dirichlet_eps,
+            True,
         )
         return fut, t_start
 
@@ -305,7 +336,7 @@ def train_selfplay(args: argparse.Namespace) -> None:
     next_batch_fut = None
     next_batch_t0 = 0.0
     if active_pipeline:
-        print("⚡ 启用异步双缓冲流水线 (CPU Rust MCTS 自对弈与 GPU 训练重叠并发)...")
+        print("⚡ 启用异步双缓冲流水线 (CPU Rust MCTS 联赛对弈与 GPU 训练重叠并发)...")
         next_batch_fut, next_batch_t0 = _submit_selfplay_job(start_iter, baseline_net)
 
     # 2. 迭代飞轮
@@ -322,28 +353,41 @@ def train_selfplay(args: argparse.Namespace) -> None:
             wait_time = time.time() - t_wait_start
             total_gen_time = time.time() - next_batch_t0
             print(
-                f"1. ✅ 自博弈数据就绪！新增 {batch.num_samples} 紧凑搜索样本 "
+                f"1. ✅ 联赛对弈数据就绪！新增 {batch.num_samples} 紧凑搜索样本 "
                 f"(后台推演耗时: {total_gen_time:.2f}s | 主线程等待: {wait_time:.2f}s | "
                 f"吞吐: {batch.num_samples/max(total_gen_time, 1e-6):.0f} 步/秒)"
             )
         else:
             t0 = time.time()
+            n_heu = int(args.games_per_iter * args.heuristic_ratio) // 2 * 2
+            n_hist = int(args.games_per_iter * args.history_ratio) // 2 * 2 if history_bytes_pool else 0
+            n_self = max(2, (args.games_per_iter - n_heu - n_hist) // 2 * 2)
+            league_desc = [f"自对弈 {n_self} 局"]
+            if n_heu > 0:
+                league_desc.append(f"启发式对抗 {n_heu} 局")
+            if n_hist > 0:
+                league_desc.append(f"历史模型对抗 {n_hist} 局")
             print(
-                f"1. 启动 Rust 8 线程并行 ONNX 纯神经网络 MCTS 自对弈 {args.games_per_iter} 局 "
-                f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入 Dirichlet 探索噪声与温度轮盘赌采样)..."
+                f"1. 启动 Rust 8 线程并行多元联赛 MCTS 采样 {' + '.join(league_desc)} "
+                f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入探索噪声)..."
             )
-            batch = generate_rust_neural_mcts_compact_batch(
+            batch = generate_league_mcts_compact_batch(
                 net=baseline_net,
-                num_games=args.games_per_iter,
+                history_bytes_pool=history_bytes_pool,
+                total_games=args.games_per_iter,
+                heuristic_ratio=args.heuristic_ratio,
+                history_ratio=args.history_ratio,
                 num_simulations=args.mcts_sims,
                 start_seed=int(time.time()) + it * 1009,
                 temp_steps=args.temp_steps,
+                temp_final=args.temp_final,
                 dirichlet_alpha=args.dirichlet_alpha,
                 dirichlet_eps=args.dirichlet_eps,
+                record_opponent=True,
             )
             gen_time = time.time() - t0
             print(
-                f"   ✅ 本轮自博弈采样完成！新增 {batch.num_samples} 紧凑搜索样本 "
+                f"   ✅ 本轮联赛采样完成！新增 {batch.num_samples} 紧凑搜索样本 "
                 f"(耗时: {gen_time:.2f}s | 吞吐: {batch.num_samples/max(gen_time, 1e-6):.0f} 步/秒)"
             )
 
@@ -417,6 +461,34 @@ def train_selfplay(args: argparse.Namespace) -> None:
 
         # 晋升判定
         promoted = win_rate >= args.promote_threshold
+        heu_win_rate = None
+        blocked_by_heuristic = False
+
+        if promoted and args.gate_heuristic:
+            print(f"   🛡️  启动基准锚点门禁检验: 候选模型 vs HeuristicAI ({args.gate_heuristic_pairs * 2} 局成对严格换座)...")
+            heu_total, heu_c_wins, heu_ai_wins, heu_draws, heu_reasons = evaluate_neural_match(
+                bytes_c,
+                None,
+                num_pairs=args.gate_heuristic_pairs,
+                base_seed=int(time.time()) + it * 719,
+                num_sims=eval_sims,
+            )
+            heu_win_rate = heu_c_wins / max(heu_total, 1)
+            print(
+                f"   🥊 HeuristicAI 对抗结果: 候选胜 {heu_c_wins} | 启发式胜 {heu_ai_wins} | "
+                f"平局 {heu_draws} | 对抗胜率: {heu_win_rate*100:.1f}% "
+                f"(门禁要求 >= {args.gate_heuristic_threshold*100:.0f}%)"
+            )
+            if heu_win_rate < args.gate_heuristic_threshold:
+                print(
+                    f"   ❌ 候选模型虽在内战胜出 ({win_rate*100:.1f}%)，但未通过启发式基准检验 "
+                    f"({heu_win_rate*100:.1f}% < {args.gate_heuristic_threshold*100:.0f}%)！触发防退化拦截，拒绝晋升！🚫"
+                )
+                promoted = False
+                blocked_by_heuristic = True
+            else:
+                print(f"   ✅ 候选模型成功通过启发式锚点检验！稳固全能，允许晋升！🌟")
+
         meta = {
             "iteration": it,
             "total_games": total_games,
@@ -427,16 +499,24 @@ def train_selfplay(args: argparse.Namespace) -> None:
             "baseline_wins": match_agent1_wins,
             "avg_eval_rounds": avg_rounds,
             "avg_eval_steps": avg_steps,
+            "heuristic_win_rate": heu_win_rate,
+            "blocked_by_heuristic": blocked_by_heuristic,
         }
 
         if promoted:
-            print(f"   🎉 胜率达到 {win_rate*100:.1f}% (>= {args.promote_threshold*100:.0f}%) -> 晋升为新主力！🌟")
+            print(f"   🎉 恭喜晋升为新主力！🌟")
+            # 将被替换的主力存入历史对手池
+            history_bytes_pool.append(bytes_b)
+            if len(history_bytes_pool) > 10:
+                history_bytes_pool.pop(0)
+
             baseline_net.load_state_dict(candidate_net.state_dict())
             iter_filename = f"iter_{it:03d}.pt"
             trainer.save_checkpoint(iter_filename, is_best=True, meta=meta)
             print(f"   💾 成功归档晋升存档: {ckpt_dir / iter_filename} 并同步更新主力 {best_path}")
         else:
-            print(f"   ⚠️ 胜率 {win_rate*100:.1f}% 未达门禁要求 ({args.promote_threshold*100:.0f}%) -> 淘汰放弃，保留原基准重新探索。")
+            reason_str = "未通过启发式基准检验" if blocked_by_heuristic else f"内战胜率 {win_rate*100:.1f}% 未达门禁要求 ({args.promote_threshold*100:.0f}%)"
+            print(f"   ⚠️ {reason_str} -> 淘汰放弃，保留原基准重新探索。")
             candidate_net.load_state_dict(baseline_net.state_dict())
 
         trainer.save_checkpoint("latest.pt", is_best=False, meta=meta)

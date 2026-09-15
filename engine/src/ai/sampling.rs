@@ -512,6 +512,210 @@ pub fn sample_neural_mcts_games_parallel(
     })
 }
 
+fn simulate_single_neural_mcts_match_game(
+    mcts: &RustMCTS,
+    evaluator0: &TractNeuralEvaluator,
+    evaluator1: Option<&TractNeuralEvaluator>,
+    num_sims: usize,
+    seed: u64,
+    is_swap: bool,
+    temp_steps: usize,
+    temp_final: f32,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
+    record_opponent: bool,
+) -> Option<SingleGameTrajectory> {
+    let mut game = GameState::new_game(seed);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+    let mut raw_obs = Vec::with_capacity(200 * OBS_SIZE);
+    let mut raw_masks = Vec::with_capacity(200 * ACTION_SIZE);
+    let mut raw_policies = Vec::with_capacity(200 * ACTION_SIZE);
+    let mut raw_actions = Vec::with_capacity(200);
+    let mut raw_players = Vec::with_capacity(200);
+    let mut raw_turns = Vec::with_capacity(200);
+    let mut steps = 0;
+
+    while !matches!(game.phase, TurnPhase::GameOver(_)) {
+        steps += 1;
+        if steps > MAX_GAME_STEPS {
+            break;
+        }
+
+        let legals = RuleEngine::legal_actions(&game);
+        if legals.is_empty() {
+            break;
+        }
+
+        let acting_player = game.current_player;
+        let is_agent0 = if !is_swap {
+            acting_player == 0
+        } else {
+            acting_player == 1
+        };
+
+        let obs = encode_state(&game);
+        let mask = action_mask_from_legals(&legals);
+
+        let (add_noise, temp) = if steps <= temp_steps {
+            (true, 1.0)
+        } else {
+            (false, temp_final)
+        };
+
+        let (action, policy_vec, should_record) = if is_agent0 {
+            let (act, pol) = mcts.search_neural_policy_with_legals(
+                &game,
+                legals,
+                evaluator0,
+                num_sims,
+                add_noise,
+                dirichlet_alpha,
+                dirichlet_eps,
+                temp,
+                &mut rng,
+            )?;
+            (act, pol, true)
+        } else if let Some(eval1) = evaluator1 {
+            let (act, pol) = mcts.search_neural_policy_with_legals(
+                &game,
+                legals,
+                eval1,
+                num_sims,
+                add_noise,
+                dirichlet_alpha,
+                dirichlet_eps,
+                temp,
+                &mut rng,
+            )?;
+            (act, pol, record_opponent)
+        } else {
+            // 对战内置 HeuristicAI
+            let act = HeuristicAI::select_action(&game, &mut rng)?;
+            let id = action_to_id(&act);
+            let mut pol = [0.0f32; ACTION_SIZE];
+            if id < ACTION_SIZE {
+                pol[id] = 1.0;
+            }
+            (act, pol, record_opponent)
+        };
+
+        let action_id = action_to_id(&action);
+        if action_id >= ACTION_SIZE {
+            return None;
+        }
+
+        if should_record {
+            raw_obs.extend_from_slice(&obs);
+            for &b in mask.iter() {
+                raw_masks.push(if b { 1 } else { 0 });
+            }
+            raw_policies.extend_from_slice(&policy_vec);
+            raw_actions.push(action_id as i32);
+            raw_players.push(acting_player);
+            raw_turns.push(game.turn_number);
+        }
+
+        if GameEngine::step(&mut game, &action).is_err() {
+            return None;
+        }
+    }
+
+    let actual_steps = raw_actions.len();
+    if actual_steps == 0 {
+        return None;
+    }
+
+    let winner_opt = game.winner.map(|(w, _)| w);
+    let final_turn = game.turn_number;
+    let (values, reasons) = compute_multi_target_labels(
+        &game,
+        &raw_players,
+        &raw_turns,
+        winner_opt,
+        final_turn,
+    );
+
+    Some(SingleGameTrajectory {
+        obs: raw_obs,
+        masks: raw_masks,
+        policies: raw_policies,
+        actions: raw_actions,
+        values,
+        reasons,
+        steps: actual_steps,
+    })
+}
+
+/// 并行采样 N 局双智能体严格换座对抗自博弈样本 (支持 Neural vs Heuristic 或 Neural vs Historical Model)
+pub fn sample_neural_mcts_match_games_parallel(
+    bytes0: &[u8],
+    bytes1: Option<&[u8]>,
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+    temp_steps: usize,
+    temp_final: f32,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
+    record_opponent: bool,
+) -> Result<CompactBatchSamples, String> {
+    let eval0 = TractNeuralEvaluator::from_bytes(bytes0)?;
+    let eval1 = match bytes1 {
+        Some(b) if !b.is_empty() => Some(TractNeuralEvaluator::from_bytes(b)?),
+        _ => None,
+    };
+    let mcts = RustMCTS::default();
+
+    let trajectories: Vec<SingleGameTrajectory> = (0..num_games)
+        .into_par_iter()
+        .filter_map(|idx| {
+            let is_swap = (idx % 2) == 1;
+            simulate_single_neural_mcts_match_game(
+                &mcts,
+                &eval0,
+                eval1.as_ref(),
+                num_sims,
+                start_seed + (idx as u64) * 997,
+                is_swap,
+                temp_steps,
+                temp_final,
+                dirichlet_alpha,
+                dirichlet_eps,
+                record_opponent,
+            )
+        })
+        .collect();
+
+    let total_steps: usize = trajectories.iter().map(|t| t.steps).sum();
+
+    let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
+    let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_actions = Vec::with_capacity(total_steps);
+    let mut all_values = Vec::with_capacity(total_steps * 2);
+    let mut all_reasons = Vec::with_capacity(total_steps * 3);
+
+    for t in trajectories {
+        all_obs.extend(t.obs);
+        all_masks.extend(t.masks);
+        all_policies.extend(t.policies);
+        all_actions.extend(t.actions);
+        all_values.extend(t.values);
+        all_reasons.extend(t.reasons);
+    }
+
+    Ok(CompactBatchSamples {
+        total_steps,
+        obs: all_obs,
+        masks: all_masks,
+        policies: all_policies,
+        actions: all_actions,
+        values: all_values,
+        reasons: all_reasons,
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct ParallelMatchResult {
     pub total_games: usize,
