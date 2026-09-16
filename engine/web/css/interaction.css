@@ -1,25 +1,35 @@
 /* 人类交互对战模式专用样式 */
 
-/* 顶部/局势交互引导栏 */
+/* 顶部/局势交互引导栏 (固定高度约束，彻底杜绝动态按钮出没导致的版面上下抖动) */
 .turn-guide-banner {
   background: linear-gradient(90deg, #1e1b4b, #1e293b);
   border: 1px solid #4338ca;
   border-radius: 6px;
-  padding: 8px 12px;
+  padding: 0 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+  height: 42px;
+  min-height: 42px;
+  max-height: 42px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .guide-text {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 700;
   color: #c7d2fe;
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1;
 }
 
 .guide-badge {
@@ -28,12 +38,31 @@
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 0.75rem;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .action-bar-buttons {
   display: flex;
   gap: 6px;
   align-items: center;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.action-bar-buttons button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+  transition: all 0.15s;
 }
 
 /* 棋盘交互高亮与选取 */
@@ -48,16 +77,45 @@
 }
 
 .board-cell.cell-selected {
-  background-color: #1e3a8a !important;
-  border-color: #60a5fa !important;
-  box-shadow: 0 0 12px rgba(96, 165, 250, 0.6);
-  transform: scale(1.05);
+  background-color: rgba(251, 191, 36, 0.15) !important;
+  border: 2px solid #fbbf24 !important;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.6);
+  transform: scale(1.04);
   z-index: 10;
 }
 
 .board-cell.cell-selected .token {
-  box-shadow: 0 0 14px #fff, inset 0 2px 4px rgba(255,255,255,0.8);
-  border-color: #fff;
+  transform: scale(1.12);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.8), 0 0 8px #fff;
+  border-color: #fbbf24;
+}
+
+/* 选中顺序紧贴角标 (1, 2, 3) - 绝对贴合格子右上角，绝不错位 */
+.selected-order-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fbbf24;
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 800;
+  font-family: monospace;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+  border: 1.5px solid #fff;
+  z-index: 25;
+  pointer-events: none;
+  animation: badgePop 0.15s ease-out;
+}
+
+@keyframes badgePop {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .board-cell.cell-candidate {
@@ -220,3 +278,288 @@
   border-top: 1px solid #334155;
   padding-top: 10px;
 }
+
+/* =========================================================
+   即时卡牌悬停浮层 (Card Hovercard) 
+   ========================================================= */
+.card-hovercard {
+  position: fixed;
+  z-index: 1000;
+  background: #141926;
+  border: 1.5px solid var(--accent-gold);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85), 0 0 20px rgba(251, 191, 36, 0.35);
+  display: flex;
+  padding: 12px;
+  gap: 14px;
+  max-width: 440px;
+  pointer-events: none;
+  animation: hovercardFadeIn 0.15s ease-out;
+  backdrop-filter: blur(8px);
+}
+
+@keyframes hovercardFadeIn {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.hovercard-left {
+  flex-shrink: 0;
+}
+
+.hovercard-preview-card {
+  width: 126px;
+  height: 190px;
+  border-radius: 6px;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.8);
+  background-color: #1a1714;
+}
+
+.hovercard-right {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.hovercard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 5px;
+}
+
+.hovercard-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--accent-gold);
+}
+
+.hovercard-badges {
+  display: flex;
+  gap: 5px;
+}
+
+.badge-points {
+  background: rgba(234, 179, 8, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(234, 179, 8, 0.5);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.badge-crowns {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.hovercard-bonus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.hovercard-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.73rem;
+}
+
+.hovercard-label {
+  color: var(--text-muted);
+}
+
+.hovercard-chips-wrap {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.hovercard-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #111624;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.hovercard-status {
+  font-size: 0.73rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+}
+
+.hovercard-status.can-afford {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.hovercard-status.cannot-afford {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.hovercard-ability {
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 5px;
+  padding: 5px 8px;
+  margin-top: 3px;
+}
+
+.ability-title {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #a5b4fc;
+}
+
+.ability-desc {
+  font-size: 0.68rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+/* 黄金选中高亮 (Gold Vortex) */
+.board-cell.cell-gold-selected {
+  border-color: #fbbf24 !important;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.9), inset 0 0 10px rgba(251, 191, 36, 0.5) !important;
+  animation: goldVortex 1.6s infinite ease-in-out;
+  transform: scale(1.08);
+  z-index: 12;
+}
+
+@keyframes goldVortex {
+  0%, 100% { transform: scale(1.06); box-shadow: 0 0 14px rgba(251, 191, 36, 0.7); }
+  50% { transform: scale(1.12); box-shadow: 0 0 24px rgba(251, 191, 36, 1); }
+}
+
+/* 黄金选定后卡牌预留引导态 (Pulse Reservable) */
+.card-item.pulse-reservable {
+  border-color: #fbbf24 !important;
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.65) !important;
+  animation: pulseReservableCard 1.5s infinite ease-in-out;
+  cursor: pointer;
+}
+
+@keyframes pulseReservableCard {
+  0%, 100% { box-shadow: 0 0 8px rgba(251, 191, 36, 0.4); }
+  50% { box-shadow: 0 0 20px rgba(251, 191, 36, 0.9); }
+}
+
+/* =========================================================
+   幽灵残留发光标记 (Ghost Highlighting) 
+   ========================================================= */
+.cell-ghost-active {
+  border-color: rgba(99, 102, 241, 0.7) !important;
+  background-color: rgba(99, 102, 241, 0.18) !important;
+  box-shadow: 0 0 14px rgba(99, 102, 241, 0.5) !important;
+}
+
+.ghost-token {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ghostFade 2.6s ease-out forwards;
+  position: relative;
+}
+
+@keyframes ghostFade {
+  0% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 10px #6366f1); }
+  70% { opacity: 0.7; transform: scale(1); filter: drop-shadow(0 0 4px #6366f1); }
+  100% { opacity: 0.15; transform: scale(0.9); }
+}
+
+.ghost-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  background: rgba(15, 23, 42, 0.85);
+  color: #38bdf8;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  letter-spacing: -0.5px;
+}
+
+/* =========================================================
+   图元可视化支付选择方案模态框 
+   ========================================================= */
+.visual-plan-card {
+  background: #131722;
+  border: 1.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.visual-plan-card:hover {
+  border-color: var(--accent-gold);
+  background: #181f30;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.6), 0 0 12px rgba(251, 191, 36, 0.3);
+  transform: translateY(-2px);
+}
+
+.visual-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.visual-plan-title {
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.visual-plan-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+}
+
+.visual-plan-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.visual-chips-list {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+

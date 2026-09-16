@@ -85,7 +85,13 @@ impl PlayerState {
 
     /// 添加打出的珠宝卡并结算其属性与附着颜色
     pub fn play_card(&mut self, card: JewelCard, attached_color: Option<GemType>) {
-        self.cards.push(card);
+        let mut final_card = card;
+        if card.color == CardColor::Joker {
+            if let Some(color) = attached_color {
+                final_card.color = CardColor::from_gem_type(color).unwrap();
+            }
+        }
+        self.cards.push(final_card);
         self.total_points += card.points;
         self.total_crowns += card.crowns;
 

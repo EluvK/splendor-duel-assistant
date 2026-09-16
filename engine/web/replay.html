@@ -68,106 +68,24 @@
     </div>
   </div>
 
-  <main>
-    <!-- 左侧：双人平铺玩家仪表盘 -->
-    <div class="panel player-panel">
-      <div class="panel-title">
-        <span>对决玩家仪表盘</span>
-        <span style="font-size:0.75rem; color:var(--text-muted);">双方状态一目了然</span>
-      </div>
-
-      <div class="players-grid">
-        <!-- Player 0 -->
-        <div class="player-card" id="player0Card">
-          <div class="player-header">
-            <span class="player-name">
-              <span style="color:#38bdf8;">👤 Player 0</span>
-              <span class="acting-indicator">⚡ 本步行动</span>
-              <span class="next-indicator">⏱ 下步待命</span>
-            </span>
-            <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
-          </div>
-          <div class="victory-progress">
-            <div>
-              <div class="progress-row"><span>声望总分</span><span><b id="p0Points">0</b> / 20</span></div>
-              <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>王冠数量</span><span><b id="p0Crowns">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill crowns" id="p0CrownsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>最高单色声望</span><span><b id="p0MaxColor">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill color" id="p0ColorBar" style="width: 0%"></div></div>
-            </div>
-          </div>
-          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p0TokenTotal">0</span>/10):</div>
-          <div class="token-chips" id="p0Tokens"></div>
-          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
-          <div class="token-chips" id="p0Bonuses"></div>
-          <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p0ReservedCount">0</span>/3):</div>
-          <div class="reserved-cards-container" id="p0ReservedCards"></div>
-
-          <!-- 已获王室赞助卡 -->
-          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p0RoyalCount">0</span>):</div>
-          <div class="royals-mini-container" id="p0RoyalCards"></div>
-
-          <!-- 已购买卡牌矩阵 (Tableau) -->
-          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
-            <span>已购卡牌 (<span id="p0PurchasedCount">0</span> 张):</span>
-            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
-          </div>
-          <div class="purchased-cards-container" id="p0PurchasedCards"></div>
-        </div>
-
-        <!-- Player 1 -->
-        <div class="player-card" id="player1Card">
-          <div class="player-header">
-            <span class="player-name">
-              <span style="color:#f472b6;">👤 Player 1</span>
-              <span class="acting-indicator">⚡ 本步行动</span>
-              <span class="next-indicator">⏱ 下步待命</span>
-            </span>
-            <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
-          </div>
-          <div class="victory-progress">
-            <div>
-              <div class="progress-row"><span>声望总分</span><span><b id="p1Points">0</b> / 20</span></div>
-              <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>王冠数量</span><span><b id="p1Crowns">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill crowns" id="p1CrownsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>最高单色声望</span><span><b id="p1MaxColor">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill color" id="p1ColorBar" style="width: 0%"></div></div>
-            </div>
-          </div>
-          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p1TokenTotal">0</span>/10):</div>
-          <div class="token-chips" id="p1Tokens"></div>
-          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
-          <div class="token-chips" id="p1Bonuses"></div>
-          <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p1ReservedCount">0</span>/3):</div>
-          <div class="reserved-cards-container" id="p1ReservedCards"></div>
-
-          <!-- 已获王室赞助卡 -->
-          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p1RoyalCount">0</span>):</div>
-          <div class="royals-mini-container" id="p1RoyalCards"></div>
-
-          <!-- 已购买卡牌矩阵 (Tableau) -->
-          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
-            <span>已购卡牌 (<span id="p1PurchasedCount">0</span> 张):</span>
-            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
-          </div>
-          <div class="purchased-cards-container" id="p1PurchasedCards"></div>
-        </div>
-      </div>
+  <!-- 全局对局胜率与局势天平折线走势图 -->
+  <div class="eval-chart-container" id="evalChartContainer">
+    <div class="eval-chart-header">
+      <span>📈 对局局势与胜率预期走势图 (点击曲线上任意点可直接跳转至该步骤)</span>
+      <span id="evalChartLegend" style="font-size:0.72rem; font-weight:normal; color:var(--text-muted);">
+        <span style="color:#38bdf8; font-weight:700;">■ P0 优势区 (上)</span> · <span style="color:#f472b6; font-weight:700;">■ P1 优势区 (下)</span> · 当前步: <b id="chartCurrentStepBadge" style="color:var(--accent-gold);">#0</b>
+      </span>
     </div>
+    <div class="eval-chart-canvas-wrap">
+      <canvas id="evalChartCanvas" class="eval-chart-canvas"></canvas>
+    </div>
+  </div>
 
-    <!-- 中间：3 级金字塔卡牌 + 王室赞助池 (王室置于金字塔下方且居中) -->
+  <main>
+    <!-- 左列：金字塔珠宝展示区 + 王室赞助池 -->
     <div class="panel pyramid-section">
       <div class="panel-title">金字塔明牌展示区</div>
+      
       <div class="tier-row">
         <div class="tier-header">
           <span>等级 3</span>
@@ -192,36 +110,159 @@
         <div class="cards-flex" id="tier1Cards"></div>
       </div>
 
-      <!-- 王室赞助池 (置于金字塔下方) -->
-      <div class="panel-title" style="margin-top: 6px;">王室赞助池</div>
-      <div class="royals-row" id="royalsContainer">
-        <!-- 4 张王室卡 (居中排布) -->
+      <!-- 王室赞助池 -->
+      <div class="panel-title" style="margin-top: 4px;">王室赞助池</div>
+      <div class="royals-row" id="royalsContainer"></div>
+    </div>
+
+    <!-- 中列：上下结构 (上方 5×5 棋盘 + 下方对决双方仪表盘) -->
+    <div class="center-stage">
+      <!-- 5x5 宝石棋盘 + 特权/布袋 (紧凑侧排，删除标题节约垂直高度) -->
+      <div class="panel board-panel">
+        <div class="board-stage-wrap">
+          <div class="board-container" id="boardGrid">
+            <!-- 动态生成 25 个格子 -->
+          </div>
+
+          <div class="board-side-info">
+            <div class="side-info-card">
+              <span class="privilege-icon"></span>
+              <div class="side-info-meta">
+                <span class="side-info-label">特权卷轴</span>
+                <b id="privilegePool" style="color:var(--accent-gold); font-size:1.15rem;">2</b>
+              </div>
+            </div>
+            <div class="side-info-card">
+              <span class="bag-icon"></span>
+              <div class="side-info-meta">
+                <span class="side-info-label">布袋剩余</span>
+                <b id="bagCount" style="color:#e2e8f0; font-size:1.15rem;">0</b>
+              </div>
+            </div>
+            <div class="side-info-card">
+              <span class="board-tokens-icon">🎲</span>
+              <div class="side-info-meta">
+                <span class="side-info-label">棋盘存量</span>
+                <b id="boardTokensCount" style="color:var(--accent-gold); font-size:1.05rem;">25</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 双方仪表盘区域 (Player 0 与 Player 1 左右并排) -->
+      <div class="panel players-panel">
+        <div class="players-grid">
+          <!-- 先手 Player 0 -->
+          <div class="player-card" id="player0Card">
+            <div class="player-header">
+              <span class="player-name">
+                <span style="color:#38bdf8; font-weight:700;">👤 Player 0</span>
+                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(先手)</span>
+              </span>
+              <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+            </div>
+            <div class="victory-progress">
+              <div>
+                <div class="progress-row"><span>声望</span><span><b id="p0Points">0</b> / 20</span></div>
+                <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>王冠</span><span><b id="p0Crowns">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill crowns" id="p0CrownsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>单色最高</span><span><b id="p0MaxColor">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill color" id="p0ColorBar" style="width: 0%"></div></div>
+              </div>
+            </div>
+
+            <!-- 手中筹码 (7 列垂直堆叠) -->
+            <div class="player-chips-stack-area">
+              <div class="area-label">手中筹码 (<span id="p0TokenTotal">0</span>/10):</div>
+              <div class="token-stacks-grid" id="p0Tokens"></div>
+            </div>
+
+            <!-- 永久减免与已购卡片 (按颜色分列堆叠) -->
+            <div class="player-tableau-area">
+              <div class="area-label">永久减免与卡牌 (已购 <span id="p0PurchasedCount">0</span>):</div>
+              <div class="tableau-by-color-grid" id="p0PurchasedCards"></div>
+            </div>
+
+            <!-- 最底部：预留卡 (≤3) 与王室卡 (≤2) 横排 -->
+            <div class="player-bottom-cards-area">
+              <div class="area-label">
+                <span>预留卡 (<span id="p0ReservedCount">0</span>/3) · 王室 (<span id="p0RoyalCount">0</span>):</span>
+              </div>
+              <div class="bottom-cards-row">
+                <div class="reserved-cards-container" id="p0ReservedCards"></div>
+                <div class="royals-mini-container" id="p0RoyalCards"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 后手 Player 1 -->
+          <div class="player-card" id="player1Card">
+            <div class="player-header">
+              <span class="player-name">
+                <span style="color:#f472b6; font-weight:700;">👤 Player 1</span>
+                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(后手)</span>
+              </span>
+              <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+            </div>
+            <div class="victory-progress">
+              <div>
+                <div class="progress-row"><span>声望</span><span><b id="p1Points">0</b> / 20</span></div>
+                <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>王冠</span><span><b id="p1Crowns">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill crowns" id="p1CrownsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>单色最高</span><span><b id="p1MaxColor">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill color" id="p1ColorBar" style="width: 0%"></div></div>
+              </div>
+            </div>
+
+            <!-- 手中筹码 (7 列垂直堆叠) -->
+            <div class="player-chips-stack-area">
+              <div class="area-label">手中筹码 (<span id="p1TokenTotal">0</span>/10):</div>
+              <div class="token-stacks-grid" id="p1Tokens"></div>
+            </div>
+
+            <!-- 永久减免与已购卡片 (按颜色分列堆叠) -->
+            <div class="player-tableau-area">
+              <div class="area-label">永久减免与卡牌 (已购 <span id="p1PurchasedCount">0</span>):</div>
+              <div class="tableau-by-color-grid" id="p1PurchasedCards"></div>
+            </div>
+
+            <!-- 最底部：预留卡 (≤3) 与王室卡 (≤2) 横排 -->
+            <div class="player-bottom-cards-area">
+              <div class="area-label">
+                <span>预留卡 (<span id="p1ReservedCount">0</span>/3) · 王室 (<span id="p1RoyalCount">0</span>):</span>
+              </div>
+              <div class="bottom-cards-row">
+                <div class="reserved-cards-container" id="p1ReservedCards"></div>
+                <div class="royals-mini-container" id="p1RoyalCards"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- 右侧：5x5 棋盘 + 特权/布袋 + 对局步骤日志 + AI 决策与评分分析模块 -->
-    <div class="panel board-panel right-panel">
-      <div class="panel-title">
-        <span>5×5 棋盘矩阵</span>
-        <span id="boardTokensCount" style="font-size:0.75rem; color:var(--accent-gold);">25 标记</span>
-      </div>
-
-      <div class="board-container" id="boardGrid">
-        <!-- 动态生成 25 个格子 -->
-      </div>
-
-      <div class="board-footer">
-        <span><span class="privilege-icon"></span>特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
-        <span><span class="bag-icon"></span>布袋剩余: <b id="bagCount">0</b></span>
-      </div>
-
+    <!-- 右侧：侧边情报栏 (步骤日志与AI决策分析) -->
+    <div class="sidebar-panel">
       <!-- 对局日志 -->
-      <div class="panel-title" style="margin-top: 2px;">
-        <span>对局操作日志</span>
-        <span style="font-size:0.7rem; color:var(--text-muted);">点击步骤快速跳转</span>
-      </div>
-      <div class="log-panel" id="logContainer" style="min-height: 140px; max-height: 200px;">
-        <!-- 动态追加步骤记录 -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>对局操作日志</span>
+          <span style="font-size:0.7rem; color:var(--text-muted);">点击步骤快速跳转</span>
+        </div>
+        <div class="log-panel" id="logContainer" style="height: 360px; max-height: 420px;">
+          <!-- 动态追加步骤记录 -->
+        </div>
       </div>
 
       <!-- AI 决策与动作评分分析模块 -->
@@ -231,7 +272,6 @@
             🧠 AI 决策与动作估值
             <span id="decisionStepIndex" style="font-size:0.75rem; color:var(--text-muted);">#0</span>
           </span>
-          <span id="decisionAiTypeBadge" class="ai-type-badge">启发式 AI</span>
         </div>
 
         <div class="decision-content">
@@ -484,6 +524,116 @@
       slider.value = currentStep;
       document.getElementById('btnPrev').disabled = (currentStep === 0);
       document.getElementById('btnNext').disabled = (totalSteps > 0 && currentStep >= totalSteps - 1 && document.getElementById('gamePhase').innerText.includes('获胜'));
+
+      // 实时同步走势折线图游标
+      renderEvaluationChart(historySteps, currentStep);
+    }
+
+    /* 绘制胜率走势天平折线图 */
+    function renderEvaluationChart(steps, currentIdx) {
+      const canvas = document.getElementById('evalChartCanvas');
+      if (!canvas || !steps || steps.length === 0) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = rect.width || 600;
+      const h = rect.height || 85;
+
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+
+      // 50% 均势虚线
+      const midY = h / 2;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, midY);
+      ctx.lineTo(w, midY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const total = steps.length;
+      if (total <= 1) return;
+
+      const points = steps.map((s, idx) => {
+        const x = (idx / (total - 1)) * (w - 24) + 12;
+        let winrate = 50;
+        if (s.score !== undefined && s.score !== null) {
+          if (s.ai_type && s.ai_type.includes('neural')) {
+            winrate = (s.score + 100.0) / 2.0;
+          } else {
+            winrate = Math.max(5, Math.min(95, 50 + s.score * 4));
+          }
+        }
+        const y = h - 6 - ((winrate / 100) * (h - 12));
+        return { x, y, winrate, step: s };
+      });
+
+      // 填充渐变色
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(56, 189, 248, 0.28)');
+      grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.02)');
+      grad.addColorStop(1, 'rgba(244, 114, 182, 0.28)');
+
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.lineTo(points[points.length - 1].x, midY);
+      ctx.lineTo(points[0].x, midY);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // 绘制走势折线
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      // 当前步高亮游标
+      if (currentIdx >= 0 && currentIdx < points.length) {
+        const curPt = points[currentIdx];
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(curPt.x, 0);
+        ctx.lineTo(curPt.x, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.arc(curPt.x, curPt.y, 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbbf24';
+        ctx.shadowColor = '#fbbf24';
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        const badge = document.getElementById('chartCurrentStepBadge');
+        if (badge) badge.innerText = `#${currentIdx} (估值: ${curPt.winrate.toFixed(0)}%)`;
+      }
+    }
+
+    const chartCanvas = document.getElementById('evalChartCanvas');
+    if (chartCanvas) {
+      chartCanvas.onclick = (e) => {
+        if (!historySteps || historySteps.length <= 1) return;
+        const rect = chartCanvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const ratio = Math.max(0, Math.min(1, (clickX - 12) / (rect.width - 24)));
+        const targetStep = Math.round(ratio * (historySteps.length - 1));
+        fetchStep(targetStep);
+      };
     }
 
     /* 日志 DOM 构建与增量追加 */
@@ -570,26 +720,32 @@
         const isRandom = decision.ai_type === 'random';
 
         if (isNeural) {
-          badgeEl.innerText = `🧠 神经网络 AI (${decision.ai_type})`;
-          badgeEl.style.borderColor = '#22c55e';
-          badgeEl.style.backgroundColor = 'rgba(34, 197, 94, 0.15)';
+          if (badgeEl) {
+            badgeEl.innerText = `🧠 神经网络 AI (${decision.ai_type})`;
+            badgeEl.style.borderColor = '#22c55e';
+            badgeEl.style.backgroundColor = 'rgba(34, 197, 94, 0.15)';
+          }
           scoreLabelEl.innerText = '胜率估值:';
           rankTitle.innerText = '神经网络策略概率分布 P(a|s)';
           rankSub.innerText = 'Policy Head 输出的高置信动作';
         } else if (isRandom) {
-          badgeEl.innerText = '🎲 随机 AI (Random)';
-          badgeEl.style.borderColor = '#f59e0b';
-          badgeEl.style.backgroundColor = 'rgba(245, 158, 11, 0.15)';
-          scoreLabelEl.innerText = '动作估值:';
-          rankTitle.innerText = '候选动作列表';
-          rankSub.innerText = '随机均匀采样';
+          if (badgeEl) {
+            badgeEl.innerText = '🎲 随机 AI';
+            badgeEl.style.borderColor = '#94a3b8';
+            badgeEl.style.backgroundColor = 'rgba(148, 163, 184, 0.15)';
+          }
+          scoreLabelEl.innerText = '随机评分:';
+          rankTitle.innerText = '随机合法动作抽取 (Uniform Random)';
+          rankSub.innerText = '无策略权重，等概率随机';
         } else {
-          badgeEl.innerText = '🤖 启发式 AI (Heuristic)';
-          badgeEl.style.borderColor = 'var(--primary)';
-          badgeEl.style.backgroundColor = 'rgba(99, 102, 241, 0.25)';
-          scoreLabelEl.innerText = '启发式估值:';
-          rankTitle.innerText = '候选动作打分排名 (Top Candidates)';
-          rankSub.innerText = '规则特征加权评分';
+          if (badgeEl) {
+            badgeEl.innerText = '🤖 启发式 AI';
+            badgeEl.style.borderColor = '#38bdf8';
+            badgeEl.style.backgroundColor = 'rgba(56, 189, 248, 0.15)';
+          }
+          scoreLabelEl.innerText = '启发式得分:';
+          rankTitle.innerText = '候选合法动作打分排名 (Top Candidates)';
+          rankSub.innerText = '启发式估值越高越优先';
         }
 
         if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
@@ -677,8 +833,22 @@
         }
       }
 
+      // 提取本步棋盘动作的幽灵残留
+      const ghostTokens = [];
+      if (step && step.action_desc) {
+        const matches = step.action_desc.matchAll(/\((\d+),\s*(\d+)\)/g);
+        for (const m of matches) {
+          ghostTokens.push({
+            r: parseInt(m[1], 10),
+            c: parseInt(m[2], 10),
+            gem: 'blue',
+            label: '取走'
+          });
+        }
+      }
+
       // 5x5 棋盘
-      const tokenCount = renderBoard(state.board, document.getElementById('boardGrid'));
+      const tokenCount = renderBoard(state.board, document.getElementById('boardGrid'), { ghostTokens });
       document.getElementById('boardTokensCount').innerText = `${tokenCount} 标记`;
       document.getElementById('privilegePool').innerText = state.privilege_pool;
       document.getElementById('bagCount').innerText = state.bag_count;
@@ -686,15 +856,19 @@
       // 王室卡
       renderRoyalsPool(state.royal_cards, document.getElementById('royalsContainer'));
 
-      // 金字塔卡牌 (含牌库卡背)
+      // 金字塔卡牌 (含牌库卡背与悬停 Hovercard 支持)
+      const curP = state.players[actor] || state.players[0];
       renderCardsList(state.pyramid[2], document.getElementById('tier3Cards'), {
-        deckInfo: { tier: 3, count: state.decks_count[2] }
+        deckInfo: { tier: 3, count: state.decks_count[2] },
+        currentPlayerState: curP
       });
       renderCardsList(state.pyramid[1], document.getElementById('tier2Cards'), {
-        deckInfo: { tier: 2, count: state.decks_count[1] }
+        deckInfo: { tier: 2, count: state.decks_count[1] },
+        currentPlayerState: curP
       });
       renderCardsList(state.pyramid[0], document.getElementById('tier1Cards'), {
-        deckInfo: { tier: 1, count: state.decks_count[0] }
+        deckInfo: { tier: 1, count: state.decks_count[0] },
+        currentPlayerState: curP
       });
 
       document.getElementById('deck3Count').innerText = state.decks_count[2];

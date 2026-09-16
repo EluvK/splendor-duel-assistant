@@ -139,6 +139,7 @@ export function formatFriendlyAction(desc) {
 export class GameController {
   constructor() {
     this.state = null;
+    this.prevState = null;
     this.legalActions = [];
     this.isHuman = false;
     this.currentPlayer = 0;
@@ -148,6 +149,10 @@ export class GameController {
     this.autoStepAi = true;
     this.aiStepTimer = null;
     this.isActionPending = false;
+
+    // 动作幽灵残留追踪 (Ghost Highlighting)
+    this.ghostTokens = [];
+    this.ghostTimer = null;
 
     // 对战操作历史状态
     this.history = [];
@@ -344,6 +349,8 @@ export class GameController {
   }
 
   updateData(data) {
+    const prevBoard = this.state ? this.state.board : null;
+    this.prevState = this.state;
     this.state = data.state;
     this.legalActions = data.legal_actions || [];
     this.isHuman = data.is_human;
@@ -352,6 +359,13 @@ export class GameController {
       this.playerKinds = data.player_kinds;
     } else if (!this.playerKinds || this.playerKinds.length !== 2) {
       this.playerKinds = ['human', 'neural'];
+    }
+
+    // 动作幽灵残留追踪提取 (Ghost Highlighting)
+    const latestStep = data.step || (data.history && data.history.length > 0 ? data.history[data.history.length - 1] : null);
+    if (latestStep && (latestStep.action || latestStep.action_desc)) {
+      const actTxt = latestStep.action_desc || latestStep.action;
+      this.extractGhostTokensFromAction(actTxt, prevBoard);
     }
 
     // 同步下拉框
@@ -372,6 +386,38 @@ export class GameController {
 
     this.render();
     this.handleTurnFlow();
+  }
+
+  extractGhostTokensFromAction(desc, prevBoard) {
+    if (!desc) return;
+    const matches = desc.matchAll(/\((\d+),\s*(\d+)\)/g);
+    const coords = [];
+    for (const m of matches) {
+      coords.push([parseInt(m[1], 10), parseInt(m[2], 10)]);
+    }
+
+    if (coords.length > 0 && prevBoard) {
+      const ghosts = [];
+      coords.forEach(([r, c]) => {
+        if (r >= 0 && r < 5 && c >= 0 && c < 5) {
+          const prevGem = prevBoard[r][c];
+          if (prevGem) {
+            ghosts.push({ r, c, gem: prevGem, label: '取走' });
+          }
+        }
+      });
+      if (ghosts.length > 0) {
+        this.ghostTokens = ghosts;
+        if (this.ghostTimer) clearTimeout(this.ghostTimer);
+        this.ghostTimer = setTimeout(() => {
+          this.ghostTokens = [];
+          if (this.state) {
+            const boardOptions = this.getBoardRenderOptions();
+            renderBoard(this.state.board, document.getElementById('boardGrid'), boardOptions);
+          }
+        }, 2600);
+      }
+    }
   }
 
   /* 历史记录同步与展示 */
@@ -635,9 +681,13 @@ export class GameController {
   getBoardRenderOptions() {
     const phase = this.state.phase;
     const isHumanTurn = this.isHuman && !this.state.winner;
+    const baseOptions = {
+      ghostTokens: this.ghostTokens,
+      goldSelectedPos: this.selectedGoldPos,
+    };
 
     if (!isHumanTurn) {
-      return { clickable: false };
+      return { clickable: false, ...baseOptions };
     }
 
     // 技能：从棋盘拿同色宝石
@@ -652,6 +702,7 @@ export class GameController {
         }
       }
       return {
+        ...baseOptions,
         clickable: true,
         highlightPositions,
         onCellClick: (r, c, gem) => {
@@ -672,6 +723,7 @@ export class GameController {
         }
       }
       return {
+        ...baseOptions,
         clickable: true,
         highlightPositions,
         onCellClick: (r, c, gem) => {
@@ -700,6 +752,7 @@ export class GameController {
       }
 
       return {
+        ...baseOptions,
         clickable: true,
         selectedPositions: activeSelected,
         candidatePositions,
@@ -717,7 +770,7 @@ export class GameController {
       };
     }
 
-    return { clickable: false };
+    return { clickable: false, ...baseOptions };
   }
 
   calculateCandidatePositions(takeActions) {
@@ -819,6 +872,8 @@ export class GameController {
       interactive,
       affordableIds,
       canReserve,
+      isReserveGuidance: Boolean(this.selectedGoldPos),
+      currentPlayerState: this.state.players ? this.state.players[this.currentPlayer] : null,
       deckInfo: {
         tier: tierNum,
         count: this.state.decks_count[tierIdx],
@@ -1146,7 +1201,16 @@ export class GameController {
 
         this.guideText.innerHTML = `${lastAiHint}已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买。`;
       } else if (this.selectedGoldPos) {
-        this.guideText.innerHTML = `${lastAiHint}【已选定黄金 (${this.selectedGoldPos[0]},${this.selectedGoldPos[1]})】点击金字塔卡牌或牌堆即可预留放入手牌，或点击其他位置切换。`;
+        const btnCancelGold = document.createElement('button');
+        btnCancelGold.className = 'btn-secondary';
+        btnCancelGold.innerText = '✖ 取消选定黄金';
+        btnCancelGold.onclick = () => {
+          this.selectedGoldPos = null;
+          this.render();
+        };
+        this.actionBarButtons.appendChild(btnCancelGold);
+
+        this.guideText.innerHTML = `${lastAiHint}【已选定黄金 (${this.selectedGoldPos[0]},${this.selectedGoldPos[1]})】请点击下方发光的金字塔卡牌或牌堆直接预留，或点击取消。`;
       } else {
         this.guideText.innerHTML = `${lastAiHint}【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或点击黄金预留卡牌，或直接点击卡牌购买/预留。`;
       }
@@ -1189,32 +1253,39 @@ export class GameController {
 
     buyActs.forEach(act => {
       const planId = act.action.PurchaseCard.plan_id;
-      const btn = document.createElement('div');
-      btn.className = 'gem-picker-btn';
-      btn.style.width = '140px';
-      btn.style.padding = '8px';
+      const desc = act.desc || '';
+      const friendlyDesc = formatFriendlyAction(desc);
 
-      if (planId === 0) {
-        btn.innerHTML = `
-          <span style="font-size:0.85rem; font-weight:700; color:var(--text-main);">默认天然支付</span>
-          <span style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;">保留全部黄金</span>
-        `;
-      } else {
-        btn.innerHTML = `
-          <span style="font-size:0.85rem; font-weight:700; color:var(--accent-gold);">黄金替代 #${planId}</span>
-          <span style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;">消耗自由黄金</span>
-        `;
-      }
-      btn.onclick = () => {
+      const cardBox = document.createElement('div');
+      cardBox.className = 'visual-plan-card';
+
+      let planTitle = (planId === 0) ? '✨ 方案 1: 默认天然支付' : `💰 方案 ${planId + 1}: 黄金代付`;
+      let planSub = (planId === 0) ? '优先使用手中天然宝石，保留全部自由黄金' : (friendlyDesc.includes('保留') ? friendlyDesc : '消耗 1 枚自由黄金以节省天然宝石');
+      let badgeColor = (planId === 0) ? 'var(--text-main)' : 'var(--accent-gold)';
+
+      cardBox.innerHTML = `
+        <div class="visual-plan-header">
+          <span class="visual-plan-title" style="color:${badgeColor};">${planTitle}</span>
+          <span style="font-size:0.68rem; color:var(--text-muted); font-family:monospace;">plan_id: ${planId}</span>
+        </div>
+        <div class="visual-plan-rows">
+          <div class="visual-plan-row">
+            <span style="color:var(--text-muted); min-width:48px;">说明:</span>
+            <span style="color:#f1f5f9; font-weight:600;">${planSub}</span>
+          </div>
+        </div>
+      `;
+
+      cardBox.onclick = () => {
         this.clearModal();
         this.submitAction(act.action);
       };
-      this.modalOptions.appendChild(btn);
+      this.modalOptions.appendChild(cardBox);
     });
 
     this.modalFooter.innerHTML = '';
     const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'action-btn secondary';
+    cancelBtn.className = 'btn-secondary';
     cancelBtn.innerText = '取消';
     cancelBtn.onclick = () => this.clearModal();
     this.modalFooter.appendChild(cancelBtn);

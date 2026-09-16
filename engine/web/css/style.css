@@ -246,14 +246,47 @@ input[type="range"] {
   color: var(--text-main);
 }
 
-/* 主视窗三栏并排网格 (优化后：左侧为玩家仪表盘，中间为金字塔区域，右侧为5x5棋盘与操作历史) */
+/* 主视窗自适应三列布局：左列金字塔卡牌区，中列上棋盘+下双人仪表盘，右列日志与决策侧栏 */
 main {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) 670px 290px;
+  grid-template-columns: minmax(500px, 1.05fr) minmax(570px, 1.45fr) 300px;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 8px 14px 14px 14px;
   flex: 1;
-  min-width: 1300px;
+  max-width: 1920px;
+  width: 100%;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+/* 左列：金字塔卡牌展示区 (独立成列，充裕宽度杜绝横向滚动条) */
+.pyramid-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 中列：上下结构 (上方 5×5 棋盘 + 下方对决双方仪表盘) */
+.center-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.center-stage .board-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.center-stage .players-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
 }
 
 .panel {
@@ -279,34 +312,42 @@ main {
   padding-bottom: 4px;
 }
 
-/* 5x5 棋盘布局 (BGA 羊皮纸螺旋棋盘原画风格，尺寸固定 270x270px 杜绝空列坍塌) */
+/* 5x5 棋盘布局 (放大至 306x306px，格槽更易点击，支持连线轨迹与幽灵残留) */
 .left-panel,
 .board-panel,
 .right-panel {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 290px;
+}
+
+.sidebar-panel {
+  width: 300px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .board-container {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   grid-template-rows: repeat(5, minmax(0, 1fr));
-  gap: 6px;
+  gap: 7px;
   background-image: url('../assets/images/board.jpg');
   background-size: 100% 100%;
   background-position: center;
   background-repeat: no-repeat;
-  padding: 10px;
+  padding: 12px;
   border-radius: 10px;
-  border: 2px solid #573f1d;
+  border: 2.5px solid #573f1d;
   box-shadow: inset 0 0 25px rgba(0, 0, 0, 0.85), 0 8px 20px rgba(0, 0, 0, 0.6);
-  width: 270px;
-  height: 270px;
+  width: 306px;
+  height: 306px;
   box-sizing: border-box;
-  margin: 0 auto;
+  margin: 0;
+  flex-shrink: 0;
+  position: relative;
 }
 
 .board-cell {
@@ -331,17 +372,56 @@ main {
   border-color: rgba(251, 191, 36, 0.8);
 }
 
-.board-footer {
-  display: flex;
-  justify-content: space-between;
+/* 5x5 棋盘紧凑布局：棋盘与侧边特权/布袋紧密贴合，整体水平居中 */
+.board-stage-wrap {
+  display: inline-flex;
+  gap: 8px;
   align-items: center;
-  background: var(--bg-card);
-  padding: 6px 12px;
+  justify-content: center;
+  margin: 0 auto;
+  width: fit-content;
+}
+
+.board-side-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.side-info-card {
+  background: #141722;
+  border: 1px solid rgba(212, 175, 55, 0.25);
   border-radius: 6px;
-  border: 1px solid var(--border-color);
-  font-size: 0.78rem;
-  width: 270px;
-  box-sizing: border-box;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  min-width: 84px;
+}
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  min-width: 82px;
+}
+
+.side-info-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.side-info-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.board-tokens-icon {
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .privilege-icon {
@@ -366,10 +446,10 @@ main {
   margin-right: 4px;
 }
 
-/* 标记样式 (BGA 原版 3D 浮雕筹码，尺寸精准适配圆形格槽) */
+/* 标记样式 (BGA 原版 3D 浮雕筹码，微调放大至 42x42px，触控与辨识度倍增) */
 .token {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
@@ -581,12 +661,13 @@ main {
   flex-wrap: nowrap;
   align-items: center;
   overflow-x: auto;
+  scrollbar-width: thin;
   padding-bottom: 2px;
 }
 
 .card-item {
-  width: 98px;
-  height: 148px;
+  width: 84px;
+  height: 127px;
   background-color: #1a1714;
   background-repeat: no-repeat;
   border: 1.5px solid #4a3b2c;
@@ -671,8 +752,8 @@ main {
 }
 
 .royal-item {
-  width: 96px;
-  height: 146px;
+  width: 84px;
+  height: 127px;
   background-color: #1a1714;
   background-repeat: no-repeat;
   border: 1.5px solid #d4af37;
@@ -692,17 +773,21 @@ main {
   z-index: 10;
 }
 
-/* 玩家面板与 Tableau 仪表盘 */
+/* 玩家仪表盘区域：大屏在公共版图右侧，宽度不足时沉降到下册 */
+.players-panel,
 .player-panel {
+  flex: 1 1 540px;
+  min-width: 500px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
+/* 双人左右并排网格 */
 .players-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 10px;
 }
 
 .player-card {
@@ -712,15 +797,36 @@ main {
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   position: relative;
   transition: all 0.25s;
+  min-width: 0;
+}
+
+.player-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #10141f;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.player-cards-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #10141f;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .player-card.acting {
   border-color: var(--accent-gold);
-  box-shadow: 0 0 14px rgba(251, 191, 36, 0.25);
-  background: #181e30;
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.3);
+  background: #171f33;
 }
 
 .player-card.next-turn {
@@ -738,26 +844,240 @@ main {
 
 .player-name {
   font-weight: 800;
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
-.acting-indicator {
-  font-size: 0.65rem;
-  padding: 1px 6px;
-  border-radius: 9999px;
-  background: var(--accent-gold);
-  color: #000;
+.area-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* 手中筹码 7 列垂直堆叠 (Chip Stacks) */
+.player-chips-stack-area {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #10141f;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.token-stacks-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  align-items: flex-start;
+  min-height: 56px;
+}
+
+.token-stack-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.stack-count-badge {
+  font-size: 0.62rem;
   font-weight: 800;
-  display: none;
+  font-family: monospace;
+  color: #64748b;
+  line-height: 1;
+  margin-bottom: 2px;
 }
 
-.next-indicator {
+.stack-count-badge.active {
+  color: #f1f5f9;
+}
+
+.stack-body {
+  display: flex;
+  flex-direction: column; /* 自顶向下堆叠，绝不遮挡上方数量角标 */
+  align-items: center;
+  position: relative;
+  width: 100%;
+}
+
+.stack-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background-image: url('../assets/images/tokens.png');
+  background-size: 800% 100%;
+  background-repeat: no-repeat;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.8), inset 0 1px 1.5px rgba(255,255,255,0.4);
+  border: 1px solid rgba(0,0,0,0.5);
+  flex-shrink: 0;
+  margin-top: -13px; /* 向下遮挡前一个筹码的一半 (26px / 2 = 13px) */
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.stack-body > .stack-chip:first-child {
+  margin-top: 0;
+}
+
+.stack-chip:hover {
+  transform: scale(1.18);
+  box-shadow: 0 0 8px #fff;
+  z-index: 100 !important;
+}
+
+/* 筹码精确切片定位 (彻底修复全部显示为黄金切片的 Bug) */
+.stack-chip.token-gold  { background-position: 0% 0%; }
+.stack-chip.token-pearl { background-position: 14.2857% 0%; }
+.stack-chip.token-blue  { background-position: 28.5714% 0%; }
+.stack-chip.token-white { background-position: 42.8571% 0%; }
+.stack-chip.token-green { background-position: 57.1429% 0%; }
+.stack-chip.token-black { background-position: 71.4286% 0%; }
+.stack-chip.token-red   { background-position: 85.7143% 0%; }
+
+.token-slot-empty {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.16);
+  background-image: url('../assets/images/tokens.png');
+  background-size: 800% 100%;
+  background-repeat: no-repeat;
+  opacity: 0.15;
+  filter: grayscale(40%);
+  flex-shrink: 0;
+}
+
+.token-slot-empty.slot-gold  { background-position: 0% 0%; }
+.token-slot-empty.slot-pearl { background-position: 14.2857% 0%; }
+.token-slot-empty.slot-blue  { background-position: 28.5714% 0%; }
+.token-slot-empty.slot-white { background-position: 42.8571% 0%; }
+.token-slot-empty.slot-green { background-position: 57.1429% 0%; }
+.token-slot-empty.slot-black { background-position: 71.4286% 0%; }
+.token-slot-empty.slot-red   { background-position: 85.7143% 0%; }
+
+/* 永久减免与已购卡片 (按颜色分列堆叠 Tableau by Color) */
+.player-tableau-area {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: #10141f;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.tableau-by-color-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  align-items: flex-start;
+  min-height: 80px;
+}
+
+.tableau-color-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.tableau-col-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 2px 0;
+  border-radius: 4px;
+  background: #0d111a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.tableau-col-header.has-bonus {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+.tableau-col-header.header-blue.has-bonus  { border-color: #0284c7; color: #38bdf8; }
+.tableau-col-header.header-white.has-bonus { border-color: #cbd5e1; color: #f8fafc; }
+.tableau-col-header.header-green.has-bonus { border-color: #16a34a; color: #4ade80; }
+.tableau-col-header.header-black.has-bonus { border-color: #64748b; color: #94a3b8; }
+.tableau-col-header.header-red.has-bonus   { border-color: #dc2626; color: #f87171; }
+
+.tableau-cards-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  width: 100%;
+  padding-top: 1px;
+}
+
+.tableau-stacked-card {
+  width: 58px;
+  height: 87px;
+  border-radius: 4px;
+  background-color: #1a1714;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.75);
+  cursor: pointer;
+  margin-top: -59px; /* 核心：只露出顶部 28px 区域 (清晰呈现声望、王冠、宝石加成) */
+  transition: transform 0.15s, box-shadow 0.15s, z-index 0.15s;
+  flex-shrink: 0;
+}
+
+.tableau-cards-stack > .tableau-stacked-card:first-child {
+  margin-top: 0;
+}
+
+.tableau-stacked-card:hover {
+  transform: translateY(-6px) scale(1.15);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.95), 0 0 10px var(--accent-gold);
+  z-index: 80 !important;
+  border-color: var(--accent-gold);
+}
+
+.tableau-empty-slot {
+  width: 54px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1.5px dashed rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.18);
+  margin-top: 2px;
+}
+
+/* 最底部：预留卡 (≤3) 与王室卡 (≤2) 横排 */
+.player-bottom-cards-area {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #10141f;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.bottom-cards-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 44px;
+  flex-wrap: nowrap;
+}
+
+.empty-cards-placeholder {
   font-size: 0.65rem;
-  padding: 1px 6px;
-  border-radius: 9999px;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
   background: #38bdf8;
   color: #000;
   font-weight: 800;
@@ -770,11 +1090,12 @@ main {
 .victory-progress {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   font-size: 0.72rem;
   background: #10141f;
-  padding: 4px 6px;
-  border-radius: 5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .progress-row {
@@ -802,22 +1123,82 @@ main {
 
 .token-chips {
   display: flex;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
   min-height: 24px;
   align-items: center;
 }
 
-.chip {
+/* 实体筹码样式 */
+.chip.token-chip {
   padding: 2px 7px;
   border-radius: 9999px;
   font-size: 0.73rem;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+  background: rgba(22, 28, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+  transition: transform 0.15s;
+}
+
+.chip.token-chip:hover {
+  transform: translateY(-1px);
+  border-color: #fff;
+}
+
+.chip-count {
+  font-family: monospace;
+  font-weight: 800;
+  color: #fff;
+}
+
+/* 永久减免徽章 (Bonus Badges - 矩形盾牌/宝石卡槽形态，彻底区分于手中筹码) */
+.bonus-badge {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
-  background: rgba(30, 26, 22, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #0f131d;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+  letter-spacing: 0.02em;
+}
+
+.badge-gem-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background-image: url('../assets/images/tokens.png');
+  background-size: 800% 100%;
+  background-repeat: no-repeat;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.badge-gem-icon.token-gold  { background-position: 0% 0%; }
+.badge-gem-icon.token-pearl { background-position: 14.2857% 0%; }
+.badge-gem-icon.token-blue  { background-position: 28.5714% 0%; }
+.badge-gem-icon.token-white { background-position: 42.8571% 0%; }
+.badge-gem-icon.token-green { background-position: 57.1429% 0%; }
+.badge-gem-icon.token-black { background-position: 71.4286% 0%; }
+.badge-gem-icon.token-red   { background-position: 85.7143% 0%; }
+
+.bonus-badge.bonus-blue  { border-color: #0284c7; color: #38bdf8; }
+.bonus-badge.bonus-white { border-color: #cbd5e1; color: #f8fafc; }
+.bonus-badge.bonus-green { border-color: #16a34a; color: #4ade80; }
+.bonus-badge.bonus-black { border-color: #64748b; color: #94a3b8; }
+.bonus-badge.bonus-red   { border-color: #dc2626; color: #f87171; }
+.bonus-badge.bonus-pearl { border-color: #db2777; color: #f472b6; }
+
+.badge-num {
+  font-family: monospace;
+  font-weight: 800;
 }
 
 .chip-token-icon {
@@ -1022,7 +1403,8 @@ main {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  max-height: 130px;
+  max-height: 200px;
+  min-height: 160px;
   overflow-y: auto;
   background: #0f131d;
   padding: 4px 6px;
@@ -1073,9 +1455,67 @@ main {
   font-weight: 800;
 }
 
-/* 响应式支持：保证三栏在窄屏下不发生重叠变形，开启横向滚动 */
-@media (max-width: 1320px) {
-  body {
-    overflow-x: auto;
+/* =========================================================
+   复盘局势与胜率走势折线图样式 (Evaluation Chart) 
+   ========================================================= */
+.eval-chart-container {
+  background: #121622;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 14px 4px 14px;
+}
+
+.eval-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--accent-gold);
+}
+
+.eval-chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 85px;
+}
+
+.eval-chart-canvas {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  background: #0b0f17;
+  display: block;
+  cursor: crosshair;
+}
+
+/* 响应式支持：三列标准布局 -> 紧凑两列 (侧栏下沉) -> 单列流式自适应 */
+@media (max-width: 1420px) {
+  main {
+    grid-template-columns: minmax(540px, 1.25fr) minmax(460px, 1.15fr);
+  }
+  .sidebar-panel {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 }
+
+@media (max-width: 1060px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+  .sidebar-panel {
+    width: 100%;
+  }
+}
+
+@media (max-width: 620px) {
+  .players-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

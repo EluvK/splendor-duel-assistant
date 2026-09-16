@@ -74,104 +74,13 @@
   </div>
 
   <main>
-    <!-- 左侧：双人平铺玩家仪表盘 (Player 0, Player 1) -->
-    <div class="panel player-panel">
-      <div class="panel-title">
-        <span>对决双方仪表盘</span>
-        <span style="font-size:0.75rem; color:var(--text-muted);">公开卡与私有暗卡一目了然</span>
-      </div>
-
-      <div class="players-grid">
-        <!-- Player 0 -->
-        <div class="player-card" id="player0Card">
-          <div class="player-header">
-            <span class="player-name">
-              <span style="color:#38bdf8;">👤 Player 0</span>
-              <span class="acting-indicator">⚡ 行动中</span>
-            </span>
-            <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
-          </div>
-          <div class="victory-progress">
-            <div>
-              <div class="progress-row"><span>声望总分</span><span><b id="p0Points">0</b> / 20</span></div>
-              <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>王冠数量</span><span><b id="p0Crowns">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill crowns" id="p0CrownsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>最高单色声望</span><span><b id="p0MaxColor">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill color" id="p0ColorBar" style="width: 0%"></div></div>
-            </div>
-          </div>
-          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p0TokenTotal">0</span>/10):</div>
-          <div class="token-chips" id="p0Tokens"></div>
-          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
-          <div class="token-chips" id="p0Bonuses"></div>
-          <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p0ReservedCount">0</span>/3):</div>
-          <div class="reserved-cards-container" id="p0ReservedCards"></div>
-
-          <!-- 已获王室赞助卡 -->
-          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p0RoyalCount">0</span>):</div>
-          <div class="royals-mini-container" id="p0RoyalCards"></div>
-
-          <!-- 已购买卡牌矩阵 (Tableau) -->
-          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
-            <span>已购卡牌 (<span id="p0PurchasedCount">0</span> 张):</span>
-            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
-          </div>
-          <div class="purchased-cards-container" id="p0PurchasedCards"></div>
-        </div>
-
-        <!-- Player 1 -->
-        <div class="player-card" id="player1Card">
-          <div class="player-header">
-            <span class="player-name">
-              <span style="color:#f472b6;">👤 Player 1</span>
-              <span class="acting-indicator">⚡ 行动中</span>
-            </span>
-            <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
-          </div>
-          <div class="victory-progress">
-            <div>
-              <div class="progress-row"><span>声望总分</span><span><b id="p1Points">0</b> / 20</span></div>
-              <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>王冠数量</span><span><b id="p1Crowns">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill crowns" id="p1CrownsBar" style="width: 0%"></div></div>
-            </div>
-            <div>
-              <div class="progress-row"><span>最高单色声望</span><span><b id="p1MaxColor">0</b> / 10</span></div>
-              <div class="progress-bar"><div class="progress-fill color" id="p1ColorBar" style="width: 0%"></div></div>
-            </div>
-          </div>
-          <div style="font-size:0.75rem; font-weight:700;">手中标记 (<span id="p1TokenTotal">0</span>/10):</div>
-          <div class="token-chips" id="p1Tokens"></div>
-          <div style="font-size:0.75rem; font-weight:700;">永久减免 Bonus:</div>
-          <div class="token-chips" id="p1Bonuses"></div>
-          <div style="font-size:0.75rem; font-weight:700;">预留卡 (<span id="p1ReservedCount">0</span>/3):</div>
-          <div class="reserved-cards-container" id="p1ReservedCards"></div>
-
-          <!-- 已获王室赞助卡 -->
-          <div style="font-size:0.75rem; font-weight:700; margin-top:2px;">已获王室卡 (<span id="p1RoyalCount">0</span>):</div>
-          <div class="royals-mini-container" id="p1RoyalCards"></div>
-
-          <!-- 已购买卡牌矩阵 (Tableau) -->
-          <div style="font-size:0.75rem; font-weight:700; display:flex; justify-content:space-between; margin-top:3px;">
-            <span>已购卡牌 (<span id="p1PurchasedCount">0</span> 张):</span>
-            <span style="color:var(--text-muted); font-size:0.68rem;">悬停查看完整详情</span>
-          </div>
-          <div class="purchased-cards-container" id="p1PurchasedCards"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 中间：3 级金字塔卡牌 + 王室赞助池 (王室置于金字塔下方且居中) -->
+    <!-- 左列：金字塔珠宝展示区 + 王室赞助池 -->
     <div class="panel pyramid-section">
-      <div class="panel-title">金字塔珠宝展示区</div>
-      
+      <div class="panel-title">
+        <span>金字塔珠宝展示区</span>
+        <span style="font-size:0.72rem; color:var(--text-muted);">悬停卡牌即时查看大图与差额</span>
+      </div>
+
       <!-- Tier 3 -->
       <div class="tier-row">
         <div class="tier-header">
@@ -208,57 +117,179 @@
         <div class="cards-flex" id="tier1Cards"></div>
       </div>
 
-      <!-- 王室赞助池 (置于金字塔下方) -->
-      <div class="panel-title" style="margin-top: 6px;">
+      <!-- 王室赞助池 -->
+      <div class="panel-title" style="margin-top: 4px;">
         <span>王室赞助池</span>
         <span style="font-size:0.7rem; color:var(--text-muted);">满 3 / 6 王冠自动触发认领</span>
       </div>
-      <div class="royals-row" id="royalsContainer">
-        <!-- 4 张王室卡 (居中排布) -->
+      <div class="royals-row" id="royalsContainer"></div>
+    </div>
+
+    <!-- 中列：上下结构 (上方 5×5 棋盘 + 下方对决双方仪表盘) -->
+    <div class="center-stage">
+      <!-- 5x5 宝石棋盘 + 特权/布袋 (紧凑侧排，删除标题节约垂直高度) -->
+      <div class="panel board-panel">
+        <div class="board-stage-wrap">
+          <div class="board-container" id="boardGrid">
+            <!-- 动态生成 25 个格子及连线 SVG -->
+          </div>
+
+          <div class="board-side-info">
+            <div class="side-info-card">
+              <span class="privilege-icon"></span>
+              <div class="side-info-meta">
+                <span class="side-info-label">特权卷轴</span>
+                <b id="privilegePool" style="color:var(--accent-gold); font-size:1.15rem;">2</b>
+              </div>
+            </div>
+            <div class="side-info-card">
+              <span class="bag-icon"></span>
+              <div class="side-info-meta">
+                <span class="side-info-label">布袋剩余</span>
+                <b id="bagCount" style="color:#e2e8f0; font-size:1.15rem;">0</b>
+              </div>
+            </div>
+            <div class="side-info-card">
+              <span class="board-tokens-icon">🎲</span>
+              <div class="side-info-meta">
+                <span class="side-info-label">棋盘存量</span>
+                <b id="boardTokensCount" style="color:var(--accent-gold); font-size:1.05rem;">25</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 双方仪表盘区域 (Player 0 与 Player 1 左右并排) -->
+      <div class="panel players-panel">
+        <div class="players-grid">
+          <!-- 先手 Player 0 -->
+          <div class="player-card" id="player0Card">
+            <div class="player-header">
+              <span class="player-name">
+                <span style="color:#38bdf8; font-weight:700;">👤 Player 0</span>
+                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(先手)</span>
+              </span>
+              <span id="p0Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+            </div>
+            <div class="victory-progress">
+              <div>
+                <div class="progress-row"><span>声望</span><span><b id="p0Points">0</b> / 20</span></div>
+                <div class="progress-bar"><div class="progress-fill" id="p0PointsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>王冠</span><span><b id="p0Crowns">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill crowns" id="p0CrownsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>单色最高</span><span><b id="p0MaxColor">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill color" id="p0ColorBar" style="width: 0%"></div></div>
+              </div>
+            </div>
+
+            <!-- 手中筹码 (7 列垂直堆叠) -->
+            <div class="player-chips-stack-area">
+              <div class="area-label">手中筹码 (<span id="p0TokenTotal">0</span>/10):</div>
+              <div class="token-stacks-grid" id="p0Tokens"></div>
+            </div>
+
+            <!-- 永久减免与已购卡片 (按颜色分列堆叠) -->
+            <div class="player-tableau-area">
+              <div class="area-label">永久减免与卡牌 (已购 <span id="p0PurchasedCount">0</span>):</div>
+              <div class="tableau-by-color-grid" id="p0PurchasedCards"></div>
+            </div>
+
+            <!-- 最底部：预留卡 (≤3) 与王室卡 (≤2) 横排 -->
+            <div class="player-bottom-cards-area">
+              <div class="area-label">
+                <span>预留卡 (<span id="p0ReservedCount">0</span>/3) · 王室 (<span id="p0RoyalCount">0</span>):</span>
+              </div>
+              <div class="bottom-cards-row">
+                <div class="reserved-cards-container" id="p0ReservedCards"></div>
+                <div class="royals-mini-container" id="p0RoyalCards"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 后手 Player 1 -->
+          <div class="player-card" id="player1Card">
+            <div class="player-header">
+              <span class="player-name">
+                <span style="color:#f472b6; font-weight:700;">👤 Player 1</span>
+                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(后手)</span>
+              </span>
+              <span id="p1Privileges" style="color:var(--accent-gold); font-size:0.85rem; font-weight:700;">📜 0</span>
+            </div>
+            <div class="victory-progress">
+              <div>
+                <div class="progress-row"><span>声望</span><span><b id="p1Points">0</b> / 20</span></div>
+                <div class="progress-bar"><div class="progress-fill" id="p1PointsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>王冠</span><span><b id="p1Crowns">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill crowns" id="p1CrownsBar" style="width: 0%"></div></div>
+              </div>
+              <div>
+                <div class="progress-row"><span>单色最高</span><span><b id="p1MaxColor">0</b> / 10</span></div>
+                <div class="progress-bar"><div class="progress-fill color" id="p1ColorBar" style="width: 0%"></div></div>
+              </div>
+            </div>
+
+            <!-- 手中筹码 (7 列垂直堆叠) -->
+            <div class="player-chips-stack-area">
+              <div class="area-label">手中筹码 (<span id="p1TokenTotal">0</span>/10):</div>
+              <div class="token-stacks-grid" id="p1Tokens"></div>
+            </div>
+
+            <!-- 永久减免与已购卡片 (按颜色分列堆叠) -->
+            <div class="player-tableau-area">
+              <div class="area-label">永久减免与卡牌 (已购 <span id="p1PurchasedCount">0</span>):</div>
+              <div class="tableau-by-color-grid" id="p1PurchasedCards"></div>
+            </div>
+
+            <!-- 最底部：预留卡 (≤3) 与王室卡 (≤2) 横排 -->
+            <div class="player-bottom-cards-area">
+              <div class="area-label">
+                <span>预留卡 (<span id="p1ReservedCount">0</span>/3) · 王室 (<span id="p1RoyalCount">0</span>):</span>
+              </div>
+              <div class="bottom-cards-row">
+                <div class="reserved-cards-container" id="p1ReservedCards"></div>
+                <div class="royals-mini-container" id="p1RoyalCards"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- 右侧：5x5 棋盘 + 特权/布袋 + 操作历史 + 指南 -->
-    <div class="panel board-panel right-panel">
-      <div class="panel-title">
-        <span>5×5 宝石棋盘</span>
-        <span id="boardTokensCount" style="font-size:0.75rem; color:var(--accent-gold);">25 标记</span>
-      </div>
-
-      <div class="board-container" id="boardGrid">
-        <!-- 动态生成 25 个格子 -->
-      </div>
-
-      <div class="board-footer">
-        <span><span class="privilege-icon"></span>特权池: <b id="privilegePool" style="color:var(--accent-gold)">2</b></span>
-        <span><span class="bag-icon"></span>布袋剩余: <b id="bagCount">0</b></span>
-      </div>
-
+    <!-- 右侧情报侧栏 (操作历史与AI决策分析 + 快捷指南) -->
+    <div class="sidebar-panel">
       <!-- 操作历史面板 (实时展示动作与 AI 决策) -->
-      <div class="panel-title" style="margin-top: 2px;">
-        <span style="display:flex; align-items:center; gap:4px;">
-          📜 操作历史
-          <span id="gameLogStepBadge" style="font-size:0.68rem; color:var(--text-muted); font-weight:normal;">0 步</span>
-        </span>
-        <button id="btnToggleLogAutoScroll" class="btn-scroll-toggle active" title="新动作时自动追踪滚动至最新">⬇ 追踪</button>
-      </div>
+      <div class="panel">
+        <div class="panel-title">
+          <span style="display:flex; align-items:center; gap:4px;">
+            📜 对局操作历史
+            <span id="gameLogStepBadge" style="font-size:0.68rem; color:var(--text-muted); font-weight:normal;">0 步</span>
+          </span>
+          <button id="btnToggleLogAutoScroll" class="btn-scroll-toggle active" title="新动作时自动追踪滚动至最新">⬇ 追踪</button>
+        </div>
 
-      <div class="log-panel" id="gameLogContainer" style="min-height: 190px; max-height: 290px;">
-        <!-- 动态追加步骤记录 -->
+        <div class="log-panel" id="gameLogContainer" style="height: 380px; max-height: 520px;">
+          <!-- 动态追加步骤记录 -->
+        </div>
       </div>
 
       <!-- 规则与快捷交互说明 (可折叠) -->
-      <details class="guide-details" id="guideDetails">
+      <details class="guide-details" id="guideDetails" style="margin-top: 4px;">
         <summary>
           <span>💡 快捷操作指南</span>
           <span class="guide-toggle-arrow">▼</span>
         </summary>
         <div style="font-size:0.7rem; color:var(--text-muted); line-height:1.45; margin-top:5px;">
-          <div>• <b>拿宝石</b>：点击棋盘 1~3 颗同线连续非黄金宝石，点击上方【确认拿取】。</div>
-          <div>• <b>买卡/预留</b>：悬停在金字塔卡牌上，点击【购买】或【预留】。</div>
-          <div>• <b>盲抽预留</b>：点击各等级牌架右侧的【盲抽预留】按钮。</div>
-          <div>• <b>使用特权</b>：拥有卷轴且在可选阶段时，点击棋盘非黄金宝石拿取。</div>
-          <div>• <b>明牌预留</b>：双方预留卡明牌公开，买得起时直接点击【购买】。</div>
+          <div>• <b>拿宝石</b>：点击棋盘 1~3 颗同线连续非黄金宝石，沿连线高亮查看轨迹，点击上方【确认拿取】。</div>
+          <div>• <b>预留卡牌</b>：点击棋盘上任意 1 颗黄金开启预留引导，再点击金字塔卡牌放入手牌。</div>
+          <div>• <b>买卡</b>：悬停在卡牌上即时查看放大图、详细技能与差额计算，点击【购买】。</div>
+          <div>• <b>盲抽预留</b>：拥有选定黄金时，点击各等级牌架右侧的【盲抽预留】按钮。</div>
           <div>• <b>查看AI思考</b>：点击历史记录中的任意一步，可查看该步的 AI 思考估值与决策候选。</div>
         </div>
       </details>
