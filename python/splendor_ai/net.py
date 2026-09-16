@@ -72,11 +72,13 @@ class SplendorNet(nn.Module):
 
     BOARD_CHANNELS = 9                         # 8 标记 + 1 螺旋 Rank
     BOARD_GRID = 5
-    CARD_FEAT_DIM = 38                         # 33 基础特征 + 5 维 ROI / 效能特征
-    NUM_CARD_ENTITIES = 15                     # 12 市场明牌 + 3 我方手牌
+    CARD_FEAT_DIM = 36                         # 30 基础特征 + 6 维缺口与博弈效能
+    NUM_CARD_ENTITIES = 18                     # 12 市场明牌 + 3 我方手牌 + 3 敌方手牌
     RESERVED_CARDS_SLOTS = 3
-    PLAYER_DASHBOARD_DIM = 24 + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM  # 24 + 3 * 38 = 138
-    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + 44  # 1005
+    PLAYER_BASE_DIM = 24
+    PLAYER_DASHBOARD_DIM = PLAYER_BASE_DIM + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM  # 24 + 3 * 36 = 132
+    GLOBAL_CTX_DIM = 40
+    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + GLOBAL_CTX_DIM  # 965
     ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE  # 288
 
     def __init__(
@@ -129,8 +131,8 @@ class SplendorNet(nn.Module):
         )
 
         # 3. 标量上下文 MLP 骨干
-        # 上下文包含: 王室卡(4) + 我方基础(24) + 敌方仪表盘(PLAYER_DASHBOARD_DIM) + 全局差值环境(44) = 210 维
-        context_in_dim = 4 + 24 + self.PLAYER_DASHBOARD_DIM + 44
+        # 上下文包含: 王室卡(4) + 我方基础(24) + 敌方基础(24) + 全局差值环境(GLOBAL_CTX_DIM=40) = 92 维
+        context_in_dim = 4 + self.PLAYER_BASE_DIM + self.PLAYER_BASE_DIM + self.GLOBAL_CTX_DIM
         self.context_mlp = nn.Sequential(
             nn.Linear(context_in_dim, context_hidden),
             nn.LayerNorm(context_hidden),
@@ -215,14 +217,17 @@ class SplendorNet(nn.Module):
 
         # 1. 动态自适应切分特征分块
         c = self.CARD_FEAT_DIM
-        p_dash = self.PLAYER_DASHBOARD_DIM
+        p_base = self.PLAYER_BASE_DIM
+        p_res = self.RESERVED_CARDS_SLOTS * c
 
         idx_board_end = 225
         idx_market_end = idx_board_end + 12 * c
         idx_royals_end = idx_market_end + 4
-        idx_self_base_end = idx_royals_end + 24
-        idx_self_res_end = idx_self_base_end + self.RESERVED_CARDS_SLOTS * c
-        idx_opp_dash_end = idx_self_res_end + p_dash
+        idx_self_base_end = idx_royals_end + p_base
+        idx_self_res_end = idx_self_base_end + p_res
+        idx_opp_base_end = idx_self_res_end + p_base
+        idx_opp_res_end = idx_opp_base_end + p_res
+        idx_global_end = idx_opp_res_end + self.GLOBAL_CTX_DIM
 
         # [0..225]: 5x5 网格 x 9 通道
         board_flat = obs[:, :idx_board_end]
@@ -234,10 +239,12 @@ class SplendorNet(nn.Module):
         self_base = obs[:, idx_royals_end:idx_self_base_end]
         # [idx_self_base_end..idx_self_res_end]: 我方预留卡 3 张 x CARD_FEAT_DIM 维
         reserved_cards_flat = obs[:, idx_self_base_end:idx_self_res_end]
-        # [idx_self_res_end..idx_opp_dash_end]: 敌方玩家仪表盘 (PLAYER_DASHBOARD_DIM 维)
-        opp_dashboard = obs[:, idx_self_res_end:idx_opp_dash_end]
-        # [idx_opp_dash_end:]: 全局环境与差值 (44维)
-        global_ctx = obs[:, idx_opp_dash_end:]
+        # [idx_self_res_end..idx_opp_base_end]: 敌方基础特征 (24维)
+        opp_base = obs[:, idx_self_res_end:idx_opp_base_end]
+        # [idx_opp_base_end..idx_opp_res_end]: 敌方预留卡 3 张 x CARD_FEAT_DIM 维
+        opp_reserved_flat = obs[:, idx_opp_base_end:idx_opp_res_end]
+        # [idx_opp_res_end:]: 全局环境与差值 (40维)
+        global_ctx = obs[:, idx_opp_res_end:idx_global_end]
 
         # 2. 棋盘空间前向
         board = board_flat.view(b_size, self.BOARD_GRID, self.BOARD_GRID, self.BOARD_CHANNELS)
@@ -248,22 +255,23 @@ class SplendorNet(nn.Module):
         x_board = self.board_conv_out(x_board).view(b_size, -1)
         x_board = self.board_fc(x_board)  # [B, 128]
 
-        # 3. 卡牌实体池提取与自注意力
+        # 3. 卡牌实体池提取与自注意力 (共 18 实体: 12 市场 + 3 我方预留 + 3 敌方预留)
         market_cards = market_cards_flat.view(b_size, 12, self.CARD_FEAT_DIM)
         reserved_cards = reserved_cards_flat.view(b_size, 3, self.CARD_FEAT_DIM)
-        all_cards = torch.cat([market_cards, reserved_cards], dim=1)  # [B, 15, 33]
+        opp_reserved_cards = opp_reserved_flat.view(b_size, 3, self.CARD_FEAT_DIM)
+        all_cards = torch.cat([market_cards, reserved_cards, opp_reserved_cards], dim=1)  # [B, 18, 36]
 
         slot_indices = torch.arange(self.NUM_CARD_ENTITIES, device=obs.device).unsqueeze(0)
-        card_embeddings = self.card_encoder(all_cards) + self.slot_type_emb(slot_indices)  # [B, 15, 128]
-        card_tokens = self.set_attention(card_embeddings)  # [B, 15, 128]
+        card_embeddings = self.card_encoder(all_cards) + self.slot_type_emb(slot_indices)  # [B, 18, 128]
+        card_tokens = self.set_attention(card_embeddings)  # [B, 18, 128]
 
         # 全局卡牌聚合
         mean_pool = card_tokens.mean(dim=1)
         max_pool = card_tokens.max(dim=1)[0]
         x_card = self.card_pool_fc(torch.cat([mean_pool, max_pool], dim=-1))  # [B, 128]
 
-        # 4. 上下文标量特征
-        context = torch.cat([royals, self_base, opp_dashboard, global_ctx], dim=-1)  # [B, 195]
+        # 4. 上下文标量特征 (王室卡4 + 我方基础24 + 敌方基础24 + 全局环境40 = 92维)
+        context = torch.cat([royals, self_base, opp_base, global_ctx], dim=-1)  # [B, 92]
         x_context = self.context_mlp(context)  # [B, 128]
 
         # 5. 全局融合

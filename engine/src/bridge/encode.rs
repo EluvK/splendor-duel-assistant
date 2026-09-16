@@ -7,17 +7,17 @@ use crate::model::action::Action;
 use crate::model::card::{CardAbility, CardColor, CardTier, JewelCard};
 use crate::model::token::GemType;
 
-/// 单张卡牌的特征维度 (33基础 + 5维ROI/效能 = 38)
-pub const CARD_FEAT_DIM: usize = 38;
+/// 单张卡牌的特征维度 (30基础 + 6维缺口与博弈效能 = 36)
+pub const CARD_FEAT_DIM: usize = 36;
 
 /// 单玩家手牌槽位数
 pub const RESERVED_CARDS_SLOTS: usize = 3;
 
-/// 单玩家仪表盘特征维度 (24基础资产与胜负进度 + 3槽手牌 * CARD_FEAT_DIM = 138)
+/// 单玩家仪表盘特征维度 (24基础资产与胜负进度 + 3槽手牌 * CARD_FEAT_DIM = 132)
 pub const PLAYER_DASHBOARD_DIM: usize = 24 + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM;
 
-/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡(12*38=456) + 4王室 + 双方仪表盘(2*138=276) + 全局差值44 = 1005)
-pub const OBS_SIZE: usize = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + 44;
+/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡(12*36=432) + 4王室 + 双方仪表盘(2*132=264) + 全局差值40 = 965)
+pub const OBS_SIZE: usize = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + 40;
 
 /// 动作空间大小（离散动作总维度）
 pub const ACTION_SIZE: usize = 288;
@@ -155,26 +155,30 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
         let opp_of_p = if p_idx == cp { &state.players[op] } else { &state.players[cp] };
         let p_base = offset + p_order * PLAYER_DASHBOARD_DIM;
 
-        // 标记库存 (8维，超限弃牌前可能短暂超过 10，钳位至 1.0)
-        for i in 0..7 {
-            out[p_base + i] = (p.tokens.counts[i] as f32 / 10.0).min(1.0);
-        }
-        out[p_base + 7] = (p.tokens.total() as f32 / 10.0).min(1.0);
+        // 标记库存 (8维: 5基础宝石/4.0, 珍珠/2.0, 黄金/3.0, 总计/25.0)
+        out[p_base + 0] = p.tokens.counts[0] as f32 / 4.0; // White
+        out[p_base + 1] = p.tokens.counts[1] as f32 / 4.0; // Blue
+        out[p_base + 2] = p.tokens.counts[2] as f32 / 4.0; // Green
+        out[p_base + 3] = p.tokens.counts[3] as f32 / 4.0; // Red
+        out[p_base + 4] = p.tokens.counts[4] as f32 / 4.0; // Black
+        out[p_base + 5] = p.tokens.counts[5] as f32 / 2.0; // Pearl
+        out[p_base + 6] = p.tokens.counts[6] as f32 / 3.0; // Gold
+        out[p_base + 7] = p.tokens.total() as f32 / 25.0;  // Total
 
-        // 永久 Bonus (5维)
+        // 永久 Bonus (5维: 各色除以单色物理上限 15.0)
         for i in 0..5 {
-            out[p_base + 8 + i] = (p.bonuses[i] as f32 / 6.0).min(1.0);
+            out[p_base + 8 + i] = p.bonuses[i] as f32 / 15.0;
         }
 
-        // 胜负条件进度 (8维，终局可能溢出，钳位至 1.0)
-        out[p_base + 13] = (p.total_points as f32 / 20.0).min(1.0);
-        out[p_base + 14] = (p.total_crowns as f32 / 10.0).min(1.0);
+        // 胜负条件进度 (8维: 总分/25.0, 皇冠/12.0, 5色声望/12.0, 最大单色/12.0)
+        out[p_base + 13] = p.total_points as f32 / 25.0;
+        out[p_base + 14] = p.total_crowns as f32 / 12.0;
         let mut max_color = 0;
         for i in 0..5 {
-            out[p_base + 15 + i] = (p.color_points[i] as f32 / 10.0).min(1.0);
+            out[p_base + 15 + i] = p.color_points[i] as f32 / 12.0;
             max_color = max_color.max(p.color_points[i]);
         }
-        out[p_base + 20] = (max_color as f32 / 10.0).min(1.0);
+        out[p_base + 20] = max_color as f32 / 12.0;
 
         // 特权与王室指标 (3维)
         out[p_base + 21] = p.privileges as f32 / 3.0;
@@ -249,13 +253,13 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     let p_act = &state.players[cp];
     let p_opp = &state.players[op];
 
-    // 24..27: 双方胜负指标差值归一化 (分差、皇冠差、单色差、特权差)
-    out[offset + 24] = (p_act.total_points as f32 - p_opp.total_points as f32 + 20.0) / 40.0;
-    out[offset + 25] = (p_act.total_crowns as f32 - p_opp.total_crowns as f32 + 10.0) / 20.0;
+    // 24..27: 双方胜负指标差值归一化 (分差/25.0, 皇冠差/12.0, 单色差/12.0, 特权差/3.0) 对称映射至 [-1.0, 1.0]
+    out[offset + 24] = (p_act.total_points as f32 - p_opp.total_points as f32) / 25.0;
+    out[offset + 25] = (p_act.total_crowns as f32 - p_opp.total_crowns as f32) / 12.0;
     let cp_max_c = p_act.color_points.iter().copied().max().unwrap_or(0);
     let op_max_c = p_opp.color_points.iter().copied().max().unwrap_or(0);
-    out[offset + 26] = (cp_max_c as f32 - op_max_c as f32 + 10.0) / 20.0;
-    out[offset + 27] = (p_act.privileges as f32 - p_opp.privileges as f32 + 3.0) / 6.0;
+    out[offset + 26] = (cp_max_c as f32 - op_max_c as f32) / 12.0;
+    out[offset + 27] = (p_act.privileges as f32 - p_opp.privileges as f32) / 3.0;
 
     // 28..29: 双方手牌余量 max(0, 10 - total) / 10.0
     out[offset + 28] = ((10.0 - p_act.tokens.total() as f32).max(0.0)) / 10.0;
@@ -266,84 +270,20 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     out[offset + 31] = ((p_opp.tokens.total() as f32 - 10.0).max(0.0)) / 5.0;
 
     // 32..37: 双方胜利距离 (Gap to Win: 分数/20, 皇冠/10, 单色/10)
-    let cp_pts_gap = (20.0 - p_act.total_points as f32).max(0.0) / 20.0;
-    let op_pts_gap = (20.0 - p_opp.total_points as f32).max(0.0) / 20.0;
-    let cp_crown_gap = (10.0 - p_act.total_crowns as f32).max(0.0) / 10.0;
-    let op_crown_gap = (10.0 - p_opp.total_crowns as f32).max(0.0) / 10.0;
-    let cp_col_gap = (10.0 - cp_max_c as f32).max(0.0) / 10.0;
-    let op_col_gap = (10.0 - op_max_c as f32).max(0.0) / 10.0;
+    out[offset + 32] = (20.0 - p_act.total_points as f32).max(0.0) / 20.0;
+    out[offset + 33] = (20.0 - p_opp.total_points as f32).max(0.0) / 20.0;
+    out[offset + 34] = (10.0 - p_act.total_crowns as f32).max(0.0) / 10.0;
+    out[offset + 35] = (10.0 - p_opp.total_crowns as f32).max(0.0) / 10.0;
+    out[offset + 36] = (10.0 - cp_max_c as f32).max(0.0) / 10.0;
+    out[offset + 37] = (10.0 - op_max_c as f32).max(0.0) / 10.0;
 
-    out[offset + 32] = cp_pts_gap;
-    out[offset + 33] = op_pts_gap;
-    out[offset + 34] = cp_crown_gap;
-    out[offset + 35] = op_crown_gap;
-    out[offset + 36] = cp_col_gap;
-    out[offset + 37] = op_col_gap;
+    // 38: 本回合是否已补充棋盘 replenished_this_turn (1.0 或 0.0)
+    out[offset + 38] = if state.replenished_this_turn { 1.0 } else { 0.0 };
 
-    // 38..39: 双方离胜利的最小归一化差距
-    let cp_min_gap = cp_pts_gap.min(cp_crown_gap).min(cp_col_gap);
-    let op_min_gap = op_pts_gap.min(op_crown_gap).min(op_col_gap);
-    out[offset + 38] = cp_min_gap;
-    out[offset + 39] = op_min_gap;
-
-    // 40: 我方当前是否存在即刻买卡斩杀动作 (Lethal)
-    let cp_can_win_now = state
-        .pyramid
-        .iter()
-        .flat_map(|row| row.iter())
-        .chain(p_act.reserved_cards.iter().map(|rc| &rc.card))
-        .any(|c| can_player_win_with_card(p_act, c));
-    out[offset + 40] = if cp_can_win_now { 1.0 } else { 0.0 };
-
-    // 41: 对手当前场上/公开手牌是否已经有买得起的致胜牌 (Opponent Lethal Threat)
-    let op_can_win_now = state
-        .pyramid
-        .iter()
-        .flat_map(|row| row.iter())
-        .chain(
-            p_opp
-                .reserved_cards
-                .iter()
-                .filter(|rc| rc.is_public)
-                .map(|rc| &rc.card),
-        )
-        .any(|c| can_player_win_with_card(p_opp, c));
-    out[offset + 41] = if op_can_win_now { 1.0 } else { 0.0 };
-
-    // 42: 本回合是否已补充棋盘 replenished_this_turn (1.0 或 0.0)
-    out[offset + 42] = if state.replenished_this_turn { 1.0 } else { 0.0 };
-
-    // 43: 本回合已消耗特权数 privileges_used_this_turn / 3.0
-    out[offset + 43] = (state.privileges_used_this_turn as f32 / 3.0).min(1.0);
+    // 39: 本回合已消耗特权数 privileges_used_this_turn / 3.0
+    out[offset + 39] = state.privileges_used_this_turn as f32 / 3.0;
 
     out
-}
-
-/// 判定玩家是否能够通过购买某张卡牌直接达成 3 种胜负条件之一
-#[inline]
-fn can_player_win_with_card(p: &crate::game_state::player::PlayerState, c: &JewelCard) -> bool {
-    if c.color == CardColor::Joker && !p.has_any_bonus() {
-        return false;
-    }
-    if !p.can_afford(c) {
-        return false;
-    }
-    if p.total_points + c.points >= 20 || p.total_crowns + c.crowns >= 10 {
-        return true;
-    }
-    if let Some(gem) = c.color.to_gem_type() {
-        if p.color_points[gem.index()] + c.points >= 10 {
-            return true;
-        }
-    } else if c.color == CardColor::Joker && c.points > 0 {
-        // Joker 变色卡可附着于已有 bonus 的任意颜色上
-        for gem in GemType::BASIC_FIVE {
-            if p.get_bonus(gem) > 0 && p.color_points[gem.index()] + c.points >= 10 {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn encode_card_slot(
@@ -354,48 +294,49 @@ fn encode_card_slot(
     opp_player: Option<&crate::game_state::player::PlayerState>,
 ) {
     if let Some(c) = card_opt {
-        slice[0] = 1.0; // present
-        slice[1 + tier.index()] = 1.0; // tier
-        slice[4] = c.points as f32 / 6.0;
-        slice[5] = c.crowns as f32 / 3.0;
+        slice[0] = 1.0; // present: 槽位有卡
+        slice[1] = 1.0; // is_revealed: 信息公开已知
+        slice[2 + tier.index()] = 1.0; // tier (3-way One-Hot: [2, 3, 4])
+        slice[5] = c.points as f32 / 6.0; // points / 6.0 (牌库真实最高单卡 6 分)
+        slice[6] = c.crowns as f32 / 3.0; // crowns / 3.0 (牌库真实最高单卡 3 冠)
 
-        // cost
-        slice[6] = c.cost.white as f32 / 8.0;
-        slice[7] = c.cost.blue as f32 / 8.0;
-        slice[8] = c.cost.green as f32 / 8.0;
-        slice[9] = c.cost.red as f32 / 8.0;
-        slice[10] = c.cost.black as f32 / 8.0;
-        slice[11] = c.cost.pearl as f32 / 2.0;
+        // cost (6 维: [7..13])
+        slice[7] = c.cost.white as f32 / 8.0;
+        slice[8] = c.cost.blue as f32 / 8.0;
+        slice[9] = c.cost.green as f32 / 8.0;
+        slice[10] = c.cost.red as f32 / 8.0;
+        slice[11] = c.cost.black as f32 / 8.0;
+        slice[12] = c.cost.pearl as f32 / 2.0;
 
-        // bonus_color
+        // bonus_color (6-way One-Hot: [13..19])
         match c.color {
-            CardColor::White => slice[12] = 1.0,
-            CardColor::Blue => slice[13] = 1.0,
-            CardColor::Green => slice[14] = 1.0,
-            CardColor::Red => slice[15] = 1.0,
-            CardColor::Black => slice[16] = 1.0,
-            CardColor::Points | CardColor::Joker => slice[17] = 1.0,
+            CardColor::White => slice[13] = 1.0,
+            CardColor::Blue => slice[14] = 1.0,
+            CardColor::Green => slice[15] = 1.0,
+            CardColor::Red => slice[16] = 1.0,
+            CardColor::Black => slice[17] = 1.0,
+            CardColor::Points | CardColor::Joker => slice[18] = 1.0,
         }
-        slice[18] = c.bonus as f32 / 2.0;
+        slice[19] = c.bonus as f32 / 2.0;
 
-        // ability
+        // ability (7-way One-Hot: [20..27])
         match c.ability {
-            None => slice[19] = 1.0,
-            Some(CardAbility::ExtraTurn) => slice[20] = 1.0,
-            Some(CardAbility::TakePrivilege) => slice[21] = 1.0,
-            Some(CardAbility::TakeSameColor) => slice[22] = 1.0,
-            Some(CardAbility::StealToken) => slice[23] = 1.0,
-            Some(CardAbility::ColorCopy) => slice[24] = 1.0,
-            Some(CardAbility::ColorCopyAndExtraTurn) => slice[25] = 1.0,
+            None => slice[20] = 1.0,
+            Some(CardAbility::ExtraTurn) => slice[21] = 1.0,
+            Some(CardAbility::TakePrivilege) => slice[22] = 1.0,
+            Some(CardAbility::TakeSameColor) => slice[23] = 1.0,
+            Some(CardAbility::StealToken) => slice[24] = 1.0,
+            Some(CardAbility::ColorCopy) => slice[25] = 1.0,
+            Some(CardAbility::ColorCopyAndExtraTurn) => slice[26] = 1.0,
         }
 
-        slice[26] = if active_player.can_afford(c) {
+        slice[27] = if active_player.can_afford(c) {
             1.0
         } else {
             0.0
         };
 
-        // 动态净缺口特征 (6 维: 5 基础宝石各自净缺口 + 珍珠缺口)
+        // 动态净缺口特征 (6 维: [28..34])
         // Deficit_gem = max(0, Cost_gem - Bonus_gem - Tokens_gem) / 8.0
         let basic_costs = [
             c.cost.white,
@@ -410,33 +351,22 @@ fn encode_card_slot(
             let bonus_val = active_player.bonuses[i] as f32;
             let token_val = active_player.tokens.counts[i] as f32;
             let deficit = (cost_val - bonus_val - token_val).max(0.0);
-            slice[27 + i] = deficit / 8.0;
+            slice[28 + i] = deficit / 8.0;
             sum_deficits += deficit;
         }
         // 珍珠缺口 (无 Bonus 折扣): max(0, Cost_pearl - Tokens_pearl) / 2.0
         let pearl_token = active_player.tokens.counts[GemType::Pearl.index()] as f32;
         let pearl_deficit = (c.cost.pearl as f32 - pearl_token).max(0.0);
-        slice[32] = pearl_deficit / 2.0;
+        slice[33] = pearl_deficit / 2.0;
         sum_deficits += pearl_deficit;
 
-        // -------------------------------------------------------------
-        // 新增 5 维卡牌性价比与 ROI 效能特征 [33..38]
-        // -------------------------------------------------------------
-        let total_cost = (c.cost.white + c.cost.blue + c.cost.green + c.cost.red + c.cost.black + c.cost.pearl) as f32;
-        // 33: 真实总费用强度 total_cost / 10.0
-        slice[33] = (total_cost / 10.0).min(1.0);
-        // 34: 声望投资回报率 points / max(1, total_cost) (范围 0.0..1.0)
-        slice[34] = (c.points as f32 / total_cost.max(1.0)).min(1.0);
-        // 35: 王冠投资回报率 crowns / max(1, total_cost) (范围 0.0..1.0)
-        slice[35] = (c.crowns as f32 / total_cost.max(1.0)).min(1.0);
-
-        // 36: 黄金冲抵后的实际有效缺口 max(0, sum_deficits - gold) / 8.0
+        // 34: 黄金冲抵后的实际有效缺口 max(0, sum_deficits - gold) / 12.0 (牌库单卡最大总费用为 12)
         let gold_token = active_player.tokens.counts[GemType::Gold.index()] as f32;
         let effective_shortage = (sum_deficits - gold_token).max(0.0);
-        slice[36] = (effective_shortage / 8.0).min(1.0);
+        slice[34] = effective_shortage / 12.0;
 
-        // 37: 对手当前是否买得起该卡 (防守/抢位战略价值)
-        slice[37] = if let Some(opp) = opp_player {
+        // 35: 对手当前是否买得起该卡 (防守/抢位战略价值)
+        slice[35] = if let Some(opp) = opp_player {
             if opp.can_afford(c) { 1.0 } else { 0.0 }
         } else {
             0.0
@@ -444,12 +374,13 @@ fn encode_card_slot(
     }
 }
 
-/// 对手盲抽暗牌编码 (M4 POMDP 设计: 仅暴露 present 和公开可见的 tier，其余私密属性全部掩蔽为 0.0)
+/// 对手盲抽暗牌编码 (M4 POMDP 设计: 仅暴露 present, is_revealed=0.0 和公开可见的 tier，其余私密属性全部掩蔽为 0.0)
 #[inline]
 fn encode_opponent_hidden_slot(slice: &mut [f32], tier: CardTier) {
     slice[0] = 1.0; // present: 明确知晓对手此槽位持有暗牌
-    slice[1 + tier.index()] = 1.0; // tier: 盲抽来源牌堆等级是公开操作 (Tier 1/2/3)
-    // slice[4..CARD_FEAT_DIM] 保持 0.0 (费用、点数、皇冠、加成、技能、支付能力、缺口与 ROI 严格掩蔽)
+    slice[1] = 0.0; // is_revealed: 显式标记为暗牌未知 (0.0)
+    slice[2 + tier.index()] = 1.0; // tier: 盲抽来源牌堆等级是公开操作 (Tier 1/2/3)
+    // slice[5..CARD_FEAT_DIM] 保持 0.0 (费用、点数、皇冠、加成、技能、支付能力与缺口严格掩蔽)
 }
 
 /// 动作空间映射：将高层 Action 映射到 [0, 248] 离散 ID

@@ -58,7 +58,7 @@ def test_env_random_playout():
 
         assert obs.shape == (SplendorDuelEnv.OBS_SIZE,)
         assert not np.isnan(obs).any()
-        assert (obs >= 0.0).all() and (obs <= 1.0001).all()
+        assert (obs >= -1.0001).all() and (obs <= 1.0001).all()
 
     assert terminated, "Game should terminate within reasonable steps"
     assert info["winner"] in [0, 1]

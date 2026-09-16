@@ -14,7 +14,7 @@ class SplendorDuelEnv:
         obs, reward, terminated, truncated, info = env.step(action_id)
     """
 
-    OBS_SIZE = PyGameState.observation_space_size()  # 1005
+    OBS_SIZE = PyGameState.observation_space_size()  # 965
     ACTION_SIZE = PyGameState.action_space_size()   # 288
 
     def __init__(self, seed: Optional[int] = None, max_steps: int = 1500) -> None:
