@@ -10,7 +10,9 @@ import {
   renderPlayerDashboard,
   COLOR_CLASSES,
   COLOR_NAMES,
-  COLOR_KEYS
+  COLOR_KEYS,
+  applyBgaCardSprite,
+  getPaymentPlanDetails
 } from './shared-components.js';
 import { soundManager } from './sound-manager.js';
 
@@ -1462,32 +1464,90 @@ export class GameController {
     if (!buyActs || buyActs.length === 0) return;
     soundManager.play('card_flip');
 
-    this.modalTitle.innerText = '💰 卡牌购买支付方案选择';
-    this.modalBody.innerText = '检测到你持有自由黄金，你可以选择默认天然支付，或消耗自由黄金替代以保留指定天然宝石：';
+    this.modalTitle.innerHTML = '<span>💰 卡牌购买支付方案选择</span>';
+
+    let cardSummaryHtml = '';
+    if (card) {
+      const tierName = card.tier === 3 ? '高阶' : (card.tier === 2 ? '中阶' : '初阶');
+      const costChips = COLOR_KEYS
+        .map(col => ({ col, amt: card.cost?.[col] || card.cost?.[col.charAt(0).toUpperCase() + col.slice(1)] || 0 }))
+        .filter(item => item.amt > 0)
+        .map(({ col, amt }) => `<span class="hovercard-chip chip-${col}"><span class="chip-token-icon token-${col}"></span><span class="chip-qty">×${amt}</span></span>`)
+        .join('');
+
+      cardSummaryHtml = `
+        <div class="modal-card-summary">
+          <div class="modal-card-thumb" id="modalCardThumb"></div>
+          <div class="modal-card-info">
+            <div class="modal-card-meta">
+              <span class="modal-card-name">【${tierName} #${card.id}】</span>
+              <span class="modal-card-badges">
+                <span class="badge-points">⭐ ${card.points || 0} 声望</span>
+                ${card.crowns ? `<span class="badge-crowns">👑 ${card.crowns} 王冠</span>` : ''}
+              </span>
+            </div>
+            <div class="modal-card-cost-line">
+              <span class="cost-label">卡牌原价:</span>
+              <div class="cost-chips">${costChips || '<span style="color:#22c55e;">免费</span>'}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    this.modalBody.innerHTML = `
+      ${cardSummaryHtml}
+      <div class="modal-guide-text">检测到你持有自由黄金，你可以选择默认天然支付，或消耗自由黄金替代以保留指定天然宝石：</div>
+    `;
+
     this.modalOptions.innerHTML = '';
 
-    buyActs.forEach(act => {
+    buyActs.forEach((act, idx) => {
       const planId = act.action.PurchaseCard.plan_id;
-      const desc = act.desc || '';
-      const friendlyDesc = formatFriendlyAction(desc);
+      const details = getPaymentPlanDetails(planId);
+      const isDefault = details.isDefault;
 
       const cardBox = document.createElement('div');
-      cardBox.className = 'visual-plan-card';
+      cardBox.className = `visual-plan-card ${isDefault ? 'plan-default' : 'plan-gold'}`;
 
-      let planTitle = (planId === 0) ? '✨ 方案 1: 默认天然支付' : `💰 方案 ${planId + 1}: 黄金代付`;
-      let planSub = (planId === 0) ? '优先使用手中天然宝石，保留全部自由黄金' : (friendlyDesc.includes('保留') ? friendlyDesc : '消耗 1 枚自由黄金以节省天然宝石');
-      let badgeColor = (planId === 0) ? 'var(--text-main)' : 'var(--accent-gold)';
+      const planTitle = isDefault ? `✨ 方案 ${idx + 1}: 默认天然支付` : `💰 方案 ${idx + 1}: 自由黄金代付`;
+      const tagHtml = isDefault
+        ? `<span class="visual-plan-tag tag-default">⭐ 推荐 · 保留黄金</span>`
+        : `<span class="visual-plan-tag tag-gold">消耗黄金 ×${details.goldCount}</span>`;
+
+      let actionDescHtml = '';
+      if (isDefault) {
+        actionDescHtml = `
+          <div class="visual-plan-desc">优先使用手中天然宝石与已有减免，<b>保留全部自由黄金</b>。</div>
+        `;
+      } else {
+        const preservedChips = details.preserved.map(p =>
+          `<span class="hovercard-chip chip-${p.color}" title="保留 ${p.name} ×${p.count}"><span class="chip-token-icon token-${p.color}"></span><span class="chip-qty">×${p.count}</span></span>`
+        ).join('');
+
+        actionDescHtml = `
+          <div class="visual-plan-chips-line">
+            <span style="color:#fcd34d;">代付:</span>
+            <span class="hovercard-chip chip-gold"><span class="chip-token-icon token-gold"></span><span class="chip-qty">×${details.goldCount}</span></span>
+            <span style="color:#67e8f9; margin-left: 6px;">保留天然宝石:</span>
+            ${preservedChips}
+          </div>
+        `;
+      }
 
       cardBox.innerHTML = `
         <div class="visual-plan-header">
-          <span class="visual-plan-title" style="color:${badgeColor};">${planTitle}</span>
-          <span style="font-size:0.68rem; color:var(--text-muted); font-family:monospace;">plan_id: ${planId}</span>
-        </div>
-        <div class="visual-plan-rows">
-          <div class="visual-plan-row">
-            <span style="color:var(--text-muted); min-width:48px;">说明:</span>
-            <span style="color:#f1f5f9; font-weight:600;">${planSub}</span>
+          <div class="visual-plan-title-group">
+            <span class="visual-plan-title">${planTitle}</span>
+            ${tagHtml}
           </div>
+          <span class="visual-plan-id-badge">plan_id: ${planId}</span>
+        </div>
+        <div class="visual-plan-body">
+          <div class="visual-plan-details">
+            ${actionDescHtml}
+          </div>
+          <div class="plan-select-btn-indicator">选择此方案 ➔</div>
         </div>
       `;
 
@@ -1497,6 +1557,10 @@ export class GameController {
       };
       this.modalOptions.appendChild(cardBox);
     });
+
+    if (card && document.getElementById('modalCardThumb')) {
+      applyBgaCardSprite(document.getElementById('modalCardThumb'), card);
+    }
 
     this.modalFooter.innerHTML = '';
     const cancelBtn = document.createElement('button');

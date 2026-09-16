@@ -212,7 +212,7 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(5px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -220,39 +220,270 @@
 }
 
 .modal-box {
-  background: #171e2e;
-  border: 1px solid #33415c;
-  border-radius: 10px;
-  padding: 16px 20px;
-  max-width: 460px;
-  width: 90%;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.75);
+  background: #141c2e;
+  border: 1.5px solid rgba(251, 191, 36, 0.35);
+  border-radius: 12px;
+  padding: 18px 22px;
+  max-width: 520px;
+  width: 92%;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.85), 0 0 20px rgba(251, 191, 36, 0.15);
   display: flex;
   flex-direction: column;
   gap: 12px;
+  animation: modalFadeIn 0.18s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.95) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .modal-title {
-  font-size: 1.02rem;
+  font-size: 1.05rem;
   font-weight: 800;
   color: var(--accent-gold);
   display: flex;
   align-items: center;
   gap: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
 }
 
 .modal-body {
   font-size: 0.84rem;
   color: #e2e8f0;
   line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 弹窗中目标卡牌简要预览横幅 */
+.modal-card-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: rgba(10, 16, 28, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.modal-card-thumb {
+  width: 44px;
+  height: 66px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+  background-color: #1a1614;
+}
+
+.modal-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.modal-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-card-name {
+  font-weight: 800;
+  font-size: 0.88rem;
+  color: var(--accent-gold);
+}
+
+.modal-card-badges {
+  display: flex;
+  gap: 4px;
+}
+
+.modal-card-cost-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+}
+
+.modal-card-cost-line .cost-label {
+  color: var(--text-muted);
+}
+
+.modal-card-cost-line .cost-chips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.modal-guide-text {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.45;
 }
 
 .modal-options {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.modal-options:has(.gem-picker-btn) {
+  flex-direction: row;
   flex-wrap: wrap;
   justify-content: center;
-  padding: 8px 0;
+  gap: 8px;
+}
+
+/* 支付方案卡片 (Visual Plan Card) */
+.visual-plan-card {
+  width: 100%;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.visual-plan-card.plan-default {
+  background: rgba(14, 26, 44, 0.85);
+  border: 1.5px solid rgba(56, 189, 248, 0.38);
+}
+
+.visual-plan-card.plan-default:hover {
+  background: rgba(18, 34, 58, 0.98);
+  border-color: #38bdf8;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 12px rgba(56, 189, 248, 0.28);
+}
+
+.visual-plan-card.plan-gold {
+  background: rgba(26, 22, 14, 0.85);
+  border: 1.5px solid rgba(251, 191, 36, 0.35);
+}
+
+.visual-plan-card.plan-gold:hover {
+  background: rgba(36, 30, 18, 0.98);
+  border-color: #fbbf24;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 14px rgba(251, 191, 36, 0.28);
+}
+
+.visual-plan-card:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.visual-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+}
+
+.visual-plan-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.visual-plan-title {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.visual-plan-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.tag-default {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.tag-gold {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.visual-plan-id-badge {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.visual-plan-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.visual-plan-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.visual-plan-desc {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  line-height: 1.45;
+}
+
+.visual-plan-chips-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+}
+
+.plan-select-btn-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 6px 12px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.visual-plan-card.plan-default:hover .plan-select-btn-indicator {
+  color: #ffffff;
+  background: #0284c7;
+  border-color: #38bdf8;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.45);
+}
+
+.visual-plan-card.plan-gold:hover .plan-select-btn-indicator {
+  color: #ffffff;
+  background: linear-gradient(135deg, #d97706, #b45309);
+  border-color: #f59e0b;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.45);
 }
 
 .gem-picker-btn {
@@ -394,27 +625,72 @@
 
 .hovercard-chips-wrap {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .hovercard-chip {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 0.74rem;
-  font-weight: 700;
-  background: #101626;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  padding: 1px 6px;
-  border-radius: 4px;
+  gap: 4px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 2px 7px 2px 3px;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  line-height: 1;
+}
+
+.hovercard-chip .chip-token-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.hovercard-chip .chip-qty {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #f8fafc;
+  line-height: 1;
+  letter-spacing: 0.5px;
+}
+
+/* 针对不同颜色的微弱主题修饰 */
+.hovercard-chip.chip-blue  { border-color: rgba(56, 189, 248, 0.35); }
+.hovercard-chip.chip-white { border-color: rgba(248, 250, 252, 0.35); }
+.hovercard-chip.chip-green { border-color: rgba(52, 211, 153, 0.35); }
+.hovercard-chip.chip-black { border-color: rgba(148, 163, 184, 0.35); }
+.hovercard-chip.chip-red   { border-color: rgba(248, 113, 113, 0.35); }
+.hovercard-chip.chip-pearl { border-color: rgba(244, 114, 182, 0.35); }
+.hovercard-chip.chip-gold  { border-color: rgba(251, 191, 36, 0.35); }
+
+/* 缺少宝石时的 chip 样式 */
+.hovercard-chip.deficit-chip {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.45);
+  box-shadow: 0 0 5px rgba(239, 68, 68, 0.25);
+}
+
+.hovercard-chip.deficit-chip .chip-qty {
+  color: #fca5a5;
+}
+
+.inline-token {
+  width: 15px !important;
+  height: 15px !important;
+  display: inline-block;
+  vertical-align: -2.5px;
+  margin: 0 1px;
 }
 
 .hovercard-status {
   font-size: 0.76rem;
   font-weight: 700;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
   margin-top: 2px;
 }
 
@@ -422,12 +698,48 @@
   background: rgba(34, 197, 94, 0.15);
   color: #4ade80;
   border: 1px solid rgba(34, 197, 94, 0.4);
+  line-height: 1.35;
 }
 
 .hovercard-status.cannot-afford {
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.12);
   color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.4);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cannot-afford-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.cannot-afford-title {
+  font-weight: 800;
+  color: #f87171;
+}
+
+.deficit-summary {
+  font-size: 0.71rem;
+  font-weight: normal;
+  color: #fca5a5;
+  opacity: 0.95;
+}
+
+.deficit-chips-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.deficit-label {
+  color: #fca5a5;
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .hovercard-ability {

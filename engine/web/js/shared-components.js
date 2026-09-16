@@ -23,6 +23,83 @@ export const COLOR_CLASSES = {
 export const COLOR_KEYS = ['white', 'blue', 'green', 'red', 'black', 'pearl', 'gold'];
 export const COLOR_NAMES = ['白', '蓝', '绿', '红', '黑', '珍珠', '黄金'];
 
+export const REPLACEABLE_GEM_KEYS = ['white', 'blue', 'green', 'red', 'black', 'pearl'];
+export const REPLACEABLE_GEM_NAMES = ['白', '蓝', '绿', '红', '黑', '珍珠'];
+
+/**
+ * 生成全量 84 种自由黄金静态支付替代方案
+ * 映射顺序严格与 Rust 引擎 crate::gameplay::payment::PAYMENT_PLANS 对齐
+ */
+export function generatePaymentPlans() {
+  const plans = [];
+  // k = 0 (1 种): 全部为 0
+  plans.push([0, 0, 0, 0, 0, 0]);
+  // k = 1 (6 种): 6 种颜色各取 1 枚
+  for (let c0 = 0; c0 < 6; c0++) {
+    const p = [0, 0, 0, 0, 0, 0];
+    p[c0] += 1;
+    plans.push(p);
+  }
+  // k = 2 (21 种): 6 种颜色选 2 枚 (带放回)
+  for (let c0 = 0; c0 < 6; c0++) {
+    for (let c1 = c0; c1 < 6; c1++) {
+      const p = [0, 0, 0, 0, 0, 0];
+      p[c0] += 1;
+      p[c1] += 1;
+      plans.push(p);
+    }
+  }
+  // k = 3 (56 种): 6 种颜色选 3 枚 (带放回)
+  for (let c0 = 0; c0 < 6; c0++) {
+    for (let c1 = c0; c1 < 6; c1++) {
+      for (let c2 = c1; c2 < 6; c2++) {
+        const p = [0, 0, 0, 0, 0, 0];
+        p[c0] += 1;
+        p[c1] += 1;
+        p[c2] += 1;
+        plans.push(p);
+      }
+    }
+  }
+  return plans;
+}
+
+export const PAYMENT_PLANS = generatePaymentPlans();
+
+/**
+ * 解析支付方案 plan_id，提取消耗黄金数及保留的天然宝石
+ */
+export function getPaymentPlanDetails(planId) {
+  if (!planId || planId === 0 || !PAYMENT_PLANS[planId]) {
+    return {
+      planId: 0,
+      isDefault: true,
+      goldCount: 0,
+      preserved: [],
+    };
+  }
+  const plan = PAYMENT_PLANS[planId];
+  const preserved = [];
+  let goldCount = 0;
+  for (let i = 0; i < 6; i++) {
+    const count = plan[i];
+    if (count > 0) {
+      goldCount += count;
+      preserved.push({
+        color: REPLACEABLE_GEM_KEYS[i],
+        name: REPLACEABLE_GEM_NAMES[i],
+        count,
+      });
+    }
+  }
+  return {
+    planId,
+    isDefault: false,
+    goldCount,
+    preserved,
+  };
+}
+
 export const ABILITY_DISPLAY_NAMES = {
   ExtraTurn: '额外回合 🔁',
   TakePrivilege: '拿特权 📜',
@@ -319,13 +396,17 @@ class CardHovercardManager {
 
     if (!isRoyal && card.cost) {
       const deficit = calculateCardDeficit(card, player);
-      const rawCosts = Object.entries(card.cost)
-        .filter(([_, amt]) => amt > 0)
-        .map(([col, amt]) => {
+      const rawCosts = COLOR_KEYS
+        .map(col => {
+          const amt = card.cost[col] || card.cost[col.charAt(0).toUpperCase() + col.slice(1)] || 0;
+          return { col, amt };
+        })
+        .filter(item => item.amt > 0)
+        .map(({ col, amt }) => {
           const cCn = translateColor(col);
           const colKey = col.toLowerCase();
-          return `<span class="hovercard-chip ${COLOR_CLASSES[colKey] || ''}"><span class="chip-token-icon token-${colKey}"></span>${cCn}×${amt}</span>`;
-        }).join(' ');
+          return `<span class="hovercard-chip chip-${colKey}" title="${cCn} ×${amt}"><span class="chip-token-icon token-${colKey}"></span><span class="chip-qty">×${amt}</span></span>`;
+        }).join('');
 
       costHtml = `
         <div class="hovercard-row">
@@ -336,11 +417,32 @@ class CardHovercardManager {
 
       if (deficit) {
         if (deficit.canAfford) {
-          const goldNote = deficit.goldUsed > 0 ? ` (需消耗自由黄金 ${deficit.goldUsed} 枚)` : ' (天然资源完全满足)';
+          const goldNote = deficit.goldUsed > 0
+            ? ` <span class="gold-used-note">(需消耗自由黄金 <span class="chip-token-icon token-gold inline-token"></span><span class="chip-qty">×${deficit.goldUsed}</span>)</span>`
+            : ' (天然资源完全满足)';
           deficitHtml = `<div class="hovercard-status can-afford">✅ 当前资产可立即购买${goldNote}</div>`;
         } else {
-          const lacks = deficit.deficitDetails.map(d => `${d.name}×${d.lack}`).join(', ');
-          deficitHtml = `<div class="hovercard-status cannot-afford">❌ 无法购买：尚缺天然宝石 ${lacks} (还需 ${deficit.remainingLack} 标记)</div>`;
+          const lackChips = deficit.deficitDetails.map(d => {
+            const colKey = d.color.toLowerCase();
+            return `<span class="hovercard-chip deficit-chip chip-${colKey}" title="缺少 ${d.name} ×${d.lack}"><span class="chip-token-icon token-${colKey}"></span><span class="chip-qty">×${d.lack}</span></span>`;
+          }).join('');
+
+          const goldDeductHint = deficit.freeGold > 0
+            ? ` (已折算黄金 ×${deficit.freeGold})`
+            : '';
+
+          deficitHtml = `
+            <div class="hovercard-status cannot-afford">
+              <div class="cannot-afford-header">
+                <span class="cannot-afford-title">❌ 无法购买</span>
+                <span class="deficit-summary">还差 <b>${deficit.remainingLack}</b> 标记${goldDeductHint}</span>
+              </div>
+              <div class="hovercard-row deficit-chips-row">
+                <span class="hovercard-label deficit-label">缺少宝石:</span>
+                <div class="hovercard-chips-wrap">${lackChips}</div>
+              </div>
+            </div>
+          `;
         }
       }
     }
