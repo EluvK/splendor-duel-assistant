@@ -36,7 +36,9 @@ engine/web/
 │   └── shared-components.js   # 共享渲染库：BGA 雪碧图定位、棋盘绘制、卡牌构建、玩家面板
 └── assets/
     └── images/                # BGA 原版贴图素材
-        ├── board.jpg          # 5×5 螺旋棋盘底图
+        ├── board.jpg          # 棋盘完整原图 (含顶部特权规则牌与插画)
+        ├── board-square.jpg   # 5×5 螺旋棋盘底图 (下半部 1:1 正方形)
+        ├── privilege-board.jpg # 1×3 特权触发规则图示看板 (拿2珍珠/补袋/拿3同色)
         ├── cards1.jpg         # Level 1 珠宝卡雪碧图 (31 帧，含卡背)
         ├── cards2.jpg         # Level 2 珠宝卡雪碧图 (25 帧，含卡背)
         ├── cards3.jpg         # Level 3 珠宝卡雪碧图 (14 帧，含卡背)

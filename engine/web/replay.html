@@ -41,7 +41,7 @@
       </div>
 
       <div class="slider-container">
-        <span style="font-size:0.8rem; min-width: 170px;">轮数: <b id="currentRoundText" style="color:#38bdf8;">1</b>/<b id="totalRoundsText">1</b> 轮 | 步数: <b id="currentStepText" style="color:var(--accent-gold);">0</b>/<b id="totalStepsText">0</b> 步</span>
+        <span style="font-size:0.78rem; min-width: 148px; white-space: nowrap;">轮数: <b id="currentRoundText" style="color:#38bdf8;">1</b>/<b id="totalRoundsText">1</b> | 步数: <b id="currentStepText" style="color:var(--accent-gold);">0</b>/<b id="totalStepsText">0</b></span>
         <input type="range" id="stepSlider" min="0" max="0" value="0">
       </div>
       <button class="btn-secondary" id="btnPrev">◀ 上一步</button>
@@ -133,6 +133,9 @@
           </div>
 
           <div class="board-side-info">
+            <div class="privilege-rules-panel" title="特权获取规则：拿取2颗珍珠 / 补充棋盘(赠送对手) / 拿取3颗同色宝石">
+              <img src="assets/images/privilege-board.jpg" alt="特权获取规则" class="privilege-rules-img" />
+            </div>
             <div class="side-info-card">
               <span class="privilege-icon"></span>
               <div class="side-info-meta">

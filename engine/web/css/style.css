@@ -1,20 +1,30 @@
 :root {
-  --bg-main: #0f1219;
-  --bg-panel: #171c28;
-  --bg-card: #202738;
-  --bg-card-hover: #2a3349;
-  --border-color: #2e384d;
-  --text-main: #f1f5f9;
+  /* 背景层次：由外到内、由底到面层层清晰，告别浑浊死黑与刺眼纯白 */
+  --bg-main: #0b0f17;
+  --bg-panel: #131926;
+  --bg-card: #1c2438;
+  --bg-card-hover: #26314c;
+  --bg-inner: #0f1420;
+  --border-color: #2a364f;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+
+  /* 文字层级：确保 WCAG AA 级别高对比度与易读性 */
+  --text-main: #f8fafc;
+  --text-body: #e2e8f0;
   --text-muted: #94a3b8;
+  --text-faint: #64748b;
+
+  /* 珠宝与状态强调色调：典雅贵气，杜绝高饱和度荧光刺眼 */
   --accent-gold: #fbbf24;
+  --accent-gold-glow: rgba(251, 191, 36, 0.35);
   --accent-blue: #38bdf8;
-  --accent-green: #22c55e;
-  --accent-red: #ef4444;
-  --accent-white: #f8fafc;
-  --accent-black: #475569;
+  --accent-green: #34d399;
+  --accent-red: #f87171;
+  --accent-white: #f1f5f9;
+  --accent-black: #94a3b8;
   --accent-pearl: #f472b6;
-  --primary: #6366f1;
-  --primary-hover: #4f46e5;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -25,9 +35,14 @@ html {
 }
 
 body {
+  background: radial-gradient(circle at 50% 0%, #151d2f 0%, #0b0f17 70%);
   background-color: var(--bg-main);
-  color: var(--text-main);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-attachment: fixed;
+  color: var(--text-body);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -36,14 +51,16 @@ body {
 
 /* 顶部导航与控制栏 */
 header {
-  background-color: var(--bg-panel);
+  background: rgba(19, 25, 38, 0.95);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border-color);
-  padding: 8px 18px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  padding: 6px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   position: sticky;
   top: 0;
   z-index: 100;
@@ -56,12 +73,14 @@ header {
 }
 
 .title-group h1 {
-  font-size: 1.12rem;
-  font-weight: 700;
+  font-size: 1.15rem;
+  font-weight: 800;
   color: var(--accent-gold);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   gap: 6px;
+  letter-spacing: 0.02em;
 }
 
 /* 模式切换导航按钮 */
@@ -75,23 +94,25 @@ header {
 }
 
 .nav-tab {
-  padding: 4px 10px;
-  font-size: 0.78rem;
+  padding: 4px 11px;
+  font-size: 0.8rem;
   font-weight: 600;
   border-radius: 4px;
   text-decoration: none;
   color: var(--text-muted);
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   cursor: pointer;
 }
 
 .nav-tab:hover {
   color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .nav-tab.active {
   background: var(--primary);
   color: #fff;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.35);
 }
 
 .status-badge {
@@ -108,7 +129,7 @@ header {
 .controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -125,21 +146,23 @@ header {
 button, select {
   background-color: var(--primary);
   color: #fff;
-  border: none;
-  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 5px 12px;
   border-radius: 5px;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.15s, transform 0.05s;
+  transition: background-color 0.15s, transform 0.05s, box-shadow 0.15s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
 }
 
 button:hover:not(:disabled) {
   background-color: var(--primary-hover);
+  box-shadow: 0 4px 8px rgba(79, 70, 229, 0.4);
 }
 
 button:active:not(:disabled) {
@@ -147,8 +170,9 @@ button:active:not(:disabled) {
 }
 
 button:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-secondary {
@@ -159,22 +183,28 @@ button:disabled {
 
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--bg-card-hover);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .btn-accent {
   background-color: #d97706;
+  border-color: rgba(251, 191, 36, 0.3);
 }
 
 .btn-accent:hover:not(:disabled) {
   background-color: #b45309;
+  box-shadow: 0 4px 8px rgba(217, 119, 6, 0.4);
 }
 
 .btn-success {
   background-color: #059669;
+  border-color: rgba(52, 211, 153, 0.3);
 }
 
 .btn-success:hover:not(:disabled) {
   background-color: #047857;
+  box-shadow: 0 4px 8px rgba(5, 150, 105, 0.4);
 }
 
 select {
@@ -213,24 +243,24 @@ input[type="range"] {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  background: linear-gradient(90deg, rgba(234, 179, 8, 0.12) 0%, rgba(234, 179, 8, 0.32) 50%, rgba(234, 179, 8, 0.12) 100%);
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.14) 0%, rgba(234, 179, 8, 0.35) 50%, rgba(234, 179, 8, 0.14) 100%);
   border: 1.5px solid var(--accent-gold);
   border-radius: 6px;
   padding: 8px 18px;
   color: #fff;
-  font-size: 0.96rem;
+  font-size: 0.98rem;
   font-weight: 800;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
-  box-shadow: 0 0 16px rgba(234, 179, 8, 0.3);
-  animation: pulse-winner 2.2s infinite ease-in-out;
+  box-shadow: 0 0 18px rgba(234, 179, 8, 0.3);
+  animation: pulse-winner 2.8s infinite ease-in-out;
 }
 
 @keyframes pulse-winner {
   0%, 100% {
-    box-shadow: 0 0 12px rgba(234, 179, 8, 0.3);
+    box-shadow: 0 0 12px rgba(234, 179, 8, 0.25);
   }
   50% {
-    box-shadow: 0 0 24px rgba(234, 179, 8, 0.65);
+    box-shadow: 0 0 22px rgba(234, 179, 8, 0.55);
   }
 }
 
@@ -238,18 +268,19 @@ input[type="range"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #141824;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 0.8rem;
+  padding: 7px 14px;
+  font-size: 0.82rem;
   color: var(--text-main);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
 }
 
 /* 主视窗自适应三列布局：左列金字塔卡牌区，中列上棋盘+下双人仪表盘，右列日志与决策侧栏 */
 main {
   display: grid;
-  grid-template-columns: minmax(500px, 1.05fr) minmax(570px, 1.45fr) 300px;
+  grid-template-columns: minmax(660px, 1.28fr) minmax(540px, 1.22fr) 300px;
   gap: 12px;
   padding: 8px 14px 14px 14px;
   flex: 1;
@@ -259,7 +290,7 @@ main {
   min-width: 0;
 }
 
-/* 左列：金字塔卡牌展示区 (独立成列，充裕宽度杜绝横向滚动条) */
+/* 左列：金字塔卡牌展示区 */
 .pyramid-section {
   display: flex;
   flex-direction: column;
@@ -292,15 +323,16 @@ main {
 .panel {
   background-color: var(--bg-panel);
   border: 1px solid var(--border-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   border-radius: 8px;
-  padding: 10px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
 .panel-title {
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -308,11 +340,10 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 5px;
 }
 
-/* 5x5 棋盘布局 (放大至 306x306px，格槽更易点击，支持连线轨迹与幽灵残留) */
 .left-panel,
 .board-panel,
 .right-panel {
@@ -329,21 +360,22 @@ main {
   gap: 8px;
 }
 
+/* 5x5 棋盘布局 (适度放大至 320x320px，格槽更饱满，质感更通透) */
 .board-container {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   grid-template-rows: repeat(5, minmax(0, 1fr));
-  gap: 7px;
-  background-image: url('../assets/images/board.jpg');
+  gap: 6px;
+  background-image: url('../assets/images/board-square.jpg');
   background-size: 100% 100%;
   background-position: center;
   background-repeat: no-repeat;
-  padding: 12px;
+  padding: 10px;
   border-radius: 10px;
-  border: 2.5px solid #573f1d;
-  box-shadow: inset 0 0 25px rgba(0, 0, 0, 0.85), 0 8px 20px rgba(0, 0, 0, 0.6);
-  width: 306px;
-  height: 306px;
+  border: 2px solid #5a4220;
+  box-shadow: inset 0 0 25px rgba(0, 0, 0, 0.85), 0 8px 24px rgba(0, 0, 0, 0.55);
+  width: 320px;
+  height: 320px;
   box-sizing: border-box;
   margin: 0;
   flex-shrink: 0;
@@ -351,31 +383,33 @@ main {
 }
 
 .board-cell {
-  background-color: rgba(18, 14, 10, 0.42);
-  border: 1.5px dashed rgba(212, 175, 55, 0.35);
+  background-color: rgba(10, 14, 22, 0.55);
+  border: 1.5px solid rgba(212, 175, 55, 0.32);
   border-radius: 50%;
   display: flex;
   justify-content: center;
   align-items: center;
   position: relative;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
   aspect-ratio: 1 / 1;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5);
 }
 
 .board-cell:hover {
-  background-color: rgba(212, 175, 55, 0.25);
-  border-color: rgba(251, 191, 36, 0.8);
+  background-color: rgba(212, 175, 55, 0.22);
+  border-color: rgba(251, 191, 36, 0.85);
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.35);
 }
 
 /* 5x5 棋盘紧凑布局：棋盘与侧边特权/布袋紧密贴合，整体水平居中 */
 .board-stage-wrap {
   display: inline-flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
   justify-content: center;
   margin: 0 auto;
@@ -385,49 +419,77 @@ main {
 .board-side-info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
   justify-content: center;
   flex-shrink: 0;
 }
 
-.side-info-card {
-  background: #141722;
-  border: 1px solid rgba(212, 175, 55, 0.25);
-  border-radius: 6px;
-  padding: 6px 10px;
+.privilege-rules-panel {
+  background: var(--bg-inner);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 8px;
+  padding: 4px;
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 8px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
-  min-width: 84px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+  transition: all 0.15s ease;
+  box-sizing: border-box;
 }
+
+.privilege-rules-panel:hover {
+  border-color: rgba(251, 191, 36, 0.7);
+  box-shadow: 0 4px 14px rgba(251, 191, 36, 0.2);
+  transform: translateY(-1px);
+}
+
+.privilege-rules-img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+}
+
+.side-info-card {
+  background: var(--bg-inner);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 8px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
-  min-width: 82px;
+  gap: 10px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+  min-width: 102px;
+  transition: all 0.15s ease;
+}
+
+.side-info-card:hover {
+  border-color: rgba(251, 191, 36, 0.7);
+  box-shadow: 0 4px 14px rgba(251, 191, 36, 0.2);
+  transform: translateY(-1px);
 }
 
 .side-info-meta {
   display: flex;
   flex-direction: column;
-  line-height: 1.15;
+  gap: 1px;
+  line-height: 1.2;
 }
 
 .side-info-label {
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
 }
 
 .board-tokens-icon {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   line-height: 1;
 }
 
 .privilege-icon {
   display: inline-block;
-  width: 13px;
-  height: 22px;
+  width: 15px;
+  height: 25px;
   background-image: url('../assets/images/privilege.png');
   background-size: contain;
   background-repeat: no-repeat;
@@ -437,8 +499,8 @@ main {
 
 .bag-icon {
   display: inline-block;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   background-image: url('../assets/images/bag.png');
   background-size: contain;
   background-repeat: no-repeat;
@@ -446,28 +508,30 @@ main {
   margin-right: 4px;
 }
 
-/* 标记样式 (BGA 原版 3D 浮雕筹码，微调放大至 42x42px，触控与辨识度倍增) */
+/* 标记样式 (BGA 原版 3D 浮雕筹码，微调放大至 44x44px，触控与辨识度倍增) */
 .token {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
   background-repeat: no-repeat;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.7), inset 0 1px 2px rgba(255,255,255,0.4);
-  border: 1px solid rgba(0,0,0,0.45);
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.06) brightness(1.03);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.65), inset 0 1.5px 2px rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(0, 0, 0, 0.45);
   display: flex;
   justify-content: center;
   align-items: center;
   user-select: none;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   cursor: default;
   flex-shrink: 0;
 }
 
 .token:hover {
   transform: scale(1.12);
-  box-shadow: 0 6px 14px rgba(0,0,0,0.85), 0 0 10px rgba(251, 191, 36, 0.6);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.85), 0 0 10px rgba(251, 191, 36, 0.6);
 }
 
 /* BGA tokens.png 排列: gold(0), pearl(1), blue(2), white(3), green(4), black(5), red(6), wild(7) */
@@ -488,7 +552,7 @@ main {
   min-height: 180px;
   max-height: 280px;
   overflow-y: auto;
-  background: #121622;
+  background: var(--bg-inner);
   border-radius: 6px;
   padding: 6px;
   border: 1px solid var(--border-color);
@@ -499,10 +563,10 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-radius: 4px;
-  font-size: 0.73rem;
-  background: #171f2f;
+  font-size: 0.75rem;
+  background: #151b2a;
   border: 1px solid transparent;
   cursor: pointer;
   transition: all 0.15s;
@@ -510,7 +574,8 @@ main {
 }
 
 .log-item:hover {
-  background: #232e44;
+  background: #1f273b;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .log-item.active-step {
@@ -520,14 +585,14 @@ main {
   font-weight: 700;
 }
 
-.log-idx { color: var(--text-muted); font-size: 0.7rem; min-width: 28px; }
+.log-idx { color: var(--text-muted); font-size: 0.72rem; min-width: 28px; }
 .log-p { font-weight: 700; min-width: 22px; }
-.log-act { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-act { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-main); }
 .log-score-tag {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-  padding: 1px 4px;
+  color: #34d399;
+  padding: 1px 5px;
   border-radius: 3px;
   border: 1px solid rgba(34, 197, 94, 0.3);
 }
@@ -537,22 +602,22 @@ main {
   align-items: center;
   gap: 6px;
   margin: 6px 0 2px 0;
-  padding: 2px 6px;
-  font-size: 0.68rem;
+  padding: 3px 8px;
+  font-size: 0.72rem;
   font-weight: 700;
   color: #94a3b8;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
   border-left: 2px solid #38bdf8;
   border-radius: 2px;
 }
 
 .log-item.ai-step {
-  background: #181c2c;
+  background: #171d2e;
   border-left: 2px solid #818cf8;
 }
 
 .log-item.ai-step:hover {
-  background: #252b42;
+  background: #222a40;
 }
 
 .log-item.just-executed {
@@ -565,7 +630,7 @@ main {
     transform: scale(1.02);
   }
   100% {
-    background-color: #171f2f;
+    background-color: #151b2a;
     transform: scale(1);
   }
 }
@@ -574,8 +639,8 @@ main {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--text-muted);
-  font-size: 0.68rem;
-  padding: 1px 6px;
+  font-size: 0.72rem;
+  padding: 2px 7px;
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
@@ -589,19 +654,19 @@ main {
 }
 
 .guide-details {
-  background: #131722;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--bg-inner);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  line-height: 1.4;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  color: var(--text-body);
+  line-height: 1.45;
   transition: all 0.2s;
 }
 
 .guide-details[open] {
-  background: #161b29;
-  border-color: rgba(255, 255, 255, 0.1);
+  background: #161c2a;
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .guide-details summary {
@@ -624,35 +689,32 @@ main {
 }
 
 .guide-toggle-arrow {
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   color: var(--text-muted);
   transition: transform 0.2s;
 }
 
-/* 金字塔与卡牌展示 */
-.pyramid-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* =========================================================
+   金字塔与卡牌展示 (放大至 95x144px，画质抗锯齿通透优化)
+   ========================================================= */
 .tier-row {
-  background: #131722;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--bg-inner);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  padding: 6px;
+  padding: 7px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .tier-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   color: var(--accent-gold);
   font-weight: 700;
+  padding: 0 2px;
 }
 
 .cards-flex {
@@ -662,23 +724,26 @@ main {
   align-items: center;
   overflow-x: auto;
   scrollbar-width: thin;
-  padding-bottom: 2px;
+  padding-bottom: 3px;
 }
 
+/* 卡牌基础形态 (适度放大至 100x152px，数字、费用、王冠清晰辨识) */
 .card-item {
-  width: 84px;
-  height: 127px;
-  background-color: #1a1714;
+  width: 100px;
+  height: 152px;
+  background-color: #171412;
   background-repeat: no-repeat;
-  border: 1.5px solid #4a3b2c;
+  border: 1.5px solid #5a4835;
   border-radius: 6px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   padding: 0;
   position: relative;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65);
-  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65), inset 0 0 2px rgba(255, 255, 255, 0.15);
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.05) brightness(1.02) saturate(1.04);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   overflow: hidden;
   cursor: default;
   flex-shrink: 0;
@@ -687,13 +752,13 @@ main {
 .card-item:hover {
   transform: translateY(-4px) scale(1.02);
   border-color: var(--accent-gold);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.8), 0 0 12px rgba(251, 191, 36, 0.35);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.8), 0 0 12px rgba(251, 191, 36, 0.4);
   z-index: 10;
 }
 
 /* 等级牌库卡背堆叠效果 (0 号帧) */
 .card-item.deck-pile {
-  border: 1.5px solid #6b553d;
+  border: 1.5px solid #7c6347;
   box-shadow: 2px 2px 0 #2a2015, 4px 4px 0 #18130d, 0 6px 14px rgba(0, 0, 0, 0.75);
   flex-shrink: 0;
   margin-right: 6px;
@@ -721,28 +786,28 @@ main {
   position: absolute;
   bottom: 6px;
   right: 6px;
-  background: rgba(15, 23, 42, 0.9);
+  background: rgba(15, 23, 42, 0.92);
   color: var(--accent-gold);
-  border: 1px solid rgba(251, 191, 36, 0.6);
-  font-size: 0.65rem;
+  border: 1px solid rgba(251, 191, 36, 0.65);
+  font-size: 0.72rem;
   font-weight: 800;
-  padding: 1px 6px;
+  padding: 2px 6px;
   border-radius: 4px;
   backdrop-filter: blur(2px);
   pointer-events: none;
   box-shadow: 0 2px 5px rgba(0,0,0,0.7);
 }
 
-/* 金字塔视觉层级阶梯对齐 (牌库左侧竖直对齐，明牌区域向右偏移以中心对称) */
+/* 金字塔视觉层级阶梯对齐 (牌库左侧对齐，100px宽卡牌 + 6px间距 = 106px 阶梯差) */
 #tier3Cards .deck-pile + .card-item {
-  margin-left: 104px;
+  margin-left: 106px;
 }
 
 #tier2Cards .deck-pile + .card-item {
-  margin-left: 52px;
+  margin-left: 53px;
 }
 
-/* 王室卡展示 (BGA 原版实物风格，居中排布) */
+/* 王室卡展示 (居中排布，原画通透) */
 .royals-row {
   display: flex;
   gap: 12px;
@@ -752,9 +817,9 @@ main {
 }
 
 .royal-item {
-  width: 84px;
-  height: 127px;
-  background-color: #1a1714;
+  width: 100px;
+  height: 152px;
+  background-color: #171412;
   background-repeat: no-repeat;
   border: 1.5px solid #d4af37;
   border-radius: 6px;
@@ -762,18 +827,22 @@ main {
   flex-direction: column;
   justify-content: space-between;
   padding: 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65);
-  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.65), inset 0 0 2px rgba(255, 255, 255, 0.2);
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.05) brightness(1.02) saturate(1.05);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   overflow: hidden;
 }
 
 .royal-item:hover {
-  transform: translateY(-3px) scale(1.02);
+  transform: translateY(-4px) scale(1.02);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.8), 0 0 14px rgba(234, 179, 8, 0.5);
   z-index: 10;
 }
 
-/* 玩家仪表盘区域：大屏在公共版图右侧，宽度不足时沉降到下册 */
+/* =========================================================
+   玩家仪表盘区域 (Player Dashboards)
+   ========================================================= */
 .players-panel,
 .player-panel {
   flex: 1 1 540px;
@@ -791,15 +860,16 @@ main {
 }
 
 .player-card {
-  background: #141824;
+  background: var(--bg-panel);
   border: 1px solid var(--border-color);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   position: relative;
-  transition: all 0.25s;
+  transition: all 0.25s ease;
   min-width: 0;
 }
 
@@ -807,51 +877,52 @@ main {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: #10141f;
+  background: var(--bg-inner);
   padding: 5px 8px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 .player-cards-summary {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: #10141f;
+  background: var(--bg-inner);
   padding: 5px 8px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 .player-card.acting {
   border-color: var(--accent-gold);
-  box-shadow: 0 0 16px rgba(251, 191, 36, 0.3);
-  background: #171f33;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.35);
+  background: #172036;
 }
 
 .player-card.next-turn {
   border-color: #38bdf8;
-  box-shadow: 0 0 8px rgba(56, 189, 248, 0.15);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
 }
 
 .player-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 4px;
 }
 
 .player-name {
   font-weight: 800;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   display: flex;
   align-items: center;
   gap: 5px;
+  color: var(--text-main);
 }
 
 .area-label {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -861,10 +932,10 @@ main {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: #10141f;
-  padding: 4px 6px;
+  background: var(--bg-inner);
+  padding: 5px 7px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 .token-stacks-grid {
@@ -872,7 +943,7 @@ main {
   grid-template-columns: repeat(7, 1fr);
   gap: 3px;
   align-items: flex-start;
-  min-height: 56px;
+  min-height: 58px;
 }
 
 .token-stack-col {
@@ -883,37 +954,40 @@ main {
 }
 
 .stack-count-badge {
-  font-size: 0.62rem;
+  font-size: 0.7rem;
   font-weight: 800;
   font-family: monospace;
-  color: #64748b;
+  color: var(--text-faint);
   line-height: 1;
   margin-bottom: 2px;
 }
 
 .stack-count-badge.active {
-  color: #f1f5f9;
+  color: #fff;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
 }
 
 .stack-body {
   display: flex;
-  flex-direction: column; /* 自顶向下堆叠，绝不遮挡上方数量角标 */
+  flex-direction: column;
   align-items: center;
   position: relative;
   width: 100%;
 }
 
 .stack-chip {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
   background-repeat: no-repeat;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.8), inset 0 1px 1.5px rgba(255,255,255,0.4);
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.06) brightness(1.03);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.8), inset 0 1px 1.5px rgba(255,255,255,0.45);
   border: 1px solid rgba(0,0,0,0.5);
   flex-shrink: 0;
-  margin-top: -13px; /* 向下遮挡前一个筹码的一半 (26px / 2 = 13px) */
+  margin-top: -14px;
   transition: transform 0.15s, box-shadow 0.15s;
 }
 
@@ -922,12 +996,11 @@ main {
 }
 
 .stack-chip:hover {
-  transform: scale(1.18);
-  box-shadow: 0 0 8px #fff;
+  transform: scale(1.2);
+  box-shadow: 0 0 10px #fff;
   z-index: 100 !important;
 }
 
-/* 筹码精确切片定位 (彻底修复全部显示为黄金切片的 Bug) */
 .stack-chip.token-gold  { background-position: 0% 0%; }
 .stack-chip.token-pearl { background-position: 14.2857% 0%; }
 .stack-chip.token-blue  { background-position: 28.5714% 0%; }
@@ -936,36 +1009,38 @@ main {
 .stack-chip.token-black { background-position: 71.4286% 0%; }
 .stack-chip.token-red   { background-position: 85.7143% 0%; }
 
+/* 空槽：通透轮廓，摆脱死黑看不清的问题 */
 .token-slot-empty {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  border: 1.5px dashed rgba(255, 255, 255, 0.16);
+  border: 1.5px dashed rgba(255, 255, 255, 0.28);
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
   background-repeat: no-repeat;
-  opacity: 0.15;
-  filter: grayscale(40%);
+  opacity: 0.42;
+  filter: grayscale(15%) brightness(0.88);
+  background-color: rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
 }
 
-.token-slot-empty.slot-gold  { background-position: 0% 0%; }
-.token-slot-empty.slot-pearl { background-position: 14.2857% 0%; }
-.token-slot-empty.slot-blue  { background-position: 28.5714% 0%; }
-.token-slot-empty.slot-white { background-position: 42.8571% 0%; }
-.token-slot-empty.slot-green { background-position: 57.1429% 0%; }
-.token-slot-empty.slot-black { background-position: 71.4286% 0%; }
-.token-slot-empty.slot-red   { background-position: 85.7143% 0%; }
+.token-slot-empty.slot-gold  { background-position: 0% 0%; border-color: rgba(251, 191, 36, 0.4); }
+.token-slot-empty.slot-pearl { background-position: 14.2857% 0%; border-color: rgba(244, 114, 182, 0.4); }
+.token-slot-empty.slot-blue  { background-position: 28.5714% 0%; border-color: rgba(56, 189, 248, 0.4); }
+.token-slot-empty.slot-white { background-position: 42.8571% 0%; border-color: rgba(248, 250, 252, 0.4); }
+.token-slot-empty.slot-green { background-position: 57.1429% 0%; border-color: rgba(52, 211, 153, 0.4); }
+.token-slot-empty.slot-black { background-position: 71.4286% 0%; border-color: rgba(148, 163, 184, 0.4); }
+.token-slot-empty.slot-red   { background-position: 85.7143% 0%; border-color: rgba(248, 113, 113, 0.4); }
 
 /* 永久减免与已购卡片 (按颜色分列堆叠 Tableau by Color) */
 .player-tableau-area {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  background: #10141f;
-  padding: 4px 6px;
+  background: var(--bg-inner);
+  padding: 5px 7px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 .tableau-by-color-grid {
@@ -992,15 +1067,15 @@ main {
   gap: 3px;
   padding: 2px 0;
   border-radius: 4px;
-  background: #0d111a;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  font-size: 0.72rem;
+  background: #0f1422;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.74rem;
   font-weight: 800;
-  color: #64748b;
+  color: var(--text-muted);
 }
 
 .tableau-col-header.has-bonus {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.35);
   color: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,0.5);
 }
@@ -1008,7 +1083,7 @@ main {
 .tableau-col-header.header-blue.has-bonus  { border-color: #0284c7; color: #38bdf8; }
 .tableau-col-header.header-white.has-bonus { border-color: #cbd5e1; color: #f8fafc; }
 .tableau-col-header.header-green.has-bonus { border-color: #16a34a; color: #4ade80; }
-.tableau-col-header.header-black.has-bonus { border-color: #64748b; color: #94a3b8; }
+.tableau-col-header.header-black.has-bonus { border-color: #64748b; color: #cbd5e1; }
 .tableau-col-header.header-red.has-bonus   { border-color: #dc2626; color: #f87171; }
 
 .tableau-cards-stack {
@@ -1021,15 +1096,17 @@ main {
 }
 
 .tableau-stacked-card {
-  width: 58px;
-  height: 87px;
+  width: 60px;
+  height: 90px;
   border-radius: 4px;
-  background-color: #1a1714;
+  background-color: #171412;
   background-repeat: no-repeat;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.75);
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.05) brightness(1.02);
   cursor: pointer;
-  margin-top: -59px; /* 核心：只露出顶部 28px 区域 (清晰呈现声望、王冠、宝石加成) */
+  margin-top: -61px;
   transition: transform 0.15s, box-shadow 0.15s, z-index 0.15s;
   flex-shrink: 0;
 }
@@ -1046,56 +1123,72 @@ main {
 }
 
 .tableau-empty-slot {
-  width: 54px;
-  height: 26px;
+  width: 56px;
+  height: 28px;
   border-radius: 4px;
-  border: 1.5px dashed rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.18);
+  border: 1.5px dashed rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.25);
   margin-top: 2px;
 }
 
-/* 最底部：预留卡 (≤3) 与王室卡 (≤2) 横排 */
+/* 最底部：预留卡与王室卡横排 */
 .player-bottom-cards-area {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: #10141f;
-  padding: 4px 6px;
+  background: var(--bg-inner);
+  padding: 5px 7px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 .bottom-cards-row {
   display: flex;
-  gap: 5px;
+  gap: 6px;
   align-items: center;
-  min-height: 44px;
+  min-height: 46px;
   flex-wrap: nowrap;
 }
 
 .empty-cards-placeholder {
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
-  padding: 2px 4px;
+  padding: 3px 6px;
 }
+
+.acting-indicator {
+  background: var(--accent-gold);
+  color: #000;
+  font-weight: 800;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  display: none;
+}
+
+.next-indicator {
   background: #38bdf8;
   color: #000;
   font-weight: 800;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 3px;
   display: none;
 }
 
 .player-card.acting .acting-indicator { display: inline-block; }
 .player-card.next-turn .next-indicator { display: inline-block; }
 
+/* 胜利条件进度条 (加粗并带有微光立体感，清晰可见) */
 .victory-progress {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 0.72rem;
-  background: #10141f;
-  padding: 5px 8px;
+  gap: 5px;
+  font-size: 0.76rem;
+  background: var(--bg-inner);
+  padding: 6px 9px;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 .progress-row {
@@ -1106,20 +1199,22 @@ main {
 }
 
 .progress-bar {
-  height: 5px;
-  background: #2a3348;
-  border-radius: 3px;
+  height: 7px;
+  background: #232d42;
+  border-radius: 4px;
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
 }
 
 .progress-fill {
   height: 100%;
-  background: var(--accent-gold);
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.4);
   transition: width 0.25s ease;
 }
 
-.progress-fill.crowns { background: #f59e0b; }
-.progress-fill.color { background: #38bdf8; }
+.progress-fill.crowns { background: linear-gradient(90deg, #d97706, #f59e0b); }
+.progress-fill.color { background: linear-gradient(90deg, #0284c7, #38bdf8); }
 
 .token-chips {
   display: flex;
@@ -1133,13 +1228,13 @@ main {
 .chip.token-chip {
   padding: 2px 7px;
   border-radius: 9999px;
-  font-size: 0.73rem;
+  font-size: 0.75rem;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   background: rgba(22, 28, 42, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 2px 5px rgba(0,0,0,0.5);
   transition: transform 0.15s;
 }
@@ -1155,24 +1250,24 @@ main {
   color: #fff;
 }
 
-/* 永久减免徽章 (Bonus Badges - 矩形盾牌/宝石卡槽形态，彻底区分于手中筹码) */
+/* 永久减免徽章 (Bonus Badges) */
 .bonus-badge {
   padding: 2px 7px;
   border-radius: 4px;
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: #0f131d;
-  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  background: #0f1422;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
   box-shadow: 0 2px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
   letter-spacing: 0.02em;
 }
 
 .badge-gem-icon {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   border-radius: 3px;
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
@@ -1192,7 +1287,7 @@ main {
 .bonus-badge.bonus-blue  { border-color: #0284c7; color: #38bdf8; }
 .bonus-badge.bonus-white { border-color: #cbd5e1; color: #f8fafc; }
 .bonus-badge.bonus-green { border-color: #16a34a; color: #4ade80; }
-.bonus-badge.bonus-black { border-color: #64748b; color: #94a3b8; }
+.bonus-badge.bonus-black { border-color: #64748b; color: #cbd5e1; }
 .bonus-badge.bonus-red   { border-color: #dc2626; color: #f87171; }
 .bonus-badge.bonus-pearl { border-color: #db2777; color: #f472b6; }
 
@@ -1202,8 +1297,8 @@ main {
 }
 
 .chip-token-icon {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background-image: url('../assets/images/tokens.png');
   background-size: 800% 100%;
@@ -1225,20 +1320,20 @@ main {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  min-height: 36px;
+  min-height: 38px;
   align-items: center;
 }
 
 .card-item.compact {
-  width: 76px;
-  height: 115px;
+  width: 78px;
+  height: 118px;
   padding: 0;
 }
 
 /* 已购买卡牌矩阵 (Tableau) 与迷你卡片样式 */
 .card-item.mini {
-  width: 58px;
-  height: 88px;
+  width: 60px;
+  height: 90px;
   padding: 0;
   border-radius: 4px;
   cursor: pointer;
@@ -1254,8 +1349,8 @@ main {
 }
 
 .royal-item.mini {
-  width: 58px;
-  height: 88px;
+  width: 60px;
+  height: 90px;
   padding: 0;
   border-radius: 4px;
   cursor: pointer;
@@ -1278,9 +1373,9 @@ main {
   min-height: 48px;
   overflow-y: auto;
   padding: 6px;
-  background: #121622;
+  background: var(--bg-inner);
   border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.06);
+  border: 1px solid var(--border-subtle);
   align-content: flex-start;
 }
 
@@ -1306,26 +1401,11 @@ main {
   align-items: center;
 }
 
-.royal-item.mini {
-  width: 58px;
-  height: 78px;
-  padding: 4px;
-  border-radius: 5px;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-  transition: transform 0.15s;
-}
-
-.royal-item.mini:hover {
-  transform: scale(1.15);
-  z-index: 25;
-  border-color: #fff;
-}
-
 /* AI 决策与评分分析模块 */
 .ai-decision-panel {
-  background: #141824;
+  background: var(--bg-panel);
   border: 1px solid var(--border-color);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   padding: 10px 12px;
   display: flex;
@@ -1334,7 +1414,7 @@ main {
 }
 
 .ai-type-badge {
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   padding: 2px 8px;
   border-radius: 9999px;
   background: rgba(99, 102, 241, 0.25);
@@ -1354,10 +1434,10 @@ main {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: #0f131d;
+  background: var(--bg-inner);
   padding: 8px 10px;
   border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid var(--border-subtle);
   box-sizing: border-box;
 }
 
@@ -1365,7 +1445,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
 }
 
 .summary-label {
@@ -1373,12 +1453,13 @@ main {
 }
 
 .score-badge {
-  font-size: 0.85rem;
-  color: #22c55e;
+  font-size: 0.88rem;
+  color: #34d399;
   background: rgba(34, 197, 94, 0.15);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: monospace;
+  font-weight: 700;
 }
 
 .candidates-section {
@@ -1394,7 +1475,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--accent-gold);
 }
@@ -1403,29 +1484,29 @@ main {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  max-height: 200px;
+  max-height: 210px;
   min-height: 160px;
   overflow-y: auto;
-  background: #0f131d;
-  padding: 4px 6px;
+  background: var(--bg-inner);
+  padding: 5px 6px;
   border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid var(--border-subtle);
   font-family: ui-monospace, monospace;
-  font-size: 0.73rem;
+  font-size: 0.75rem;
 }
 
 .candidate-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 3px 6px;
+  padding: 4px 6px;
   border-radius: 4px;
   gap: 8px;
 }
 
-.candidate-row:hover { background: #1a2233; }
+.candidate-row:hover { background: #1a2336; }
 .candidate-row.chosen {
-  background: rgba(99, 102, 241, 0.22);
+  background: rgba(99, 102, 241, 0.25);
   border-left: 3px solid var(--primary);
   font-weight: 700;
 }
@@ -1449,8 +1530,8 @@ main {
 .candidate-chosen-badge {
   background: var(--accent-gold);
   color: #000;
-  font-size: 0.62rem;
-  padding: 1px 4px;
+  font-size: 0.65rem;
+  padding: 1px 5px;
   border-radius: 3px;
   font-weight: 800;
 }
@@ -1459,8 +1540,9 @@ main {
    复盘局势与胜率走势折线图样式 (Evaluation Chart) 
    ========================================================= */
 .eval-chart-container {
-  background: #121622;
+  background: var(--bg-panel);
   border: 1px solid var(--border-color);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   padding: 8px 12px;
   display: flex;
@@ -1473,7 +1555,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.76rem;
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--accent-gold);
 }
@@ -1488,12 +1570,12 @@ main {
   width: 100%;
   height: 100%;
   border-radius: 4px;
-  background: #0b0f17;
+  background: var(--bg-inner);
   display: block;
   cursor: crosshair;
 }
 
-/* 响应式支持：三列标准布局 -> 紧凑两列 (侧栏下沉) -> 单列流式自适应 */
+/* 响应式支持 */
 @media (max-width: 1420px) {
   main {
     grid-template-columns: minmax(540px, 1.25fr) minmax(460px, 1.15fr);
@@ -1518,4 +1600,3 @@ main {
     grid-template-columns: 1fr;
   }
 }
-

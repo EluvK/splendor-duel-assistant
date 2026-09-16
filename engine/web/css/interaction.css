@@ -1,9 +1,10 @@
 /* 人类交互对战模式专用样式 */
 
-/* 顶部/局势交互引导栏 (固定高度约束，彻底杜绝动态按钮出没导致的版面上下抖动) */
+/* 顶部/局势交互引导栏 (固定高度约束，杜绝动态按钮出没导致的版面上下抖动) */
 .turn-guide-banner {
-  background: linear-gradient(90deg, #1e1b4b, #1e293b);
-  border: 1px solid #4338ca;
+  background: linear-gradient(90deg, #191e36, #141f32);
+  border: 1px solid #3d4580;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   border-radius: 6px;
   padding: 0 12px;
   display: flex;
@@ -19,9 +20,9 @@
 }
 
 .guide-text {
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   font-weight: 700;
-  color: #c7d2fe;
+  color: #e0e7ff;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -37,9 +38,11 @@
   color: #fff;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.76rem;
+  font-weight: 700;
   white-space: nowrap;
   flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(79, 70, 229, 0.4);
 }
 
 .action-bar-buttons {
@@ -52,8 +55,8 @@
 
 .action-bar-buttons button {
   height: 28px;
-  padding: 0 10px;
-  font-size: 0.76rem;
+  padding: 0 11px;
+  font-size: 0.78rem;
   font-weight: 700;
   border-radius: 4px;
   box-sizing: border-box;
@@ -62,7 +65,7 @@
   justify-content: center;
   white-space: nowrap;
   line-height: 1;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 /* 棋盘交互高亮与选取 */
@@ -71,42 +74,43 @@
 }
 
 .board-cell.cell-clickable:hover {
-  background-color: #26334d;
+  background-color: rgba(56, 189, 248, 0.22);
   border-color: #38bdf8;
   transform: scale(1.03);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
 }
 
 .board-cell.cell-selected {
-  background-color: rgba(251, 191, 36, 0.15) !important;
+  background-color: rgba(251, 191, 36, 0.18) !important;
   border: 2px solid #fbbf24 !important;
-  box-shadow: 0 0 12px rgba(251, 191, 36, 0.6);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.55);
   transform: scale(1.04);
   z-index: 10;
 }
 
 .board-cell.cell-selected .token {
-  transform: scale(1.12);
+  transform: scale(1.1);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.8), 0 0 8px #fff;
   border-color: #fbbf24;
 }
 
-/* 选中顺序紧贴角标 (1, 2, 3) - 绝对贴合格子右上角，绝不错位 */
+/* 选中顺序紧贴角标 (1, 2, 3) - 绝对贴合格子右上角 */
 .selected-order-badge {
   position: absolute;
   top: -3px;
   right: -3px;
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #fbbf24;
   color: #000;
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 800;
   font-family: monospace;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.85);
   border: 1.5px solid #fff;
   z-index: 25;
   pointer-events: none;
@@ -120,34 +124,33 @@
 
 .board-cell.cell-candidate {
   border-color: #34d399 !important;
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.45);
 }
 
 .board-cell.cell-highlight {
   border-color: #fbbf24 !important;
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
-  animation: pulse-border 1.5s infinite;
+  animation: pulse-border 2.4s infinite;
 }
 
 @keyframes pulse-border {
-  0% { box-shadow: 0 0 4px rgba(251, 191, 36, 0.3); }
-  50% { box-shadow: 0 0 14px rgba(251, 191, 36, 0.8); }
-  100% { box-shadow: 0 0 4px rgba(251, 191, 36, 0.3); }
+  0%, 100% { box-shadow: 0 0 4px rgba(251, 191, 36, 0.25); }
+  50% { box-shadow: 0 0 12px rgba(251, 191, 36, 0.65); }
 }
 
 /* 卡牌交互高亮与操作按钮 */
 .card-item.affordable {
   border-color: #fbbf24 !important;
-  box-shadow: 0 0 14px rgba(251, 191, 36, 0.7), inset 0 0 8px rgba(251, 191, 36, 0.3) !important;
-  animation: pulse-affordable 1.8s infinite ease-in-out;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.55), inset 0 0 6px rgba(251, 191, 36, 0.25) !important;
+  animation: pulse-affordable 2.5s infinite ease-in-out;
 }
 
 @keyframes pulse-affordable {
   0%, 100% {
-    box-shadow: 0 0 10px rgba(251, 191, 36, 0.5), inset 0 0 4px rgba(251, 191, 36, 0.2);
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.35), inset 0 0 4px rgba(251, 191, 36, 0.18);
   }
   50% {
-    box-shadow: 0 0 20px rgba(251, 191, 36, 0.95), inset 0 0 10px rgba(251, 191, 36, 0.45);
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.75), inset 0 0 8px rgba(251, 191, 36, 0.35);
   }
 }
 
@@ -157,8 +160,8 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(15, 23, 42, 0.82);
-  backdrop-filter: blur(2px);
+  background: rgba(11, 15, 25, 0.85);
+  backdrop-filter: blur(3px);
   border-radius: 5px;
   display: flex;
   flex-direction: column;
@@ -177,8 +180,8 @@
 }
 
 .card-action-btn {
-  padding: 4px 8px;
-  font-size: 0.72rem;
+  padding: 5px 9px;
+  font-size: 0.75rem;
   font-weight: 700;
   border-radius: 4px;
   width: 82%;
@@ -186,22 +189,22 @@
 }
 
 .deck-reserve-btn {
-  font-size: 0.68rem;
-  padding: 2px 6px;
-  background: #334155;
-  border: 1px solid #475569;
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  background: #273145;
+  border: 1px solid #3d4a66;
   border-radius: 4px;
   color: #f1f5f9;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: all 0.15s;
 }
 
 .deck-reserve-btn:hover:not(:disabled) {
-  background: #475569;
+  background: #364461;
   border-color: var(--accent-gold);
 }
 
-/* 模态弹窗（变色卡指派、偷取宝石、皇室卡选择确认等） */
+/* 模态弹窗 */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -209,7 +212,7 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(3px);
+  backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -217,20 +220,20 @@
 }
 
 .modal-box {
-  background: #1e293b;
-  border: 1px solid #3b4252;
+  background: #171e2e;
+  border: 1px solid #33415c;
   border-radius: 10px;
   padding: 16px 20px;
   max-width: 460px;
   width: 90%;
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.75);
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 .modal-title {
-  font-size: 1rem;
+  font-size: 1.02rem;
   font-weight: 800;
   color: var(--accent-gold);
   display: flex;
@@ -239,7 +242,7 @@
 }
 
 .modal-body {
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   color: #e2e8f0;
   line-height: 1.5;
 }
@@ -257,25 +260,26 @@
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: #0f1523;
+  border: 1px solid #2e3b52;
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 8px 14px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .gem-picker-btn:hover {
-  background: #1e293b;
+  background: #1b2438;
   border-color: var(--accent-gold);
   transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  border-top: 1px solid #334155;
+  border-top: 1px solid #2a354a;
   padding-top: 10px;
 }
 
@@ -285,17 +289,17 @@
 .card-hovercard {
   position: fixed;
   z-index: 1000;
-  background: #141926;
+  background: rgba(18, 24, 38, 0.96);
   border: 1.5px solid var(--accent-gold);
   border-radius: 10px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85), 0 0 20px rgba(251, 191, 36, 0.35);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.85), 0 0 16px rgba(251, 191, 36, 0.25);
   display: flex;
   padding: 12px;
   gap: 14px;
-  max-width: 440px;
+  max-width: 450px;
   pointer-events: none;
   animation: hovercardFadeIn 0.15s ease-out;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
 }
 
 @keyframes hovercardFadeIn {
@@ -313,7 +317,9 @@
   border-radius: 6px;
   border: 1.5px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 6px 16px rgba(0,0,0,0.8);
-  background-color: #1a1714;
+  background-color: #171412;
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.05) brightness(1.02) saturate(1.05);
 }
 
 .hovercard-right {
@@ -333,7 +339,7 @@
 }
 
 .hovercard-title {
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   font-weight: 800;
   color: var(--accent-gold);
 }
@@ -347,7 +353,7 @@
   background: rgba(234, 179, 8, 0.2);
   color: #fbbf24;
   border: 1px solid rgba(234, 179, 8, 0.5);
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 4px;
@@ -357,7 +363,7 @@
   background: rgba(245, 158, 11, 0.2);
   color: #f59e0b;
   border: 1px solid rgba(245, 158, 11, 0.5);
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 4px;
@@ -367,9 +373,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.76rem;
+  font-size: 0.78rem;
   color: #38bdf8;
-  background: rgba(56, 189, 248, 0.1);
+  background: rgba(56, 189, 248, 0.12);
   padding: 3px 8px;
   border-radius: 4px;
   border: 1px solid rgba(56, 189, 248, 0.25);
@@ -379,7 +385,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: 0.73rem;
+  font-size: 0.75rem;
 }
 
 .hovercard-label {
@@ -396,16 +402,16 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  background: #111624;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 1px 5px;
+  background: #101626;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 1px 6px;
   border-radius: 4px;
 }
 
 .hovercard-status {
-  font-size: 0.73rem;
+  font-size: 0.76rem;
   font-weight: 700;
   padding: 4px 8px;
   border-radius: 4px;
@@ -425,79 +431,79 @@
 }
 
 .hovercard-ability {
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.14);
+  border: 1px solid rgba(99, 102, 241, 0.35);
   border-radius: 5px;
   padding: 5px 8px;
   margin-top: 3px;
 }
 
 .ability-title {
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 800;
   color: #a5b4fc;
 }
 
 .ability-desc {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: #cbd5e1;
-  line-height: 1.35;
+  line-height: 1.4;
   margin-top: 2px;
 }
 
 /* 黄金选中高亮 (Gold Vortex) */
 .board-cell.cell-gold-selected {
   border-color: #fbbf24 !important;
-  box-shadow: 0 0 18px rgba(251, 191, 36, 0.9), inset 0 0 10px rgba(251, 191, 36, 0.5) !important;
-  animation: goldVortex 1.6s infinite ease-in-out;
-  transform: scale(1.08);
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.8), inset 0 0 8px rgba(251, 191, 36, 0.4) !important;
+  animation: goldVortex 2.5s infinite ease-in-out;
+  transform: scale(1.06);
   z-index: 12;
 }
 
 @keyframes goldVortex {
-  0%, 100% { transform: scale(1.06); box-shadow: 0 0 14px rgba(251, 191, 36, 0.7); }
-  50% { transform: scale(1.12); box-shadow: 0 0 24px rgba(251, 191, 36, 1); }
+  0%, 100% { transform: scale(1.05); box-shadow: 0 0 12px rgba(251, 191, 36, 0.6); }
+  50% { transform: scale(1.09); box-shadow: 0 0 20px rgba(251, 191, 36, 0.9); }
 }
 
 /* 黄金选定后卡牌预留引导态 (Pulse Reservable) */
 .card-item.pulse-reservable {
   border-color: #fbbf24 !important;
-  box-shadow: 0 0 14px rgba(251, 191, 36, 0.65) !important;
-  animation: pulseReservableCard 1.5s infinite ease-in-out;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.55) !important;
+  animation: pulseReservableCard 2.4s infinite ease-in-out;
   cursor: pointer;
 }
 
 @keyframes pulseReservableCard {
-  0%, 100% { box-shadow: 0 0 8px rgba(251, 191, 36, 0.4); }
-  50% { box-shadow: 0 0 20px rgba(251, 191, 36, 0.9); }
+  0%, 100% { box-shadow: 0 0 6px rgba(251, 191, 36, 0.35); }
+  50% { box-shadow: 0 0 16px rgba(251, 191, 36, 0.75); }
 }
 
 /* 待选黄金阶段棋盘黄金高亮 (Gold Candidate) */
 .board-cell.cell-gold-candidate {
   border-color: #fbbf24 !important;
-  box-shadow: 0 0 16px rgba(251, 191, 36, 0.85), inset 0 0 10px rgba(251, 191, 36, 0.45) !important;
-  animation: goldCandidatePulse 1.4s infinite ease-in-out;
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.75), inset 0 0 8px rgba(251, 191, 36, 0.35) !important;
+  animation: goldCandidatePulse 2.4s infinite ease-in-out;
   cursor: pointer !important;
   z-index: 10;
 }
 
 @keyframes goldCandidatePulse {
-  0%, 100% { transform: scale(1.03); box-shadow: 0 0 12px rgba(251, 191, 36, 0.7); }
-  50% { transform: scale(1.10); box-shadow: 0 0 22px rgba(251, 191, 36, 1); }
+  0%, 100% { transform: scale(1.02); box-shadow: 0 0 10px rgba(251, 191, 36, 0.55); }
+  50% { transform: scale(1.07); box-shadow: 0 0 18px rgba(251, 191, 36, 0.85); }
 }
 
 /* 处于待选黄金状态的目标卡牌 (Pending Reserve Target) */
 .card-item.card-pending-reserve {
   border: 2px solid #fbbf24 !important;
-  box-shadow: 0 0 20px rgba(251, 191, 36, 0.95), inset 0 0 8px rgba(251, 191, 36, 0.3) !important;
-  animation: pendingCardPulse 1.5s infinite ease-in-out;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.85), inset 0 0 6px rgba(251, 191, 36, 0.25) !important;
+  animation: pendingCardPulse 2.4s infinite ease-in-out;
   position: relative;
   z-index: 8;
 }
 
 @keyframes pendingCardPulse {
-  0%, 100% { transform: translateY(-2px) scale(1.02); box-shadow: 0 0 14px rgba(251, 191, 36, 0.8); }
-  50% { transform: translateY(-4px) scale(1.04); box-shadow: 0 0 26px rgba(251, 191, 36, 1); }
+  0%, 100% { transform: translateY(-2px) scale(1.01); box-shadow: 0 0 12px rgba(251, 191, 36, 0.65); }
+  50% { transform: translateY(-3px) scale(1.03); box-shadow: 0 0 22px rgba(251, 191, 36, 0.95); }
 }
 
 /* 卡牌右上角待选黄金提示角标 */
@@ -507,9 +513,9 @@
   right: 3px;
   background: linear-gradient(135deg, #f59e0b, #d97706);
   color: #000;
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 800;
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
   z-index: 15;
@@ -529,103 +535,18 @@
   background: linear-gradient(135deg, #d97706, #b45309) !important;
   border-color: #fbbf24 !important;
   color: #fff !important;
-  box-shadow: 0 0 12px rgba(251, 191, 36, 0.8) !important;
-  animation: pendingBtnGlow 1.2s infinite alternate ease-in-out;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.7) !important;
+  animation: pendingBtnGlow 2.2s infinite alternate ease-in-out;
 }
 
 @keyframes pendingBtnGlow {
-  0% { box-shadow: 0 0 6px rgba(251, 191, 36, 0.5); }
-  100% { box-shadow: 0 0 16px rgba(251, 191, 36, 0.95); }
+  0% { box-shadow: 0 0 5px rgba(251, 191, 36, 0.4); }
+  100% { box-shadow: 0 0 14px rgba(251, 191, 36, 0.85); }
 }
 
-/* =========================================================
-   幽灵残留发光标记 (Ghost Highlighting) 
-   ========================================================= */
+/* 幽灵残留发光标记 (Ghost Highlighting) */
 .cell-ghost-active {
   border-color: rgba(99, 102, 241, 0.7) !important;
   background-color: rgba(99, 102, 241, 0.18) !important;
-  box-shadow: 0 0 14px rgba(99, 102, 241, 0.5) !important;
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.45) !important;
 }
-
-.ghost-token {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1.5px dashed rgba(255, 255, 255, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: ghostFade 2.6s ease-out forwards;
-  position: relative;
-}
-
-@keyframes ghostFade {
-  0% { opacity: 1; transform: scale(1.05); filter: drop-shadow(0 0 10px #6366f1); }
-  70% { opacity: 0.7; transform: scale(1); filter: drop-shadow(0 0 4px #6366f1); }
-  100% { opacity: 0.15; transform: scale(0.9); }
-}
-
-.ghost-badge {
-  font-size: 0.62rem;
-  font-weight: 800;
-  background: rgba(15, 23, 42, 0.85);
-  color: #38bdf8;
-  padding: 1px 4px;
-  border-radius: 3px;
-  border: 1px solid rgba(56, 189, 248, 0.5);
-  letter-spacing: -0.5px;
-}
-
-/* =========================================================
-   图元可视化支付选择方案模态框 
-   ========================================================= */
-.visual-plan-card {
-  background: #131722;
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  width: 100%;
-}
-
-.visual-plan-card:hover {
-  border-color: var(--accent-gold);
-  background: #181f30;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.6), 0 0 12px rgba(251, 191, 36, 0.3);
-  transform: translateY(-2px);
-}
-
-.visual-plan-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.visual-plan-title {
-  font-size: 0.85rem;
-  font-weight: 800;
-}
-
-.visual-plan-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.72rem;
-}
-
-.visual-plan-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.visual-chips-list {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
