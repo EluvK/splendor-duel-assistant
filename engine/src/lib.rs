@@ -7,7 +7,7 @@ pub mod model;
 pub use ai::{
     action_category, format_action, CardDto, DecisionDto, HeuristicAI, InteractiveSession,
     LegalActionDto, NeuralAI, PlayerDto, PlayerKind, PlayerType, RandomAI, ReplaySession,
-    ReplayStep, RoyalDto, RustMCTS, ScoredActionDto, StateDto,
+    ReplayStep, RoyalDto, RustMCTS, ScoredActionDto, StateDto, TractNeuralEvaluator,
 };
 pub use bridge::{action_mask, action_mask_from_legals, action_to_id, encode_state, ACTION_SIZE, CARD_FEAT_DIM, OBS_SIZE};
 #[cfg(feature = "python")]

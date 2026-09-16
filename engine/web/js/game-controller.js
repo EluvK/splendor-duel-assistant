@@ -147,6 +147,7 @@ export class GameController {
     this.isHuman = false;
     this.currentPlayer = 0;
     this.playerKinds = ['human', 'neural'];
+    this.mctsSims = 30; // 默认 30 次 MCTS 推演深度
     this.selectedBoardPositions = [];
     this.selectedGoldPos = null;
     this.pendingReserveTarget = null;
@@ -194,6 +195,9 @@ export class GameController {
     this.stepDetailTitle = document.getElementById('stepDetailTitle');
     this.stepDetailBody = document.getElementById('stepDetailBody');
     this.btnStepDetailClose = document.getElementById('btnStepDetailClose');
+
+    // MCTS 推演强度下拉框
+    this.mctsSimsSelect = document.getElementById('mctsSimsSelect');
   }
 
   bindEvents() {
@@ -208,6 +212,13 @@ export class GameController {
     document.getElementById('btnToReplay').onclick = () => this.toReplay();
     document.getElementById('p0KindSelect').onchange = () => this.onPlayerKindChange(0);
     document.getElementById('p1KindSelect').onchange = () => this.onPlayerKindChange(1);
+
+    if (this.mctsSimsSelect) {
+      this.mctsSimsSelect.value = String(this.mctsSims);
+      this.mctsSimsSelect.onchange = (e) => {
+        this.mctsSims = parseInt(e.target.value, 10) || 0;
+      };
+    }
 
     // 交换先后手
     const btnSwap = document.getElementById('btnSwapPlayers');
@@ -306,7 +317,9 @@ export class GameController {
         if (data.available) {
           if (dot) {
             dot.style.color = '#22c55e';
-            dot.title = '神经网络推理微服务已连接 (127.0.0.1:8088)';
+            dot.title = data.mcts_available
+              ? '神经网络微服务在线，且原生 MCTS 深度推演引擎已就绪'
+              : '神经网络推理微服务已连接 (127.0.0.1:8088)';
           }
           if (badge && text && data.details) {
             badge.style.display = 'inline-flex';
@@ -384,7 +397,7 @@ export class GameController {
     const seed = Math.floor(Math.random() * 100000);
 
     try {
-      const res = await fetch(`/api/game/new?seed=${seed}&p0=${p0}&p1=${p1}`, { method: 'POST' });
+      const res = await fetch(`/api/game/new?seed=${seed}&p0=${p0}&p1=${p1}&sims=${this.mctsSims}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         this.updateData(data);
@@ -417,6 +430,10 @@ export class GameController {
       this.playerKinds = data.player_kinds;
     } else if (!this.playerKinds || this.playerKinds.length !== 2) {
       this.playerKinds = ['human', 'neural'];
+    }
+    if (data.mcts_simulations !== undefined && this.mctsSimsSelect) {
+      this.mctsSims = data.mcts_simulations;
+      this.mctsSimsSelect.value = String(data.mcts_simulations);
     }
 
     // 动作幽灵残留追踪提取 (Ghost Highlighting)
@@ -567,7 +584,8 @@ export class GameController {
     }
 
     const pColor = (s.player === 0 ? '#38bdf8' : '#f472b6');
-    const aiIcon = isAi ? (s.ai_type?.includes('neural') ? '🧠' : '🤖') : '👤';
+    const isMcts = s.ai_type && s.ai_type.includes('mcts');
+    const aiIcon = isAi ? (isMcts ? '🌲' : (s.ai_type?.includes('neural') ? '🧠' : '🤖')) : '👤';
 
     item.title = `第 ${round} 轮 #${s.index} [P${s.player}] ${s.action} (${s.phase || ''})\n💡 点击查看详细决策与评估候选`;
 
@@ -620,6 +638,7 @@ export class GameController {
     const decision = step.decision;
 
     if (decision) {
+      const isMcts = decision.ai_type && decision.ai_type.includes('mcts');
       const isNeural = decision.ai_type && decision.ai_type.includes('neural');
       const isRandom = decision.ai_type === 'random';
       const isHuman = decision.ai_type === 'human';
@@ -628,8 +647,17 @@ export class GameController {
       let badgeColor = '';
       let evalText = '';
 
-      if (isNeural) {
-        badgeText = `🧠 神经网络 AI (${decision.ai_type})`;
+      if (isMcts) {
+        badgeText = isNeural ? `🌲 神经网络 AlphaZero MCTS (${decision.ai_type})` : `🌲 启发式 MCTS (${decision.ai_type})`;
+        badgeColor = '#c084fc';
+        if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
+          const winrate = (decision.chosen_score + 100.0) / 2.0;
+          evalText = `<b style="color:${winrate >= 50 ? '#22c55e' : '#f87171'}; font-size:1.05rem;">${winrate.toFixed(1)}%</b> 胜率预期 (根节点评估)`;
+        } else {
+          evalText = '基于树搜索各分支访问量 (Visits) 挑选最优走步';
+        }
+      } else if (isNeural) {
+        badgeText = `🧠 纯直觉网络 (${decision.ai_type})`;
         badgeColor = '#22c55e';
         if (decision.chosen_score !== null && decision.chosen_score !== undefined) {
           const winrate = (decision.chosen_score + 100.0) / 2.0;
@@ -654,10 +682,11 @@ export class GameController {
 
       let candidatesHtml = '';
       if (decision.top_candidates && decision.top_candidates.length > 0) {
+        const titleText = isMcts ? '🌲 MCTS 树搜索访问分布 (Visits Distribution)' : (isNeural ? '🎯 神经网络策略分布 (Policy Head)' : '📊 备选动作估值排名 (Top Candidates)');
         candidatesHtml = `
           <div style="margin-top:12px;">
             <div style="font-size:0.75rem; color:var(--accent-gold); font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between;">
-              <span>${isNeural ? '🎯 神经网络策略分布 (Policy Head)' : '📊 备选动作估值排名 (Top Candidates)'}</span>
+              <span>${titleText}</span>
               <span style="font-size:0.68rem; color:var(--text-muted); font-weight:normal;">共 ${decision.top_candidates.length} 项</span>
             </div>
             <div style="background:#111520; border-radius:6px; border:1px solid rgba(255,255,255,0.08); padding:4px; max-height:220px; overflow-y:auto;">
@@ -665,7 +694,7 @@ export class GameController {
                 const friendlyCand = formatFriendlyAction(c.action_desc);
                 const isChosen = c.is_chosen;
                 let scoreStr = '';
-                if (isNeural) {
+                if (isNeural || isMcts) {
                   scoreStr = `${c.score.toFixed(1)}%`;
                 } else {
                   scoreStr = c.score >= 1000 ? '斩杀' : (c.score >= 0 ? `+${c.score.toFixed(1)}` : c.score.toFixed(1));
@@ -1670,7 +1699,7 @@ export class GameController {
     this.isActionPending = true;
 
     try {
-      const res = await fetch('/api/game/ai_step', { method: 'POST' });
+      const res = await fetch(`/api/game/ai_step?sims=${this.mctsSims}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (data.ok) {

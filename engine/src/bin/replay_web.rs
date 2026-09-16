@@ -1,6 +1,6 @@
 use _engine::{
     Action, InteractiveSession, LegalActionDto, NeuralAI, PlayerKind, PlayerType, ReplaySession,
-    ReplayStep, StateDto,
+    ReplayStep, StateDto, TractNeuralEvaluator,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -50,6 +50,8 @@ struct GameStateResponse {
     is_human: bool,
     legal_actions: Vec<LegalActionDto>,
     neural_available: bool,
+    mcts_available: bool,
+    mcts_simulations: usize,
     history_len: usize,
     latest_step: Option<ReplayStep>,
     history: Vec<StepSummary>,
@@ -73,6 +75,55 @@ fn map_step_summaries(steps: &[ReplayStep]) -> Vec<StepSummary> {
 struct AppState {
     replay: RwLock<ReplaySession>,
     game: RwLock<InteractiveSession>,
+    evaluator: RwLock<Option<Arc<TractNeuralEvaluator>>>,
+}
+
+/// 优先从本地缓存或通过 HTTP 向推理微服务获取 ONNX 并构造原生 TractNeuralEvaluator
+fn load_or_fetch_evaluator() -> Option<Arc<TractNeuralEvaluator>> {
+    // 1. 优先尝试本地已有 ONNX 缓存
+    let onnx_candidates = [
+        PathBuf::from("checkpoints/best.onnx"),
+        PathBuf::from("../checkpoints/best.onnx"),
+    ];
+    for p in &onnx_candidates {
+        if p.is_file() {
+            if let Ok(bytes) = fs::read(p) {
+                if let Ok(evaluator) = TractNeuralEvaluator::from_bytes(&bytes) {
+                    println!("🧠 已从本地缓存成功加载 TractNeuralEvaluator ({})", p.display());
+                    return Some(Arc::new(evaluator));
+                }
+            }
+        }
+    }
+
+    // 2. 尝试从 Python 推理服务 (127.0.0.1:8088/onnx) 获取
+    let addr = "127.0.0.1:8088".parse().ok()?;
+    let mut stream = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(1500)).ok()?;
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(5000)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(2000)));
+    let req = "GET /onnx HTTP/1.1\r\nHost: 127.0.0.1:8088\r\nConnection: close\r\n\r\n";
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut buf = Vec::with_capacity(16 * 1024 * 1024);
+    stream.read_to_end(&mut buf).ok()?;
+    let header_end = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let body = &buf[header_end + 4..];
+    if body.len() > 1024 {
+        match TractNeuralEvaluator::from_bytes(body) {
+            Ok(evaluator) => {
+                println!(
+                    "✅ 成功同步并装载 TractNeuralEvaluator (模型体积: {:.1}MB)",
+                    body.len() as f64 / (1024.0 * 1024.0)
+                );
+                // 写入本地缓存供后续极速复用
+                let _ = fs::write("checkpoints/best.onnx", body);
+                return Some(Arc::new(evaluator));
+            }
+            Err(e) => {
+                eprintln!("⚠️ TractNeuralEvaluator 构建失败: {e}");
+            }
+        }
+    }
+    None
 }
 
 fn respond(stream: &mut TcpStream, status: &str, body: &[u8], content_type: &str) {
@@ -156,6 +207,8 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 is_human: game.is_current_player_human(),
                 legal_actions: game.legal_actions_dto(),
                 neural_available: NeuralAI::is_available(),
+                mcts_available: state.evaluator.read().unwrap().is_some(),
+                mcts_simulations: game.mcts_simulations,
                 history_len: game.history.len(),
                 latest_step: game.history.last().cloned(),
                 history,
@@ -255,8 +308,18 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
 
         // 触发 AI 执行一步
         ("POST", "/api/game/ai_step") | ("GET", "/api/game/ai_step") => {
+            let mut sims: Option<usize> = None;
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "sims" || k == "mcts_sims" {
+                        sims = v.parse::<usize>().ok();
+                    }
+                }
+            }
+
             let mut game = state.game.write().unwrap();
-            match game.step_ai() {
+            match game.step_ai_with_sims(sims) {
                 Ok(Some(step)) => {
                     let res = serde_json::json!({
                         "ok": true,
@@ -294,6 +357,7 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
             let mut seed: u64 = 42;
             let mut p0 = PlayerKind::Human;
             let mut p1 = PlayerKind::Neural;
+            let mut sims: Option<usize> = None;
 
             for param in query.split('&') {
                 let mut kv = param.split('=');
@@ -304,12 +368,17 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                         p0 = PlayerKind::parse(v);
                     } else if k == "p1" {
                         p1 = PlayerKind::parse(v);
+                    } else if k == "sims" || k == "mcts_sims" {
+                        sims = v.parse::<usize>().ok();
                     }
                 }
             }
 
             let mut game = state.game.write().unwrap();
             game.reset(seed, [p0, p1]);
+            if let Some(s) = sims {
+                game.set_mcts_simulations(s);
+            }
             let history = map_step_summaries(&game.history);
 
             let res = GameStateResponse {
@@ -323,6 +392,8 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
                 is_human: game.is_current_player_human(),
                 legal_actions: game.legal_actions_dto(),
                 neural_available: NeuralAI::is_available(),
+                mcts_available: state.evaluator.read().unwrap().is_some(),
+                mcts_simulations: game.mcts_simulations,
                 history_len: game.history.len(),
                 latest_step: game.history.last().cloned(),
                 history,
@@ -367,9 +438,11 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
         ("GET", "/api/neural_status") => {
             let available = NeuralAI::is_available();
             let details = if available { NeuralAI::get_status() } else { None };
+            let mcts_available = state.evaluator.read().unwrap().is_some();
             let res = serde_json::json!({
                 "available": available,
                 "details": details,
+                "mcts_available": mcts_available,
             });
             let json = serde_json::to_vec(&res).unwrap();
             respond(&mut stream, "200 OK", &json, "application/json");
@@ -378,6 +451,11 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
         ("POST", "/api/neural_reload") | ("GET", "/api/neural_reload") => {
             match NeuralAI::reload_checkpoint() {
                 Ok(val) => {
+                    // 同步拉取并更新 Rust 原生 evaluator
+                    if let Some(new_eval) = load_or_fetch_evaluator() {
+                        *state.evaluator.write().unwrap() = Some(new_eval.clone());
+                        state.game.write().unwrap().set_evaluator(Some(new_eval));
+                    }
                     let json = serde_json::to_vec(&val).unwrap();
                     respond(&mut stream, "200 OK", &json, "application/json");
                 }
@@ -749,13 +827,36 @@ fn main() {
     // 尝试拉起神经网络推理微服务
     ensure_neural_server_running();
 
+    let initial_evaluator = load_or_fetch_evaluator();
     let replay_session = ReplaySession::new(42);
-    let interactive_session = InteractiveSession::new(42, [PlayerKind::Human, PlayerKind::Neural]);
+    let mut interactive_session = InteractiveSession::new(42, [PlayerKind::Human, PlayerKind::Neural]);
+    if let Some(eval) = &initial_evaluator {
+        interactive_session.set_evaluator(Some(eval.clone()));
+    }
 
     let app_state = Arc::new(AppState {
         replay: RwLock::new(replay_session),
         game: RwLock::new(interactive_session),
+        evaluator: RwLock::new(initial_evaluator),
     });
+
+    // 若首次未获取到 evaluator（可能 Python 微服务尚在启动中），后台线程轮询尝试初始化
+    {
+        let app_state_eval = Arc::clone(&app_state);
+        std::thread::spawn(move || {
+            for _ in 0..15 {
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                if app_state_eval.evaluator.read().unwrap().is_some() {
+                    break;
+                }
+                if let Some(eval) = load_or_fetch_evaluator() {
+                    *app_state_eval.evaluator.write().unwrap() = Some(eval.clone());
+                    app_state_eval.game.write().unwrap().set_evaluator(Some(eval));
+                    break;
+                }
+            }
+        });
+    }
 
     println!("\n========================================================");
     println!("💎 璀璨宝石：对决 (Splendor Duel) 全功能服务已启动！");

@@ -34,6 +34,7 @@ class ModelInferenceService:
         self.meta = {}
         self.epoch = 0
         self.last_mtime = 0.0
+        self._onnx_bytes: Optional[bytes] = None
         self._lock = threading.Lock()
 
         self._load_checkpoint(is_reload=False)
@@ -66,6 +67,7 @@ class ModelInferenceService:
                 self.meta = ckpt.get("meta", {})
                 self.last_mtime = current_mtime
                 self.net.eval()
+                self._onnx_bytes = None
 
             if is_reload:
                 print(
@@ -107,6 +109,21 @@ class ModelInferenceService:
 
         t = threading.Thread(target=_watch, daemon=True, name="ModelFsWatcher")
         t.start()
+
+    def get_onnx_bytes(self) -> bytes:
+        """获取当前模型的 ONNX 二进制字节流，带线程安全缓存"""
+        self.check_and_reload()
+        with self._lock:
+            if self._onnx_bytes is None:
+                try:
+                    # 优先在 CPU 上导出以保证跨平台稳定性
+                    cpu_net = SplendorNet().to("cpu")
+                    cpu_net.load_state_dict(self.net.state_dict())
+                    cpu_net.eval()
+                    self._onnx_bytes = cpu_net.export_onnx_bytes()
+                except Exception:
+                    self._onnx_bytes = self.net.export_onnx_bytes()
+            return self._onnx_bytes
 
     @torch.no_grad()
     def predict(self, obs_list: list, mask_list: list, temperature: float = 1.0) -> dict:
@@ -226,6 +243,17 @@ def make_handler(service: ModelInferenceService):
                     "checkpoint": service.checkpoint_path,
                     "mtime": service.last_mtime,
                 })
+            elif self.path == "/onnx":
+                try:
+                    onnx_bytes = service.get_onnx_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(len(onnx_bytes)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(onnx_bytes)
+                except Exception as e:
+                    self._send_json(500, {"error": f"Failed to export onnx: {e}"})
             else:
                 self._send_json(404, {"error": "not found"})
 
