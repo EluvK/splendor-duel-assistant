@@ -1,4 +1,4 @@
-use crate::model::card::JewelCard;
+use crate::model::card::{CardTier, JewelCard};
 use crate::model::token::GemType;
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +16,22 @@ pub enum TurnPhase {
     /// 可选行动阶段（可执行 0~2 项可选行动：使用特权卷轴、补充棋盘、或跳过进入强制行动）
     OptionalActions,
 
-    /// 强制行动阶段（3 选 1：拿取连线标记、预留卡牌、购买卡牌）
+    /// 强制行动阶段（3 选 1：拿取连线标记、预留卡牌入口[拿黄金]、购买卡牌）
     MandatoryAction,
+
+    /// 预留卡牌选择阶段：拿取黄金后，选择预留 1 张金字塔明牌或牌堆顶暗抽
+    SelectReserveCard,
+
+    /// 支付自主决策阶段：在持有自由黄金且存在可替代天然宝石时，允许玩家增量使用黄金保留特定宝石
+    Payment {
+        card: JewelCard,
+        from_reserved: bool,
+        slot: usize,
+        tier: CardTier,
+        free_gold: u8,
+        last_color_idx: usize,
+        allocated_gold: [u8; 6],
+    },
 
     /// 变色复制卡（Joker）附着阶段：等待当前玩家选择附着到哪种已拥有 bonus 的基础颜色
     CardAbilityJoker { pending_card: JewelCard },
@@ -33,9 +47,6 @@ pub enum TurnPhase {
 
     /// 手牌超限弃牌阶段：玩家标记总数超过 10 枚，等待逐枚选择弃置标记回布袋
     DiscardTokens,
-
-    /// 预留卡牌黄金选择阶段：预留卡牌后，若盘上有黄金，等待玩家从棋盘选择 1 枚黄金
-    SelectReserveGold,
 
     /// 游戏已结束，获胜者与胜利类型已确定
     GameOver(VictoryReason),

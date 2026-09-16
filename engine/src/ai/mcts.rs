@@ -153,20 +153,12 @@ pub const LAMBDA_TURNS: f32 = 0.20;
 /// 多重确定化信息集洗牌块大小 (MIS-MCTS: 每隔 K 次模拟重抽暗牌，兼顾无偏估计与局部备份一致性)
 pub const MIS_BLOCK_SIZE: usize = 8;
 
-/// 自动折叠确定性单选项微步 (预留唯一黄金、单一合法弃牌)，压缩搜索树无谓深度
+/// 自动折叠确定性单选项微步 (单一合法支付确认、单一合法弃牌)，压缩搜索树无谓深度
 #[inline]
 fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
     loop {
         match sim_state.phase {
-            TurnPhase::SelectReserveGold => {
-                let legals = RuleEngine::legal_actions(sim_state);
-                if legals.len() == 1 {
-                    let _ = GameEngine::step(sim_state, &legals[0]);
-                } else {
-                    break;
-                }
-            }
-            TurnPhase::DiscardTokens => {
+            TurnPhase::Payment { .. } | TurnPhase::DiscardTokens => {
                 let legals = RuleEngine::legal_actions(sim_state);
                 if legals.len() == 1 {
                     let _ = GameEngine::step(sim_state, &legals[0]);

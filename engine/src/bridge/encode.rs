@@ -16,8 +16,11 @@ pub const RESERVED_CARDS_SLOTS: usize = 3;
 /// 单玩家仪表盘特征维度 (24基础资产与胜负进度 + 3槽手牌 * CARD_FEAT_DIM = 132)
 pub const PLAYER_DASHBOARD_DIM: usize = 24 + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM;
 
-/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡(12*36=432) + 4王室 + 双方仪表盘(2*132=264) + 全局差值40 = 965)
-pub const OBS_SIZE: usize = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + 40;
+/// 全局环境与决策上下文特征维度 (40基础环境差值 + 22维 Pending Decision Context = 62)
+pub const GLOBAL_CTX_DIM: usize = 40 + 22;
+
+/// 观察向量维度 (9通道螺旋棋盘225 + 12市场卡(12*36=432) + 4王室 + 双方仪表盘(2*132=264) + 全局差值与决策上下文62 = 987)
+pub const OBS_SIZE: usize = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + GLOBAL_CTX_DIM;
 
 /// 动作空间大小（离散动作总维度）
 pub const ACTION_SIZE: usize = 288;
@@ -210,18 +213,20 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
     offset += 2 * PLAYER_DASHBOARD_DIM;
 
     // -------------------------------------------------------------
-    // 分块 5: 全局环境、博弈差值与胜负威胁 (44 维) [871..915]
+    // 分块 5: 全局环境、博弈差值与决策上下文 (62 维) [925..987]
+    // 包含 40 维基础环境指标 + 22 维 Pending Decision Context
     // -------------------------------------------------------------
     match state.phase {
         TurnPhase::OptionalActions => out[offset] = 1.0,
         TurnPhase::MandatoryAction => out[offset + 1] = 1.0,
-        TurnPhase::CardAbilityJoker { .. } => out[offset + 2] = 1.0,
-        TurnPhase::CardAbilitySameColor { .. } => out[offset + 3] = 1.0,
-        TurnPhase::CardAbilitySteal => out[offset + 4] = 1.0,
-        TurnPhase::SelectRoyalCard => out[offset + 5] = 1.0,
-        TurnPhase::DiscardTokens => out[offset + 6] = 1.0,
-        TurnPhase::SelectReserveGold => out[offset + 7] = 1.0,
-        TurnPhase::GameOver(_) => out[offset + 8] = 1.0,
+        TurnPhase::SelectReserveCard => out[offset + 2] = 1.0,
+        TurnPhase::Payment { .. } => out[offset + 3] = 1.0,
+        TurnPhase::CardAbilityJoker { .. } => out[offset + 4] = 1.0,
+        TurnPhase::CardAbilitySameColor { .. } => out[offset + 5] = 1.0,
+        TurnPhase::CardAbilitySteal => out[offset + 6] = 1.0,
+        TurnPhase::SelectRoyalCard => out[offset + 7] = 1.0,
+        TurnPhase::DiscardTokens => out[offset + 8] = 1.0,
+        TurnPhase::GameOver(_) => {}
     }
     out[offset + 9] = state.privilege_pool as f32 / 3.0;
     out[offset + 10] = state.bag.len() as f32 / 25.0;
@@ -282,6 +287,53 @@ pub fn encode_state(state: &GameState) -> [f32; OBS_SIZE] {
 
     // 39: 本回合已消耗特权数 privileges_used_this_turn / 3.0
     out[offset + 39] = state.privileges_used_this_turn as f32 / 3.0;
+
+    // 40..62: Pending Decision Context (22 维显式上下文，恢复微动作 Markov 性质)
+    // [40..55) (15 维): pending_purchase_source (12 金字塔槽位 + 3 我方手牌槽位)
+    if let TurnPhase::Payment {
+        from_reserved,
+        tier,
+        slot,
+        ..
+    } = state.phase
+    {
+        let src_idx = if from_reserved {
+            12 + slot
+        } else {
+            let tier_offset = match tier {
+                CardTier::Tier1 => 0,
+                CardTier::Tier2 => 5,
+                CardTier::Tier3 => 9,
+            };
+            tier_offset + slot
+        };
+        if src_idx < 15 {
+            out[offset + 40 + src_idx] = 1.0;
+        }
+    }
+
+    // [55..61) (6 维): pending_resource (W, B, G, R, K, Pearl)
+    match state.phase {
+        TurnPhase::CardAbilitySameColor { color } => {
+            out[offset + 55 + color.index()] = 1.0;
+        }
+        TurnPhase::Payment {
+            last_color_idx,
+            allocated_gold,
+            ..
+        } => {
+            // 仅在已分配过至少 1 枚自由黄金时标定最近分配的资源类型；初始未分配时保持全为 0.0
+            if last_color_idx < 6 && allocated_gold.iter().any(|&x| x > 0) {
+                out[offset + 55 + last_color_idx] = 1.0;
+            }
+        }
+        _ => {}
+    }
+
+    // [61] (1 维): pending_free_gold / 3.0
+    if let TurnPhase::Payment { free_gold, .. } = state.phase {
+        out[offset + 61] = free_gold as f32 / 3.0;
+    }
 
     out
 }
@@ -439,6 +491,8 @@ pub fn action_to_id(action: &Action) -> usize {
         Action::SelectRoyal { royal_id } => 239 + (*royal_id as usize),
         Action::DiscardToken { gem } => 243 + gem.index(),
         Action::TakeGoldToken { r, c } => 250 + (r * 5 + c),
+        Action::ConfirmPayment => 275,
+        Action::PayGoldFor { gem } => 276 + gem.index(),
     }
 }
 

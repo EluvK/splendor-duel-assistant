@@ -114,9 +114,15 @@ export function formatFriendlyAction(desc) {
     const m = desc.match(/\((\d+),\s*(\d+)\)/);
     return m ? `拿取同色宝石 (${m[1]},${m[2]})` : '连击拿取同色宝石';
   }
+  if (desc === 'Confirm Payment') return '✔ 确认支付方案';
+  if (desc.startsWith('Use Gold to Preserve')) {
+    const m = desc.match(/Use Gold to Preserve (\w+)/);
+    const cn = m ? translateColor(m[1].toLowerCase()) : '';
+    return `💰 黄金代付 (保留${cn}宝石)`;
+  }
   if (desc.startsWith('Take Gold token')) {
     const m = desc.match(/\((\d+),\s*(\d+)\)/);
-    return m ? `拿取黄金标记 (${m[1]},${m[2]})` : '预留拿取 1 黄金';
+    return m ? `拿取黄金预留 (${m[1]},${m[2]})` : '预留拿取 1 黄金';
   }
   if (desc.startsWith('Joker attach to')) {
     const m = desc.match(/attach to (\w+)/);
@@ -649,27 +655,6 @@ export class GameController {
       };
     }
 
-    // 预留卡牌连锁：从棋盘选择拿取 1 枚黄金
-    if (phase === 'SelectReserveGold') {
-      const highlightPositions = [];
-      for (let r = 0; r < 5; r++) {
-        for (let c = 0; c < 5; c++) {
-          if (this.state.board[r][c] === 'gold') {
-            highlightPositions.push([r, c]);
-          }
-        }
-      }
-      return {
-        clickable: true,
-        highlightPositions,
-        onCellClick: (r, c, gem) => {
-          if (gem === 'gold') {
-            this.submitAction({ TakeGoldToken: { r, c } });
-          }
-        }
-      };
-    }
-
     // 可选行动：使用特权卷轴拿取非黄金宝石（必须在补盘前使用）
     if (phase === 'OptionalActions' && !this.state.replenished_this_turn && this.state.players[this.currentPlayer].privileges > 0) {
       const highlightPositions = [];
@@ -690,16 +675,31 @@ export class GameController {
       };
     }
 
-    // 强制行动：连线拿取 1~3 颗宝石
+    // 强制行动：连线拿取 1~3 颗非黄金宝石，或直接点击黄金开启预留流程
     if (phase === 'MandatoryAction') {
       const takeActions = this.legalActions.filter(a => a.category === 'take_tokens');
+      const goldActions = this.legalActions.filter(a => a.category === 'take_gold');
+      const goldPositions = goldActions.map(a => [a.action.TakeGoldToken.r, a.action.TakeGoldToken.c]);
+
       const candidatePositions = this.calculateCandidatePositions(takeActions);
+      // 未选定连线时，棋盘上的可用黄金同样作为可点击候选
+      if (this.selectedBoardPositions.length === 0) {
+        goldPositions.forEach(([gr, gc]) => candidatePositions.push([gr, gc]));
+      }
 
       return {
         clickable: true,
         selectedPositions: this.selectedBoardPositions,
         candidatePositions,
-        onCellClick: (r, c, gem) => this.handleBoardCellClickForTokens(r, c, gem, takeActions)
+        onCellClick: (r, c, gem) => {
+          if (gem === 'gold') {
+            if (this.selectedBoardPositions.length === 0 && goldPositions.some(([gr, gc]) => gr === r && gc === c)) {
+              this.submitAction({ TakeGoldToken: { r, c } });
+            }
+            return;
+          }
+          this.handleBoardCellClickForTokens(r, c, gem, takeActions);
+        }
       };
     }
 
@@ -775,12 +775,15 @@ export class GameController {
   }
 
   renderPyramidArea() {
-    const isHumanTurn = this.isHuman && !this.state.winner && this.state.phase === 'MandatoryAction';
-    const canReserve = isHumanTurn && (this.state.players[this.currentPlayer].reserved_cards.length < 3);
+    const isHumanTurn = this.isHuman && !this.state.winner;
+    const isMandatory = isHumanTurn && this.state.phase === 'MandatoryAction';
+    const isSelectReserve = isHumanTurn && this.state.phase === 'SelectReserveCard';
+    const canReserve = isSelectReserve && (this.state.players[this.currentPlayer].reserved_cards.length < 3);
+    const interactive = isMandatory || isSelectReserve;
 
     // 提取所有可购买的金字塔卡牌
     const affordableIds = new Set();
-    if (isHumanTurn) {
+    if (isMandatory) {
       this.legalActions
         .filter(a => a.category === 'purchase_card' && !a.action.PurchaseCard.from_reserved)
         .forEach(a => {
@@ -792,7 +795,7 @@ export class GameController {
     }
 
     const makePyramidOptions = (tierIdx, tierName, tierNum) => ({
-      interactive: isHumanTurn,
+      interactive,
       affordableIds,
       canReserve,
       deckInfo: {
@@ -800,7 +803,7 @@ export class GameController {
         count: this.state.decks_count[tierIdx],
       },
       onReserveDeck: () => {
-        if (isHumanTurn && canReserve && this.state.decks_count[tierIdx] > 0) {
+        if (canReserve && this.state.decks_count[tierIdx] > 0) {
           this.submitAction({
             ReserveCard: {
               tier: tierName,
@@ -810,6 +813,7 @@ export class GameController {
         }
       },
       onPurchase: (card) => {
+        if (!isMandatory) return;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
           this.submitAction({
@@ -822,6 +826,7 @@ export class GameController {
         }
       },
       onReserve: (card) => {
+        if (!canReserve) return;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
           this.submitAction({
@@ -854,6 +859,16 @@ export class GameController {
     const hasDeck = this.state.decks_count[tierIdx] > 0;
     const isLegal = isHumanTurn && canReserve && hasDeck;
     btn.disabled = !isLegal;
+
+    if (!canReserve && isHumanTurn && this.state.phase === 'MandatoryAction') {
+      const hasGoldToTake = this.legalActions.some(a => a.category === 'take_gold');
+      btn.title = hasGoldToTake
+        ? '💡 预留卡牌：请先在右侧棋盘上点击拿取 1 枚黄金标记开启预留流程'
+        : '当前不可预留（预留手牌已满 3 张或棋盘上无黄金）';
+    } else if (canReserve) {
+      btn.title = '✨ 黄金已在手，点击盲抽预留 1 张牌堆顶暗牌放入手牌';
+    }
+
     btn.onclick = () => {
       if (isLegal) {
         this.submitAction({
@@ -1092,10 +1107,21 @@ export class GameController {
         };
         this.actionBarButtons.appendChild(btnClear);
 
-        this.guideText.innerHTML = `${lastAiHint}已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买/预留。`;
+        this.guideText.innerHTML = `${lastAiHint}已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买。`;
       } else {
-        this.guideText.innerHTML = `${lastAiHint}【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或直接点击金字塔中卡牌进行购买/预留。`;
+        this.guideText.innerHTML = `${lastAiHint}【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或直接点击黄金开启预留流程，或点击金字塔卡牌购买。`;
       }
+      return;
+    }
+
+    if (phase === 'SelectReserveCard') {
+      this.guideText.innerHTML = `${lastAiHint}【选择预留卡牌】黄金已收入囊中！请在下方金字塔明牌或牌堆顶点击“预留”以锁定手牌。`;
+      return;
+    }
+
+    if (phase.startsWith('Payment')) {
+      this.guideText.innerHTML = `${lastAiHint}【自主支付决策】检测到你有自由黄金可用于替代天然宝石，请在弹出窗口中选择保留颜色或直接确认支付。`;
+      this.showPaymentModal();
       return;
     }
 
@@ -1107,11 +1133,6 @@ export class GameController {
 
     if (phase.startsWith('CardAbilitySameColor')) {
       this.guideText.innerHTML = `${lastAiHint}【拿取同色宝石】请在右侧 5x5 棋盘中点击一颗发光的同色宝石完成拿取。`;
-      return;
-    }
-
-    if (phase === 'SelectReserveGold') {
-      this.guideText.innerHTML = `${lastAiHint}【选择黄金】预留卡牌成功！请在右侧 5x5 棋盘中点击选择你要拿取的 1 枚黄金。`;
       return;
     }
 
@@ -1130,6 +1151,54 @@ export class GameController {
       return;
     }
   }
+
+  showPaymentModal() {
+    const paymentActions = this.legalActions.filter(a => a.category === 'pay_gold_for' || a.category === 'confirm_payment');
+    if (paymentActions.length === 0) return;
+
+    this.modalTitle.innerText = '💰 卡牌购买支付决策';
+    this.modalBody.innerText = '检测到你持有自由支配的黄金。你可以使用黄金替代指定天然宝石（从而保留该宝石在手中），或直接确认当前方案：';
+    this.modalOptions.innerHTML = '';
+
+    const goldActions = paymentActions.filter(a => a.category === 'pay_gold_for');
+    goldActions.forEach(act => {
+      const rawColor = act.action.PayGoldFor.gem;
+      const normColor = String(rawColor).toLowerCase();
+      const tokenClass = COLOR_CLASSES[normColor] || `token-${normColor}`;
+      const cnColor = translateColor(normColor);
+
+      const btn = document.createElement('div');
+      btn.className = 'gem-picker-btn';
+      btn.title = `使用 1 黄金替代并保留 ${cnColor}宝石 (${rawColor})`;
+      btn.innerHTML = `
+        <div class="token ${tokenClass}"></div>
+        <span style="font-size:0.8rem; font-weight:700; color:var(--text-main); margin-top:2px;">保全 ${cnColor}</span>
+        <span style="font-size:0.68rem; color:var(--text-muted);">黄金代付</span>
+      `;
+      btn.onclick = () => {
+        this.clearModal();
+        this.submitAction(act.action);
+      };
+      this.modalOptions.appendChild(btn);
+    });
+
+    const confirmAct = paymentActions.find(a => a.category === 'confirm_payment');
+    this.modalFooter.innerHTML = '';
+    if (confirmAct) {
+      const confirmBtn = document.createElement('button');
+      confirmBtn.className = 'action-btn primary';
+      confirmBtn.style.padding = '8px 24px';
+      confirmBtn.innerText = '✔ 确认当前方案并支付';
+      confirmBtn.onclick = () => {
+        this.clearModal();
+        this.submitAction(confirmAct.action);
+      };
+      this.modalFooter.appendChild(confirmBtn);
+    }
+
+    this.modalOverlay.style.display = 'flex';
+  }
+  
 
   findMatchingTakeAction(takeActions) {
     if (this.selectedBoardPositions.length === 0) return null;

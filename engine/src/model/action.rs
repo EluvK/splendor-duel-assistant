@@ -54,4 +54,10 @@ pub enum Action {
 
     /// 手牌超限弃牌：手中标记超过 10 枚时，自选弃置 1 枚标记回布袋
     DiscardToken { gem: GemType },
+
+    /// 支付自主决策：确认当前支付方案并结算扣除
+    ConfirmPayment,
+
+    /// 支付自主决策：使用 1 枚自由黄金替代 1 枚指定颜色宝石（W, B, G, R, K, Pearl）
+    PayGoldFor { gem: GemType },
 }

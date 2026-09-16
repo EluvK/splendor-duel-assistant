@@ -1,7 +1,8 @@
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
+use crate::gameplay::payment::check_payment_divergence;
 use crate::model::action::Action;
-use crate::model::card::{CardColor, CardTier};
+use crate::model::card::{CardColor, CardTier, JewelCard};
 use crate::model::token::GemType;
 
 /// 规则引擎：根据当前游戏状态与阶段生成所有合法动作
@@ -12,6 +13,20 @@ impl RuleEngine {
         match &state.phase {
             TurnPhase::OptionalActions => Self::legal_optional_actions(state),
             TurnPhase::MandatoryAction => Self::legal_mandatory_actions(state),
+            TurnPhase::SelectReserveCard => Self::legal_reserve_card_actions(state),
+            TurnPhase::Payment {
+                card,
+                free_gold,
+                last_color_idx,
+                allocated_gold,
+                ..
+            } => Self::legal_payment_actions(
+                state,
+                card,
+                *free_gold,
+                *last_color_idx,
+                allocated_gold,
+            ),
             TurnPhase::CardAbilityJoker { .. } => Self::legal_joker_actions(state),
             TurnPhase::CardAbilitySameColor { color } => {
                 Self::legal_same_color_actions(state, *color)
@@ -19,7 +34,6 @@ impl RuleEngine {
             TurnPhase::CardAbilitySteal => Self::legal_steal_actions(state),
             TurnPhase::SelectRoyalCard => Self::legal_royal_actions(state),
             TurnPhase::DiscardTokens => Self::legal_discard_actions(state),
-            TurnPhase::SelectReserveGold => Self::legal_reserve_gold_actions(state),
             TurnPhase::GameOver(_) => Vec::new(),
         }
     }
@@ -112,19 +126,13 @@ impl RuleEngine {
             });
         }
 
-        // 选项 B：拿 1 枚黄金 + 预留卡牌（前提：棋盘上必须至少有 1 枚黄金，且预留手牌未达上限 3 张）
+        // 选项 B：拿 1 枚黄金并开启预留流程（前提：棋盘上必须至少有 1 枚黄金，且预留手牌未达上限 3 张）
         if state.board.has_gold() && player.reserved_cards.len() < 3 {
-            for tier in CardTier::ALL {
-                // 金字塔明牌
-                for slot in 0..state.pyramid[tier.index()].len() {
-                    actions.push(Action::ReserveCard {
-                        tier,
-                        slot: Some(slot),
-                    });
-                }
-                // 牌堆顶盲抽
-                if !state.decks[tier.index()].is_empty() {
-                    actions.push(Action::ReserveCard { tier, slot: None });
+            for r in 0..5 {
+                for c in 0..5 {
+                    if state.board.get(r, c) == Some(GemType::Gold) {
+                        actions.push(Action::TakeGoldToken { r, c });
+                    }
                 }
             }
         }
@@ -232,15 +240,51 @@ impl RuleEngine {
         actions
     }
 
-    fn legal_reserve_gold_actions(state: &GameState) -> Vec<Action> {
-        let mut actions = Vec::with_capacity(3);
-        for r in 0..5 {
-            for c in 0..5 {
-                if state.board.get(r, c) == Some(GemType::Gold) {
-                    actions.push(Action::TakeGoldToken { r, c });
+    fn legal_reserve_card_actions(state: &GameState) -> Vec<Action> {
+        let mut actions = Vec::with_capacity(16);
+        for tier in CardTier::ALL {
+            // 金字塔明牌
+            for slot in 0..state.pyramid[tier.index()].len() {
+                actions.push(Action::ReserveCard {
+                    tier,
+                    slot: Some(slot),
+                });
+            }
+            // 牌堆顶盲抽
+            if !state.decks[tier.index()].is_empty() {
+                actions.push(Action::ReserveCard { tier, slot: None });
+            }
+        }
+        actions
+    }
+
+    fn legal_payment_actions(
+        state: &GameState,
+        card: &JewelCard,
+        free_gold: u8,
+        last_color_idx: usize,
+        allocated_gold: &[u8; 6],
+    ) -> Vec<Action> {
+        let player = &state.players[state.current_player];
+        let mut actions = Vec::with_capacity(7);
+
+        // 1. 确认当前方案并结算退出始终合法
+        actions.push(Action::ConfirmPayment);
+
+        // 2. 若仍有自由黄金，且对应颜色仍有天然宝石可被替代，且满足单向保序 (idx >= last_color_idx)
+        if free_gold > 0 {
+            if let Some(info) = check_payment_divergence(player, card) {
+                for gem in GemType::ALL {
+                    let idx = gem.index();
+                    if idx < 6 && idx >= last_color_idx {
+                        if allocated_gold[idx] < info.max_replaceable[idx] {
+                            actions.push(Action::PayGoldFor { gem });
+                        }
+                    }
                 }
             }
         }
+
         actions
     }
 }

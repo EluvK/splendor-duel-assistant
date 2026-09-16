@@ -77,8 +77,8 @@ class SplendorNet(nn.Module):
     RESERVED_CARDS_SLOTS = 3
     PLAYER_BASE_DIM = 24
     PLAYER_DASHBOARD_DIM = PLAYER_BASE_DIM + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM  # 24 + 3 * 36 = 132
-    GLOBAL_CTX_DIM = 40
-    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + GLOBAL_CTX_DIM  # 965
+    GLOBAL_CTX_DIM = 62                        # 40 基础环境与差值 + 22 维 Pending Decision Context
+    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + GLOBAL_CTX_DIM  # 987
     ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE  # 288
 
     def __init__(

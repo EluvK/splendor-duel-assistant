@@ -23,16 +23,16 @@
 
 ---
 
-## 二、状态特征张量布局 (Total: 965 Float32)
+## 二、状态特征张量布局 (Total: 987 Float32)
 
-全局状态由 5 大特征分块组成，切片严格采用半开区间 `[start, end)`，展平总维度为 **965 维**：
+全局状态由 5 大特征分块组成，切片严格采用半开区间 `[start, end)`，展平总维度为 **987 维**：
 
 ```
 [0, 225)    分块 1: 5×5 棋盘空间 (9 通道 × 25 格 = 225 维)
 [225, 657)  分块 2: 金字塔市场可见卡牌 (12 槽位 × 36 维 = 432 维)
 [657, 661)  分块 3: 场上王室卡 (4 维布尔向量)
 [661, 925)  分块 4: 双方玩家状态仪表板 (2 玩家 × 132 维 = 264 维)
-[925, 965)  分块 5: 全局环境、博弈对称差值与胜负距离 (40 维)
+[925, 987)  分块 5: 全局环境、博弈对称差值与决策上下文 (62 维)
 ```
 
 ---
@@ -113,8 +113,8 @@
 
 ---
 
-### 5. 全局环境、博弈对称差值与胜负距离 (40 维: `[925, 965)`)
-- `[0..9)`: 当前阶段 `TurnPhase` (9-way One-Hot: OptionalActions, MandatoryAction, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens, SelectReserveGold, GameOver)
+### 5. 全局环境、博弈对称差值与决策上下文 (62 维: `[925, 987)`)
+- `[0..9)`: 当前阶段 `TurnPhase` (9-way One-Hot: OptionalActions, MandatoryAction, SelectReserveCard, Payment, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens；游戏已终局 GameOver 时模型无需决策，全为 0.0)
 - `[9]`: `privilege_pool / 3.0`
 - `[10]`: `bag_total_count / 25.0`
 - `[11..18)`: 布袋中 7 种标记各自具体剩余数量 (W/4, B/4, G/4, R/4, K/4, Pearl/2, Gold/3)
@@ -133,31 +133,37 @@
 - `[32..38)`: 双方三项胜利距离 (Gap to Win: 分数差/20, 皇冠差/10, 单色差/10) (6 维)
 - `[38]`: 本回合是否已补充棋盘 `replenished_this_turn` (1.0 或 0.0)
 - `[39]`: 本回合已消耗特权数 `privileges_used_this_turn / 3.0`
+- `[40..62)`: **Pending Decision Context (22 维显式决策上下文，恢复微动作 Markov 性质)**：
+  - `[40..55)` (15 维): `pending_purchase_source` (15-way One-Hot: 槽位 0..11 对应金字塔 12 张明牌，槽位 12..14 对应我方 3 个手牌槽位；非 Payment 阶段全为 0.0)
+  - `[55..61)` (6 维): `pending_resource` (6-way One-Hot: W, B, G, R, K, Pearl；在 `CardAbilitySameColor` 标定技能同色宝石，在 `Payment` 阶段标定最近一次分配自由黄金替代的宝石类型，初始尚未分配自由黄金时保持全 0.0)
+  - `[61]`: `pending_free_gold` (`free_gold / 3.0`，标定当前剩余可自主支配的自由黄金数；非 Payment 阶段为 0.0)
 
 ---
 
 ## 三、动作空间 (Action Space) 离散编码 (288 维)
 
 ```
-ID 范围         动作语义
-----------------------------------------------------------------------
-[0]             SkipOptional (跳过可选行动)
-[1..=25]        UsePrivilege (棋盘 25 个坐标)
-[26]            ReplenishBoard (补充棋盘)
-[27..=51]       TakeTokens: 单个标记 (25 个坐标)
-[52..=171]      TakeTokens: 直线相邻 2~3 连线 (120 种几何直线组合)
-[172..=183]     ReserveCard: 金字塔明牌 (12 个槽位: Tier1 [172..176], Tier2 [177..180], Tier3 [181..183])
-[184..=186]     ReserveCard: 牌堆顶盲抽 (3 个等级: Tier 1, 2, 3)
-[187..=198]     PurchaseCard: 金字塔明牌 (12 个槽位: Tier1 [187..191], Tier2 [192..195], Tier3 [196..198])
-[199..=201]     PurchaseCard: 自己预留卡 (3 个槽位)
-[202..=206]     AssignJokerColor: 变色卡附着颜色 (5 种基础颜色)
-[207..=231]     TakeSameColorToken: 盘上取同色 (25 个坐标)
-[232..=238]     StealToken: 偷对手标记 (5 种宝石 + 珍珠 + 黄金)
-[239..=242]     SelectRoyal: 选择王室卡 (4 个槽位)
-[243..=249]     DiscardToken: 超限弃牌 (7 类标记)
-[250..=274]     TakeGoldToken: 预留卡牌连锁选择拿取黄金 (棋盘 25 个坐标)
-[275..=287]     预留对齐空间 (13 维，预备用于卡牌自主支付决策)
-----------------------------------------------------------------------
+ID 范围         动作语义                                  合法触发阶段
+----------------------------------------------------------------------------------------------------
+[0]             SkipOptional (跳过可选行动)               OptionalActions
+[1..=25]        UsePrivilege (棋盘 25 个坐标)             OptionalActions
+[26]            ReplenishBoard (补充棋盘)                 OptionalActions / 极端死锁保护
+[27..=51]       TakeTokens: 单个标记 (25 个坐标)          MandatoryAction
+[52..=171]      TakeTokens: 直线相邻 2~3 连线 (120 组合)  MandatoryAction
+[172..=183]     ReserveCard: 金字塔明牌 (12 个槽位)       SelectReserveCard
+[184..=186]     ReserveCard: 牌堆顶盲抽 (3 个等级)        SelectReserveCard
+[187..=198]     PurchaseCard: 金字塔明牌 (12 个槽位)      MandatoryAction
+[199..=201]     PurchaseCard: 自己预留卡 (3 个槽位)       MandatoryAction
+[202..=206]     AssignJokerColor: 变色卡附着颜色 (5 种)   CardAbilityJoker
+[207..=231]     TakeSameColorToken: 盘上取同色 (25 坐标)  CardAbilitySameColor
+[232..=238]     StealToken: 偷对手标记 (7 类标记)         CardAbilitySteal
+[239..=242]     SelectRoyal: 选择王室卡 (4 个槽位)        SelectRoyalCard
+[243..=249]     DiscardToken: 超限弃牌 (7 类标记)         DiscardTokens
+[250..=274]     TakeGoldToken: 拿黄金预留卡牌入口 (25 坐标) MandatoryAction
+[275]           ConfirmPayment: 确认当前支付方案并结算    Payment
+[276..=281]     PayGoldFor: 消耗黄金替代指定颜色 (6 色)   Payment (W, B, G, R, K, Pearl)
+[282..=287]     预留对齐空间 (6 维)                       -
+----------------------------------------------------------------------------------------------------
 总动作空间大小 ACTION_SIZE = 288
 ```
 

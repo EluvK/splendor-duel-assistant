@@ -278,5 +278,83 @@ fn test_replenish_board_action_mask_and_feature_encoding() {
     assert!(has_mandatory, "补盘后进入强制行动，必须存在合法的强制动作掩码");
 }
 
+#[test]
+fn test_pending_context_and_obs_size() {
+    assert_eq!(OBS_SIZE, 987, "全局观察向量必须严格对齐为 987 维！");
+
+    let mut game = GameState::new_game(42);
+    // 构造处于 Payment 阶段的状态
+    let dummy_card = JewelCard {
+        id: 1,
+        tier: CardTier::Tier2,
+        color: CardColor::Red,
+        points: 2,
+        bonus: 1,
+        ability: None,
+        crowns: 1,
+        cost: CardCost::new(0, 0, 0, 0, 0, 0),
+    };
+    // 1. 测试初始刚进入 Payment 阶段（未分配任何黄金）
+    game.phase = TurnPhase::Payment {
+        card: dummy_card,
+        from_reserved: false,
+        tier: CardTier::Tier2,
+        slot: 1,
+        free_gold: 2,
+        last_color_idx: 0, // 初始保序下界游标为 0
+        allocated_gold: [0; 6], // 未分配任何黄金
+    };
+
+    let obs_init = encode_state(&game);
+    let offset = 925;
+    assert_eq!(obs_init[offset + 3], 1.0, "TurnPhase::Payment 必须激活 offset + 3");
+    assert_eq!(obs_init[offset + 40 + 6], 1.0, "待支付槽位 6 必须编码为 1.0");
+    assert_eq!(obs_init[offset + 40 + 0], 0.0, "非当前待支付槽位必须为 0.0");
+    // 关键断言：未分配自由黄金时，pending_resource 必须全为 0.0，绝不能把游标 0 误编码为 White！
+    for color_idx in 0..6 {
+        assert_eq!(obs_init[offset + 55 + color_idx], 0.0, "未分配黄金时 pending_resource 必须保持全 0.0");
+    }
+    assert!((obs_init[offset + 61] - 2.0 / 3.0).abs() < 1e-5, "剩余自由黄金必须归一化");
+
+    // 2. 测试分配自由黄金后的标定
+    let mut allocated = [0u8; 6];
+    allocated[3] = 1; // 分配给 Red (index 3)
+    game.phase = TurnPhase::Payment {
+        card: dummy_card,
+        from_reserved: false,
+        tier: CardTier::Tier2,
+        slot: 1,
+        free_gold: 1,
+        last_color_idx: 3,
+        allocated_gold: allocated,
+    };
+    let obs_allocated = encode_state(&game);
+    assert_eq!(obs_allocated[offset + 55 + 3], 1.0, "已分配 Red (3) 必须被正确标定为 1.0");
+    assert_eq!(obs_allocated[offset + 55 + 0], 0.0, "非当前分配颜色必须为 0.0");
+
+    // 3. 测试从手牌预留卡购买 (from_reserved: true, slot: 2 -> 全局槽位 12 + 2 = 14)
+    game.phase = TurnPhase::Payment {
+        card: dummy_card,
+        from_reserved: true,
+        tier: CardTier::Tier1,
+        slot: 2,
+        free_gold: 1,
+        last_color_idx: 0,
+        allocated_gold: [0; 6],
+    };
+    let obs_reserved = encode_state(&game);
+    assert_eq!(obs_reserved[offset + 40 + 14], 1.0, "手牌预留槽位 2 必须映射为 pending_purchase_source 14");
+    assert_eq!(obs_reserved[offset + 40 + 6], 0.0, "金字塔槽位 6 此时必须为 0.0");
+
+    // 4. 测试 CardAbilitySameColor 阶段
+    game.phase = TurnPhase::CardAbilitySameColor {
+        color: GemType::Blue, // Blue index = 1
+    };
+    let obs_color = encode_state(&game);
+    assert_eq!(obs_color[offset + 5], 1.0, "CardAbilitySameColor 必须激活 offset + 5");
+    assert_eq!(obs_color[offset + 55 + 1], 1.0, "技能目标颜色 Blue 必须编码为 1.0");
+    assert_eq!(obs_color[offset + 55 + 0], 0.0, "非目标颜色必须为 0.0");
+}
+
 
 
