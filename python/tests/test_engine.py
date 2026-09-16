@@ -14,7 +14,7 @@ def test_py_game_state_basic():
     legals = game.legal_action_ids()
 
     assert len(obs) == SplendorDuelEnv.OBS_SIZE
-    assert len(mask) == 288
+    assert len(mask) == SplendorDuelEnv.ACTION_SIZE
     assert len(legals) >= 1
     assert game.current_player() in [0, 1]
     assert game.turn_number() == 1
@@ -35,7 +35,7 @@ def test_env_reset_and_info():
     assert "round_number" in info
     assert info["round_number"] == 1
     assert env.round_number == 1
-    assert info["action_mask"].shape == (288,)
+    assert info["action_mask"].shape == (SplendorDuelEnv.ACTION_SIZE,)
     assert len(info["legal_actions"]) > 0
 
 

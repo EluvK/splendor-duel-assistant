@@ -26,6 +26,7 @@ fn test_joker_purchase_rules() {
             from_reserved: false,
             tier,
             slot: 0,
+            ..
         } => *tier == joker_card.tier,
         _ => false,
     });
@@ -39,6 +40,7 @@ fn test_joker_purchase_rules() {
             from_reserved: false,
             tier,
             slot: 0,
+            ..
         } => *tier == joker_card.tier,
         _ => false,
     });
@@ -49,6 +51,7 @@ fn test_joker_purchase_rules() {
         from_reserved: false,
         tier: joker_card.tier,
         slot: 0,
+        plan_id: 0,
     };
     assert!(GameEngine::step(&mut game, &buy_action).is_ok());
     assert!(matches!(game.phase, TurnPhase::CardAbilityJoker { .. }));
@@ -114,6 +117,7 @@ fn test_cannot_reserve_card_without_gold_on_board() {
 
     // 若强行执行预留动作，引擎应拒绝报错
     let reserve_action = Action::ReserveCard {
+        gold_pos: (0, 0),
         tier: CardTier::Tier1,
         slot: Some(0),
     };
@@ -152,39 +156,26 @@ fn test_reserve_card_with_gold_selection() {
     let p0_gold_before = game.players[0].tokens.get(GemType::Gold);
     let p0_reserved_before = game.players[0].reserved_cards.len();
 
-    // 1. 先拿黄金开启预留流程
-    let chosen_coord = gold_coords[0];
-    let take_gold_action = Action::TakeGoldToken {
-        r: chosen_coord.0,
-        c: chosen_coord.1,
-    };
-    assert!(GameEngine::step(&mut game, &take_gold_action).is_ok());
+    // 验证合法动作中包含 ReserveCard
+    let legals = RuleEngine::legal_actions(&game);
+    let has_reserve = legals.iter().any(|a| matches!(a, Action::ReserveCard { .. }));
+    assert!(has_reserve, "有黄金且预留未满时必须生成 ReserveCard 动作");
 
-    // 状态应转移到 SelectReserveCard，且黄金增加，预留卡尚未增加
-    assert_eq!(game.phase, TurnPhase::SelectReserveCard);
+    // 一步原子执行：拿指定位置黄金 + 预留金字塔明牌
+    let chosen_coord = gold_coords[0];
+    let reserve_action = Action::ReserveCard {
+        gold_pos: chosen_coord,
+        tier: CardTier::Tier1,
+        slot: Some(0),
+    };
+    assert!(GameEngine::step(&mut game, &reserve_action).is_ok());
+
+    // 验证黄金被拿走并加入手中
     assert_eq!(game.board.get(chosen_coord.0, chosen_coord.1), None);
     assert_eq!(
         game.players[0].tokens.get(GemType::Gold),
         p0_gold_before + 1
     );
-    assert_eq!(game.players[0].reserved_cards.len(), p0_reserved_before);
-
-    // 验证合法动作：必须全部为 ReserveCard
-    let legals = RuleEngine::legal_actions(&game);
-    assert!(!legals.is_empty());
-    for act in &legals {
-        match act {
-            Action::ReserveCard { .. } => {}
-            _ => panic!("SelectReserveCard 阶段不应出现非 ReserveCard 动作: {:?}", act),
-        }
-    }
-
-    // 2. 选择金字塔明牌预留
-    let reserve_action = Action::ReserveCard {
-        tier: CardTier::Tier1,
-        slot: Some(0),
-    };
-    assert!(GameEngine::step(&mut game, &reserve_action).is_ok());
 
     // 验证预留手牌 +1，且为公开明牌，回合完成推进
     assert_eq!(game.players[0].reserved_cards.len(), p0_reserved_before + 1);
@@ -211,15 +202,12 @@ fn test_blind_reserve_card_is_private() {
         }
     }
 
-    // 先拿黄金进入 SelectReserveCard
-    assert!(GameEngine::step(&mut game, &Action::TakeGoldToken { r: gold_pos.0, c: gold_pos.1 }).is_ok());
-    assert_eq!(game.phase, TurnPhase::SelectReserveCard);
-
     let deck_len_before = game.decks[0].len();
     assert!(deck_len_before > 0);
 
-    // 从 Tier1 牌堆顶盲抽预留 (slot: None)
+    // 一步原子执行：从 Tier1 牌堆顶盲抽预留 (slot: None) 并拿黄金
     let blind_reserve = Action::ReserveCard {
+        gold_pos,
         tier: CardTier::Tier1,
         slot: None,
     };
@@ -656,42 +644,40 @@ fn test_payment_divergence_and_preserve_gold() {
     };
     game.pyramid[0][0] = test_card;
 
-    // 执行购买该卡牌
-    let buy_action = Action::PurchaseCard {
+    // 检查合法动作中包含该卡牌的购买动作及合法支付方案
+    let legals = RuleEngine::legal_actions(&game);
+    let card_buy_actions: Vec<_> = legals
+        .iter()
+        .filter(|a| matches!(a, Action::PurchaseCard { from_reserved: false, tier: CardTier::Tier1, slot: 0, .. }))
+        .collect();
+    assert!(!card_buy_actions.is_empty(), "必须生成合法的买卡动作");
+
+    // 此时玩家持有 2 自由黄金，可替代宝石为 Blue (1), Green (1), Red (1)
+    // 方案 0 必须合法
+    assert!(legals.contains(&Action::PurchaseCard {
         from_reserved: false,
         tier: CardTier::Tier1,
         slot: 0,
+        plan_id: 0,
+    }));
+
+    // 寻找使用 1 枚自由黄金替代 Green (index 2) 的 Plan ID
+    let green_plan_id = (0..84u8).find(|&p| {
+        crate::gameplay::payment::PAYMENT_PLANS[p as usize] == [0, 0, 1, 0, 0, 0]
+    }).unwrap();
+
+    let green_action = Action::PurchaseCard {
+        from_reserved: false,
+        tier: CardTier::Tier1,
+        slot: 0,
+        plan_id: green_plan_id,
     };
-    assert!(GameEngine::step(&mut game, &buy_action).is_ok());
+    assert!(legals.contains(&green_action), "替代绿宝石的方案必须合法");
 
-    // 此时玩家持有 2 自由黄金，且蓝、绿、红都可以被替代，应成功转入 Payment 阶段
-    assert!(matches!(game.phase, TurnPhase::Payment { .. }));
+    // 一步原子执行：使用替代绿宝石的方案购买卡牌
+    assert!(GameEngine::step(&mut game, &green_action).is_ok());
 
-    // 检查合法动作：应包含 ConfirmPayment, PayGoldFor[Blue], PayGoldFor[Green], PayGoldFor[Red]
-    let legals = RuleEngine::legal_actions(&game);
-    assert!(legals.contains(&Action::ConfirmPayment));
-    assert!(legals.contains(&Action::PayGoldFor { gem: GemType::Blue }));
-    assert!(legals.contains(&Action::PayGoldFor { gem: GemType::Green }));
-    assert!(legals.contains(&Action::PayGoldFor { gem: GemType::Red }));
-    // 黑、珍珠没有天然宝石被替换，不合法
-    assert!(!legals.contains(&Action::PayGoldFor { gem: GemType::Black }));
-
-    // 1. 玩家选择用 1 枚黄金替代绿宝石 (index 2)
-    assert!(GameEngine::step(&mut game, &Action::PayGoldFor { gem: GemType::Green }).is_ok());
-
-    // 此时依然在 Payment 阶段（因为还有 1 自由黄金和 1 红宝石 (index 3) 在保序后仍可替代）
-    assert!(matches!(game.phase, TurnPhase::Payment { .. }));
-
-    // 单向保序检验：由于上一步选择了 Green (index 2)，后续不能再逆序选择 Blue (index 1)！
-    let legals_after_green = RuleEngine::legal_actions(&game);
-    assert!(legals_after_green.contains(&Action::ConfirmPayment));
-    assert!(legals_after_green.contains(&Action::PayGoldFor { gem: GemType::Red }));
-    assert!(!legals_after_green.contains(&Action::PayGoldFor { gem: GemType::Blue }), "单向保序必须阻止逆序选择 Blue！");
-
-    // 2. 此时玩家决定不分配剩余黄金，直接点击确认支付
-    assert!(GameEngine::step(&mut game, &Action::ConfirmPayment).is_ok());
-
-    // 验证扣款结果：
+    // 验证一步结算扣款结果：
     // 绿宝石被黄金替代保全：玩家手里应依然持有 1 绿！
     // 蓝、红宝石正常支付扣除：玩家手里应持有 0 蓝、0 红！
     // 黄金消耗了 1 枚替代绿宝石：玩家手里应剩余 2 - 1 = 1 黄金！
@@ -722,61 +708,36 @@ fn test_payment_fast_path_zero_steps_when_no_free_gold() {
     };
     game.pyramid[0][0] = test_card;
 
+    // 0 自由黄金，合法动作中仅有 Plan 0
+    let legals = RuleEngine::legal_actions(&game);
+    let card_buys: Vec<_> = legals
+        .iter()
+        .filter(|a| matches!(a, Action::PurchaseCard { from_reserved: false, tier: CardTier::Tier1, slot: 0, .. }))
+        .collect();
+    assert_eq!(card_buys.len(), 1, "无自由黄金时仅有 1 种合法默认支付方案");
+
     let buy_action = Action::PurchaseCard {
         from_reserved: false,
         tier: CardTier::Tier1,
         slot: 0,
+        plan_id: 0,
     };
     assert!(GameEngine::step(&mut game, &buy_action).is_ok());
 
-    // 0 自由黄金，绝不进入 Payment 阶段，0 步直接完成！
-    assert!(!matches!(game.phase, TurnPhase::Payment { .. }));
     assert_eq!(game.players[0].tokens.get(GemType::Blue), 0);
     assert_eq!(game.players[0].bonuses[GemType::Blue.index()], 1);
 }
 
 #[test]
-fn test_payment_auto_settle_paths() {
-    // 场景 1：自由黄金耗尽 (free_gold == 0) 时自动短路结算
-    let mut game1 = GameState::new_game(103);
-    game1.phase = TurnPhase::MandatoryAction;
-    game1.players[0].tokens = crate::model::token::TokenCollection::new();
-    game1.players[0].tokens.add(GemType::Blue, 1);
-    game1.players[0].tokens.add(GemType::Gold, 1); // 1 自由黄金
+fn test_payment_with_multiple_gold_substitutions() {
+    let mut game = GameState::new_game(104);
+    game.phase = TurnPhase::MandatoryAction;
+    game.players[0].tokens = crate::model::token::TokenCollection::new();
+    game.players[0].tokens.add(GemType::Blue, 1);
+    game.players[0].tokens.add(GemType::Red, 1);
+    game.players[0].tokens.add(GemType::Gold, 2); // 2 自由黄金
 
-    let card1 = crate::model::card::JewelCard {
-        id: 252,
-        tier: CardTier::Tier1,
-        color: crate::model::card::CardColor::Green,
-        points: 0,
-        bonus: 1,
-        ability: None,
-        crowns: 0,
-        cost: crate::model::card::CardCost::new(0, 1, 0, 0, 0, 0), // 1 Blue
-    };
-    game1.pyramid[0][0] = card1;
-    assert!(GameEngine::step(&mut game1, &Action::PurchaseCard {
-        from_reserved: false,
-        tier: CardTier::Tier1,
-        slot: 0,
-    }).is_ok());
-    assert!(matches!(game1.phase, TurnPhase::Payment { .. }));
-
-    // 消耗仅有的 1 枚自由黄金保留 Blue，自由黄金耗尽，必须立即自动结算退出 Payment！
-    assert!(GameEngine::step(&mut game1, &Action::PayGoldFor { gem: GemType::Blue }).is_ok());
-    assert!(!matches!(game1.phase, TurnPhase::Payment { .. }), "自由黄金耗尽应自动短路结算！");
-    assert_eq!(game1.players[0].tokens.get(GemType::Blue), 1, "蓝宝石成功保留");
-    assert_eq!(game1.players[0].tokens.get(GemType::Gold), 0, "黄金被消耗扣除");
-
-    // 场景 2：单向保序区间无可替代宝石时自动短路结算
-    let mut game2 = GameState::new_game(104);
-    game2.phase = TurnPhase::MandatoryAction;
-    game2.players[0].tokens = crate::model::token::TokenCollection::new();
-    game2.players[0].tokens.add(GemType::Blue, 1);
-    game2.players[0].tokens.add(GemType::Red, 1);
-    game2.players[0].tokens.add(GemType::Gold, 2); // 2 自由黄金
-
-    let card2 = crate::model::card::JewelCard {
+    let card = crate::model::card::JewelCard {
         id: 253,
         tier: CardTier::Tier1,
         color: crate::model::card::CardColor::Green,
@@ -786,20 +747,28 @@ fn test_payment_auto_settle_paths() {
         crowns: 0,
         cost: crate::model::card::CardCost::new(0, 1, 0, 1, 0, 0), // 1 Blue, 1 Red
     };
-    game2.pyramid[0][0] = card2;
-    assert!(GameEngine::step(&mut game2, &Action::PurchaseCard {
+    game.pyramid[0][0] = card;
+
+    // 寻找同时替代 Blue (index 1) 和 Red (index 3) 的 Plan ID: [0, 1, 0, 1, 0, 0]
+    let dual_sub_plan = (0..84u8).find(|&p| {
+        crate::gameplay::payment::PAYMENT_PLANS[p as usize] == [0, 1, 0, 1, 0, 0]
+    }).unwrap();
+
+    let legals = RuleEngine::legal_actions(&game);
+    let dual_action = Action::PurchaseCard {
         from_reserved: false,
         tier: CardTier::Tier1,
         slot: 0,
-    }).is_ok());
-    assert!(matches!(game2.phase, TurnPhase::Payment { .. }));
+        plan_id: dual_sub_plan,
+    };
+    assert!(legals.contains(&dual_action), "双黄金替代方案必须合法");
 
-    // 替代靠后的 Red (index 3)。此时还剩 1 自由黄金，但在保序区间 3..6 中已无可替代宝石，必须立即自动短路结算！
-    assert!(GameEngine::step(&mut game2, &Action::PayGoldFor { gem: GemType::Red }).is_ok());
-    assert!(!matches!(game2.phase, TurnPhase::Payment { .. }), "保序区间穷尽应自动短路结算，无需手动 ConfirmPayment！");
-    assert_eq!(game2.players[0].tokens.get(GemType::Red), 1, "红宝石成功保留");
-    assert_eq!(game2.players[0].tokens.get(GemType::Blue), 0, "未被替代的蓝宝石正常支付");
-    assert_eq!(game2.players[0].tokens.get(GemType::Gold), 1, "仅消耗 1 枚黄金替代红宝石，剩余 1 黄金");
+    assert!(GameEngine::step(&mut game, &dual_action).is_ok());
+
+    // 验证两枚天然宝石全部被黄金替代保全！
+    assert_eq!(game.players[0].tokens.get(GemType::Blue), 1, "蓝宝石成功保留");
+    assert_eq!(game.players[0].tokens.get(GemType::Red), 1, "红宝石成功保留");
+    assert_eq!(game.players[0].tokens.get(GemType::Gold), 0, "两枚黄金被消耗扣除");
 }
 
 

@@ -158,7 +158,7 @@ pub const MIS_BLOCK_SIZE: usize = 8;
 fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
     loop {
         match sim_state.phase {
-            TurnPhase::Payment { .. } | TurnPhase::DiscardTokens => {
+            TurnPhase::DiscardTokens => {
                 let legals = RuleEngine::legal_actions(sim_state);
                 if legals.len() == 1 {
                     let _ = GameEngine::step(sim_state, &legals[0]);

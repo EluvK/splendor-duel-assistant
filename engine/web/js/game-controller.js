@@ -38,28 +38,32 @@ export function formatFriendlyAction(desc) {
       return `拿取 ${count} 颗宝石: ${gems}`;
     }
   }
-  // Reserve Tier Tier1 slot 1 或 Reserve Tier Tier2 from Deck
+  // Reserve Tier Tier1 slot 1 (gold at (r,c)) 或 Reserve Tier Tier2 from Deck
   if (desc.startsWith('Reserve Tier')) {
+    const goldMatch = desc.match(/gold at \((\d+),(\d+)\)/);
+    const goldHint = goldMatch ? ` (+1金(${goldMatch[1]},${goldMatch[2]}))` : ' (+1金)';
     if (desc.includes('from Deck')) {
       const m = desc.match(/Reserve Tier Tier(\d+) from Deck/);
-      return m ? `盲抽预留 等级${m[1]}牌库` : '盲抽预留卡牌';
+      return m ? `盲抽预留 等级${m[1]}牌库${goldHint}` : `盲抽预留卡牌${goldHint}`;
     }
     const m = desc.match(/Reserve Tier Tier(\d+) slot (\d+)/);
     if (m) {
-      return `预留 等级${m[1]} 卡位#${Number(m[2]) + 1}`;
+      return `预留 等级${m[1]} 卡位#${Number(m[2]) + 1}${goldHint}`;
     }
   }
-  // Purchase Tier Tier1 slot 0
+  // Purchase Tier Tier1 slot 0 [plan]
   if (desc.startsWith('Purchase Tier')) {
-    const m = desc.match(/Purchase Tier Tier(\d+) slot (\d+)/);
+    const m = desc.match(/Purchase Tier Tier(\d+) slot (\d+)(?: \[(.*?)\])?/);
     if (m) {
-      return `购买 等级${m[1]} 卡位#${Number(m[2]) + 1}`;
+      const planHint = m[3] && m[3] !== 'default pay' ? ` (${m[3]})` : '';
+      return `购买 等级${m[1]} 卡位#${Number(m[2]) + 1}${planHint}`;
     }
   }
-  // Purchase Reserved card #0
+  // Purchase Reserved card #0 [plan]
   if (desc.startsWith('Purchase Reserved card')) {
-    const m = desc.match(/#(\d+)/);
-    return m ? `购买预留卡 #${Number(m[1]) + 1}` : '购买预留卡';
+    const m = desc.match(/#(\d+)(?: \[(.*?)\])?/);
+    const planHint = m && m[2] && m[2] !== 'default pay' ? ` (${m[2]})` : '';
+    return m ? `购买预留卡 #${Number(m[1]) + 1}${planHint}` : '购买预留卡';
   }
   if (desc.startsWith('Purchase Reserved')) {
     const m = desc.match(/Purchase Reserved (Tier\d+) Card #(\d+)/);
@@ -140,6 +144,7 @@ export class GameController {
     this.currentPlayer = 0;
     this.playerKinds = ['human', 'neural'];
     this.selectedBoardPositions = [];
+    this.selectedGoldPos = null;
     this.autoStepAi = true;
     this.aiStepTimer = null;
     this.isActionPending = false;
@@ -308,6 +313,7 @@ export class GameController {
   async startNewGame() {
     this.clearModal();
     this.selectedBoardPositions = [];
+    this.selectedGoldPos = null;
     const winnerBanner = document.getElementById('winnerBanner');
     if (winnerBanner) winnerBanner.style.display = 'none';
     const p0 = document.getElementById('p0KindSelect').value;
@@ -355,6 +361,7 @@ export class GameController {
     if (p1Select && this.playerKinds[1]) p1Select.value = this.playerKinds[1];
 
     this.selectedBoardPositions = [];
+    this.selectedGoldPos = null;
 
     // 处理对战操作历史
     if (data.history) {
@@ -675,11 +682,11 @@ export class GameController {
       };
     }
 
-    // 强制行动：连线拿取 1~3 颗非黄金宝石，或直接点击黄金开启预留流程
+    // 强制行动：连线拿取 1~3 颗非黄金宝石，或直接点击黄金开启预留
     if (phase === 'MandatoryAction') {
       const takeActions = this.legalActions.filter(a => a.category === 'take_tokens');
-      const goldActions = this.legalActions.filter(a => a.category === 'take_gold');
-      const goldPositions = goldActions.map(a => [a.action.TakeGoldToken.r, a.action.TakeGoldToken.c]);
+      const reserveActions = this.legalActions.filter(a => a.category === 'reserve_card');
+      const goldPositions = [...new Set(reserveActions.map(a => `${a.action.ReserveCard.gold_pos[0]},${a.action.ReserveCard.gold_pos[1]}`))].map(s => s.split(',').map(Number));
 
       const candidatePositions = this.calculateCandidatePositions(takeActions);
       // 未选定连线时，棋盘上的可用黄金同样作为可点击候选
@@ -687,17 +694,24 @@ export class GameController {
         goldPositions.forEach(([gr, gc]) => candidatePositions.push([gr, gc]));
       }
 
+      const activeSelected = this.selectedBoardPositions.slice();
+      if (this.selectedGoldPos) {
+        activeSelected.push(this.selectedGoldPos);
+      }
+
       return {
         clickable: true,
-        selectedPositions: this.selectedBoardPositions,
+        selectedPositions: activeSelected,
         candidatePositions,
         onCellClick: (r, c, gem) => {
           if (gem === 'gold') {
             if (this.selectedBoardPositions.length === 0 && goldPositions.some(([gr, gc]) => gr === r && gc === c)) {
-              this.submitAction({ TakeGoldToken: { r, c } });
+              this.selectedGoldPos = (this.selectedGoldPos && this.selectedGoldPos[0] === r && this.selectedGoldPos[1] === c) ? null : [r, c];
+              this.render();
             }
             return;
           }
+          this.selectedGoldPos = null;
           this.handleBoardCellClickForTokens(r, c, gem, takeActions);
         }
       };
@@ -777,9 +791,16 @@ export class GameController {
   renderPyramidArea() {
     const isHumanTurn = this.isHuman && !this.state.winner;
     const isMandatory = isHumanTurn && this.state.phase === 'MandatoryAction';
-    const isSelectReserve = isHumanTurn && this.state.phase === 'SelectReserveCard';
-    const canReserve = isSelectReserve && (this.state.players[this.currentPlayer].reserved_cards.length < 3);
-    const interactive = isMandatory || isSelectReserve;
+    const reserveActions = isMandatory ? this.legalActions.filter(a => a.category === 'reserve_card') : [];
+    const canReserve = isMandatory && reserveActions.length > 0;
+    const interactive = isMandatory;
+
+    // 获取可用的黄金坐标 (优先使用已点击选中的黄金，否则默认使用第一个合法黄金)
+    const getGoldPos = () => {
+      if (this.selectedGoldPos) return this.selectedGoldPos;
+      if (reserveActions.length > 0) return reserveActions[0].action.ReserveCard.gold_pos;
+      return null;
+    };
 
     // 提取所有可购买的金字塔卡牌
     const affordableIds = new Set();
@@ -803,9 +824,11 @@ export class GameController {
         count: this.state.decks_count[tierIdx],
       },
       onReserveDeck: () => {
-        if (canReserve && this.state.decks_count[tierIdx] > 0) {
+        const gold_pos = getGoldPos();
+        if (canReserve && gold_pos && this.state.decks_count[tierIdx] > 0) {
           this.submitAction({
             ReserveCard: {
+              gold_pos,
               tier: tierName,
               slot: null
             }
@@ -816,21 +839,27 @@ export class GameController {
         if (!isMandatory) return;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
-          this.submitAction({
-            PurchaseCard: {
-              from_reserved: false,
-              tier: tierName,
-              slot
-            }
-          });
+          const buyActs = this.legalActions.filter(a =>
+            a.category === 'purchase_card' &&
+            !a.action.PurchaseCard.from_reserved &&
+            a.action.PurchaseCard.tier === tierName &&
+            a.action.PurchaseCard.slot === slot
+          );
+          if (buyActs.length === 1) {
+            this.submitAction(buyActs[0].action);
+          } else if (buyActs.length > 1) {
+            this.showPurchasePlanModal(card, buyActs);
+          }
         }
       },
       onReserve: (card) => {
-        if (!canReserve) return;
+        const gold_pos = getGoldPos();
+        if (!canReserve || !gold_pos) return;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
           this.submitAction({
             ReserveCard: {
+              gold_pos,
               tier: tierName,
               slot
             }
@@ -942,13 +971,17 @@ export class GameController {
       onPurchaseReserved: (card) => {
         const slot = this.state.players[0].reserved_cards.findIndex(c => c.id === card.id);
         if (slot >= 0) {
-          this.submitAction({
-            PurchaseCard: {
-              from_reserved: true,
-              tier: card.tier === 3 ? 'Tier3' : (card.tier === 2 ? 'Tier2' : 'Tier1'),
-              slot
-            }
-          });
+          const tierStr = card.tier === 3 ? 'Tier3' : (card.tier === 2 ? 'Tier2' : 'Tier1');
+          const buyActs = this.legalActions.filter(a =>
+            a.category === 'purchase_card' &&
+            a.action.PurchaseCard.from_reserved &&
+            a.action.PurchaseCard.slot === slot
+          );
+          if (buyActs.length === 1) {
+            this.submitAction(buyActs[0].action);
+          } else if (buyActs.length > 1) {
+            this.showPurchasePlanModal(card, buyActs);
+          }
         }
       },
       tokenClickable: isHumanTurn && (
@@ -976,13 +1009,17 @@ export class GameController {
       onPurchaseReserved: (card) => {
         const slot = this.state.players[1].reserved_cards.findIndex(c => c.id === card.id);
         if (slot >= 0) {
-          this.submitAction({
-            PurchaseCard: {
-              from_reserved: true,
-              tier: card.tier === 3 ? 'Tier3' : (card.tier === 2 ? 'Tier2' : 'Tier1'),
-              slot
-            }
-          });
+          const tierStr = card.tier === 3 ? 'Tier3' : (card.tier === 2 ? 'Tier2' : 'Tier1');
+          const buyActs = this.legalActions.filter(a =>
+            a.category === 'purchase_card' &&
+            a.action.PurchaseCard.from_reserved &&
+            a.action.PurchaseCard.slot === slot
+          );
+          if (buyActs.length === 1) {
+            this.submitAction(buyActs[0].action);
+          } else if (buyActs.length > 1) {
+            this.showPurchasePlanModal(card, buyActs);
+          }
         }
       },
       tokenClickable: isHumanTurn && (
@@ -1108,20 +1145,11 @@ export class GameController {
         this.actionBarButtons.appendChild(btnClear);
 
         this.guideText.innerHTML = `${lastAiHint}已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买。`;
+      } else if (this.selectedGoldPos) {
+        this.guideText.innerHTML = `${lastAiHint}【已选定黄金 (${this.selectedGoldPos[0]},${this.selectedGoldPos[1]})】点击金字塔卡牌或牌堆即可预留放入手牌，或点击其他位置切换。`;
       } else {
-        this.guideText.innerHTML = `${lastAiHint}【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或直接点击黄金开启预留流程，或点击金字塔卡牌购买。`;
+        this.guideText.innerHTML = `${lastAiHint}【强制行动】在棋盘上连线点选 1~3 颗非黄金宝石，或点击黄金预留卡牌，或直接点击卡牌购买/预留。`;
       }
-      return;
-    }
-
-    if (phase === 'SelectReserveCard') {
-      this.guideText.innerHTML = `${lastAiHint}【选择预留卡牌】黄金已收入囊中！请在下方金字塔明牌或牌堆顶点击“预留”以锁定手牌。`;
-      return;
-    }
-
-    if (phase.startsWith('Payment')) {
-      this.guideText.innerHTML = `${lastAiHint}【自主支付决策】检测到你有自由黄金可用于替代天然宝石，请在弹出窗口中选择保留颜色或直接确认支付。`;
-      this.showPaymentModal();
       return;
     }
 
@@ -1152,29 +1180,31 @@ export class GameController {
     }
   }
 
-  showPaymentModal() {
-    const paymentActions = this.legalActions.filter(a => a.category === 'pay_gold_for' || a.category === 'confirm_payment');
-    if (paymentActions.length === 0) return;
+  showPurchasePlanModal(card, buyActs) {
+    if (!buyActs || buyActs.length === 0) return;
 
-    this.modalTitle.innerText = '💰 卡牌购买支付决策';
-    this.modalBody.innerText = '检测到你持有自由支配的黄金。你可以使用黄金替代指定天然宝石（从而保留该宝石在手中），或直接确认当前方案：';
+    this.modalTitle.innerText = '💰 卡牌购买支付方案选择';
+    this.modalBody.innerText = '检测到你持有自由黄金，你可以选择默认天然支付，或消耗自由黄金替代以保留指定天然宝石：';
     this.modalOptions.innerHTML = '';
 
-    const goldActions = paymentActions.filter(a => a.category === 'pay_gold_for');
-    goldActions.forEach(act => {
-      const rawColor = act.action.PayGoldFor.gem;
-      const normColor = String(rawColor).toLowerCase();
-      const tokenClass = COLOR_CLASSES[normColor] || `token-${normColor}`;
-      const cnColor = translateColor(normColor);
-
+    buyActs.forEach(act => {
+      const planId = act.action.PurchaseCard.plan_id;
       const btn = document.createElement('div');
       btn.className = 'gem-picker-btn';
-      btn.title = `使用 1 黄金替代并保留 ${cnColor}宝石 (${rawColor})`;
-      btn.innerHTML = `
-        <div class="token ${tokenClass}"></div>
-        <span style="font-size:0.8rem; font-weight:700; color:var(--text-main); margin-top:2px;">保全 ${cnColor}</span>
-        <span style="font-size:0.68rem; color:var(--text-muted);">黄金代付</span>
-      `;
+      btn.style.width = '140px';
+      btn.style.padding = '8px';
+
+      if (planId === 0) {
+        btn.innerHTML = `
+          <span style="font-size:0.85rem; font-weight:700; color:var(--text-main);">默认天然支付</span>
+          <span style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;">保留全部黄金</span>
+        `;
+      } else {
+        btn.innerHTML = `
+          <span style="font-size:0.85rem; font-weight:700; color:var(--accent-gold);">黄金替代 #${planId}</span>
+          <span style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;">消耗自由黄金</span>
+        `;
+      }
       btn.onclick = () => {
         this.clearModal();
         this.submitAction(act.action);
@@ -1182,19 +1212,12 @@ export class GameController {
       this.modalOptions.appendChild(btn);
     });
 
-    const confirmAct = paymentActions.find(a => a.category === 'confirm_payment');
     this.modalFooter.innerHTML = '';
-    if (confirmAct) {
-      const confirmBtn = document.createElement('button');
-      confirmBtn.className = 'action-btn primary';
-      confirmBtn.style.padding = '8px 24px';
-      confirmBtn.innerText = '✔ 确认当前方案并支付';
-      confirmBtn.onclick = () => {
-        this.clearModal();
-        this.submitAction(confirmAct.action);
-      };
-      this.modalFooter.appendChild(confirmBtn);
-    }
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'action-btn secondary';
+    cancelBtn.innerText = '取消';
+    cancelBtn.onclick = () => this.clearModal();
+    this.modalFooter.appendChild(cancelBtn);
 
     this.modalOverlay.style.display = 'flex';
   }

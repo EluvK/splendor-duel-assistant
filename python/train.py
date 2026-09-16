@@ -134,7 +134,7 @@ def train_imitation(args: argparse.Namespace) -> None:
             games_this_shard = min(args.shard_games, args.games - i * args.shard_games)
 
             batch = generate_heuristic_compact_batch(num_games=games_this_shard, start_seed=seed)
-            shard_path = buffer.add_shard(batch, compressed=False)
+            shard_path = buffer.add_shard(batch, compressed=True)
             gen_time = time.time() - t0
 
             print(

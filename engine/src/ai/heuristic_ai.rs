@@ -3,7 +3,7 @@ use rand::prelude::*;
 use crate::game_state::state::GameState;
 use crate::gameplay::rules::RuleEngine;
 use crate::model::action::Action;
-use crate::model::card::{CardAbility, CardTier};
+use crate::model::card::CardAbility;
 use crate::model::token::GemType;
 
 /// 规则启发式智能体 (Heuristic AI)
@@ -62,6 +62,7 @@ impl HeuristicAI {
                 from_reserved,
                 tier,
                 slot,
+                plan_id,
             } => {
                 let card = if *from_reserved {
                     if *slot < p.reserved_cards.len() {
@@ -137,14 +138,30 @@ impl HeuristicAI {
                     score += 5.0;
                 }
 
+                // 支付方案评分：默认方案微加分，花黄金保留珍珠加分
+                if *plan_id == 0 {
+                    score += 2.0;
+                } else if (*plan_id as usize) < crate::gameplay::payment::PAYMENT_PLANS.len() {
+                    let plan = &crate::gameplay::payment::PAYMENT_PLANS[*plan_id as usize];
+                    if plan[GemType::Pearl.index()] > 0 {
+                        score += 15.0;
+                    }
+                }
+
                 score
             }
 
             // -------------------------------------------------------------
-            // 2. 预留卡牌 (在 SelectReserveCard 阶段挑选具体卡牌)
+            // 2. 预留卡牌 (带拿黄金)
             // -------------------------------------------------------------
-            Action::ReserveCard { tier, slot } => {
-                let mut score = 40.0;
+            Action::ReserveCard {
+                gold_pos,
+                tier,
+                slot,
+            } => {
+                let dist_to_center = (gold_pos.0 as isize - 2).abs() + (gold_pos.1 as isize - 2).abs();
+                let pos_bonus = 6.0 - dist_to_center as f32 * 1.5;
+                let mut score = 40.0 + pos_bonus + 20.0;
 
                 if let Some(s) = slot {
                     let t_idx = tier.index();
@@ -318,29 +335,6 @@ impl HeuristicAI {
                 }
                 score
             }
-
-            Action::TakeGoldToken { r, c } => {
-                // 拿黄金作为预留卡牌的强制行动入口：综合评估抢黄金收益、棋盘位置及场上最佳可预留卡牌价值
-                let dist_to_center = (*r as isize - 2).abs() + (*c as isize - 2).abs();
-                let pos_bonus = 6.0 - dist_to_center as f32 * 1.5;
-
-                // 评估场上最佳预留潜能（卡牌价值与卡死手牌惩罚）
-                let reserve_potential = Self::best_reserve_card_potential(state, p);
-
-                // 抢得 1 枚黄金基础收益 (25.0) + 最佳预留牌潜能 + 靠近中心优先
-                25.0 + reserve_potential + pos_bonus
-            }
-
-            Action::ConfirmPayment => 40.0,
-            Action::PayGoldFor { gem } => {
-                let mut score = 35.0;
-                if *gem == GemType::Pearl {
-                    score += 20.0; // 珍珠极度稀缺，强烈倾向花黄金保留珍珠
-                } else if Self::is_gem_needed_for_near_cards(state, p, *gem, 2) {
-                    score += 15.0; // 紧缺宝石倾向保留
-                }
-                score
-            }
         }
     }
 
@@ -367,35 +361,5 @@ impl HeuristicAI {
                     false
                 }
             })
-    }
-
-    /// 评估当前场上最佳可预留卡牌的潜能评分
-    fn best_reserve_card_potential(
-        state: &GameState,
-        p: &crate::game_state::player::PlayerState,
-    ) -> f32 {
-        let mut best = 10.0; // 基础保底（牌堆顶盲抽预期）
-        for tier in CardTier::ALL {
-            let t_idx = tier.index();
-            for c in &state.pyramid[t_idx] {
-                let mut card_val = 15.0;
-                let missing = p.tokens_missing(c);
-                if missing > 5 {
-                    card_val -= (missing - 5) as f32 * 12.0;
-                }
-                if p.reserved_cards.len() >= 1 && missing > 3 {
-                    card_val -= 20.0;
-                }
-                if p.reserved_cards.len() >= 2 && missing > 1 {
-                    card_val -= 40.0;
-                }
-                card_val += c.points as f32 * 10.0;
-                card_val += c.crowns as f32 * 18.0;
-                if card_val > best {
-                    best = card_val;
-                }
-            }
-        }
-        best
     }
 }

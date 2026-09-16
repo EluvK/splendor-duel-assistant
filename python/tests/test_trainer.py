@@ -21,12 +21,12 @@ def test_heuristic_compact_generation():
     batch = generate_heuristic_compact_batch(num_games=5, start_seed=42)
     assert batch.num_samples > 0
     assert batch.obs.shape == (batch.num_samples, SplendorNet.OBS_SIZE)
-    assert batch.mask.shape == (batch.num_samples, 288)
-    assert batch.target_policy.shape == (batch.num_samples, 288)
+    assert batch.mask.shape == (batch.num_samples, SplendorNet.ACTION_SIZE)
+    assert batch.target_policy.shape == (batch.num_samples, SplendorNet.ACTION_SIZE)
     assert batch.action.shape == (batch.num_samples,)
     assert batch.value.shape == (batch.num_samples, 2)
     assert batch.reason.shape == (batch.num_samples, 3)
-    assert (batch.action >= 0).all() and (batch.action < 288).all()
+    assert (batch.action >= 0).all() and (batch.action < SplendorNet.ACTION_SIZE).all()
 
 
 def test_sharded_buffer(tmp_path: Path):

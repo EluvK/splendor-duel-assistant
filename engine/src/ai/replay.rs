@@ -201,8 +201,6 @@ impl From<&GameState> for StateDto {
             TurnPhase::CardAbilitySteal => "CardAbilitySteal".to_string(),
             TurnPhase::SelectRoyalCard => "SelectRoyalCard".to_string(),
             TurnPhase::DiscardTokens => "DiscardTokens".to_string(),
-            TurnPhase::SelectReserveCard => "SelectReserveCard".to_string(),
-            TurnPhase::Payment { .. } => "Payment".to_string(),
             TurnPhase::GameOver(reason) => format!("GameOver({reason:?})"),
         };
 
@@ -506,9 +504,6 @@ pub fn action_category(action: &Action) -> &'static str {
         Action::StealToken { .. } => "steal",
         Action::SelectRoyal { .. } => "royal",
         Action::DiscardToken { .. } => "discard",
-        Action::TakeGoldToken { .. } => "take_gold",
-        Action::ConfirmPayment => "confirm_payment",
-        Action::PayGoldFor { .. } => "pay_gold_for",
     }
 }
 
@@ -524,19 +519,28 @@ pub fn format_action(action: &Action) -> String {
                 .collect();
             format!("Take {} Tokens: {}", count, pts.join(", "))
         }
-        Action::ReserveCard { tier, slot } => match slot {
-            Some(s) => format!("Reserve Tier {tier:?} slot {s}"),
-            None => format!("Reserve Tier {tier:?} from Deck"),
-        },
+        Action::ReserveCard { gold_pos, tier, slot } => {
+            let (gr, gc) = gold_pos;
+            match slot {
+                Some(s) => format!("Reserve Tier {tier:?} slot {s} (gold at ({gr},{gc}))"),
+                None => format!("Reserve Tier {tier:?} from Deck (gold at ({gr},{gc}))"),
+            }
+        }
         Action::PurchaseCard {
             from_reserved,
             tier,
             slot,
+            plan_id,
         } => {
-            if *from_reserved {
-                format!("Purchase Reserved card #{slot}")
+            let plan_str = if *plan_id == 0 {
+                "default pay".to_string()
             } else {
-                format!("Purchase Tier {tier:?} slot {slot}")
+                format!("plan #{plan_id}")
+            };
+            if *from_reserved {
+                format!("Purchase Reserved card #{slot} [{plan_str}]")
+            } else {
+                format!("Purchase Tier {tier:?} slot {slot} [{plan_str}]")
             }
         }
         Action::AssignJokerColor { color } => format!("Joker attach to {color:?}"),
@@ -544,8 +548,5 @@ pub fn format_action(action: &Action) -> String {
         Action::StealToken { gem } => format!("Steal {gem:?} from Opponent"),
         Action::SelectRoyal { royal_id } => format!("Claim Royal Card #{royal_id}"),
         Action::DiscardToken { gem } => format!("Discard {gem:?}"),
-        Action::TakeGoldToken { r, c } => format!("Take Gold token at ({r}, {c})"),
-        Action::ConfirmPayment => "Confirm Payment".to_string(),
-        Action::PayGoldFor { gem } => format!("Use Gold to Preserve {gem:?}"),
     }
 }

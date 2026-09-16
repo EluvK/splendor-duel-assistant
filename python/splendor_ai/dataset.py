@@ -74,8 +74,8 @@ class CompactBatch:
     def num_samples(self) -> int:
         return len(self.obs)
 
-    def save_npz(self, path: Path, compressed: bool = False) -> None:
-        """持久化保存为分片文件 (默认未压缩以取得最大读写吞吐)."""
+    def save_npz(self, path: Path, compressed: bool = True) -> None:
+        """持久化保存为分片文件 (默认启用压缩，极大降低稀疏动作空间下的磁盘占用)."""
         path.parent.mkdir(parents=True, exist_ok=True)
         save_fn = np.savez_compressed if compressed else np.savez
         save_fn(
@@ -263,7 +263,7 @@ class ShardedBuffer:
     def refresh(self) -> None:
         self.shard_files: List[Path] = sorted(list(self.shard_dir.glob("shard_*.npz")))
 
-    def add_shard(self, batch: CompactBatch, compressed: bool = False) -> Path:
+    def add_shard(self, batch: CompactBatch, compressed: bool = True) -> Path:
         """保存新分片到磁盘."""
         shard_idx = len(self.shard_files) + 1
         path = self.shard_dir / f"shard_{shard_idx:05d}.npz"

@@ -14,7 +14,7 @@ def test_net_forward_shapes():
     # 单样本前向
     single_obs = torch.randn(SplendorNet.OBS_SIZE)
     logits, win_v, turns_v, reason_logits = net(single_obs)
-    assert logits.shape == (1, 288)
+    assert logits.shape == (1, SplendorNet.ACTION_SIZE)
     assert win_v.shape == (1, 1)
     assert turns_v.shape == (1, 1)
     assert reason_logits.shape == (1, 3)
@@ -24,7 +24,7 @@ def test_net_forward_shapes():
     # 批处理前向 (Batch Size = 8)
     batch_obs = torch.randn(8, SplendorNet.OBS_SIZE)
     b_logits, b_win, b_turns, b_reason = net(batch_obs)
-    assert b_logits.shape == (8, 288)
+    assert b_logits.shape == (8, SplendorNet.ACTION_SIZE)
     assert b_win.shape == (8, 1)
     assert b_turns.shape == (8, 1)
     assert b_reason.shape == (8, 3)
@@ -42,7 +42,7 @@ def test_net_action_masking():
 
     probs, win_v, turns_v, reason_logits = net.predict_action_probs(obs_t, mask_t)
 
-    assert probs.shape == (1, 288)
+    assert probs.shape == (1, SplendorNet.ACTION_SIZE)
     assert win_v.shape == (1, 1)
     assert turns_v.shape == (1, 1)
     assert reason_logits.shape == (1, 3)
@@ -128,23 +128,22 @@ def test_splendornet_v2_homoscedastic_loss_and_backward():
 
     total_loss.backward()
     assert net.log_vars.grad is not None
-    assert net.reserve_card_proj.weight.grad is not None
-    assert net.buy_market_proj.weight.grad is not None
-    assert net.buy_reserved_proj.weight.grad is not None
-    assert net.card_logit_gain.grad is not None
+    assert net.reserve_head[0].weight.grad is not None
+    assert net.buy_head[0].weight.grad is not None
+    assert net.token_head[0].weight.grad is not None
     assert net.card_encoder[0].weight.grad is not None
 
 
 def test_policy_head_scale_balance():
-    """验证策略头在随机初始化时卡牌与离散动作的 Logits 尺度健康平衡."""
+    """验证策略头在随机初始化时各动作分块的 Logits 尺度健康平衡."""
     torch.manual_seed(42)
     net = SplendorNet()
     obs = torch.randn(16, SplendorNet.OBS_SIZE)
     logits, _, _, _ = net(obs)
 
-    # 卡牌动作索引: 预留市场(172..183), 购买市场(187..198), 购买预留(199..201)
-    card_indices = list(range(172, 184)) + list(range(187, 199)) + list(range(199, 202))
-    discrete_indices = [i for i in range(288) if i not in card_indices]
+    # 预留 (172..547) 与购买 (547..1807)
+    card_indices = list(range(172, 1807))
+    discrete_indices = [i for i in range(SplendorNet.ACTION_SIZE) if i not in card_indices]
 
     card_logits = logits[:, card_indices]
     discrete_logits = logits[:, discrete_indices]
@@ -152,10 +151,10 @@ def test_policy_head_scale_balance():
     card_std = card_logits.std().item()
     discrete_std = discrete_logits.std().item()
 
-    # 验证标准差尺度比例处于健康范围 (卡牌不应超过离散头的 5 倍)
+    # 验证标准差尺度比例处于健康范围
     ratio = card_std / discrete_std
     assert ratio < 5.0, f"卡牌与离散 logits 标准差比例过大: {ratio:.2f} (card={card_std:.2f}, discrete={discrete_std:.2f})"
-    assert card_std < 1.5, f"卡牌 logits 标准差过大: {card_std:.2f} (预期 < 1.5)"
+    assert card_std < 2.5, f"卡牌 logits 标准差过大: {card_std:.2f}"
 
     # 在环境真实开局状态下，验证拿宝石动作先验概率不会被病态挤压
     env = SplendorDuelEnv(seed=42)

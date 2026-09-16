@@ -20,19 +20,21 @@
    - 双方博弈差值采用以 0.0 为中心的自然对称映射 `[-1.0, 1.0]`（正数代表领先，负数代表落后，0.0 严格代表平局），契合现代神经网络初始化与激活函数特性。
 6. **POMDP 完备信息集与暗牌掩蔽**：
    - 针对对手预留卡，严格区分“公开明牌预留”与“牌堆顶盲抽暗牌”。引入显式 `is_revealed` 标志，暗牌仅保留公开可见的等阶（Tier）并掩蔽所有私有属性，杜绝信息泄露的同时使网络具备对暗牌潜在威胁的隐式建模能力。
+7. **单步原子化决策与 MCTS 树深度优化**：
+   - 移除过渡性的微动作阶段（`SelectReserveCard` 与 `Payment`）。预留卡牌（拿黄金 + 选卡）与购买卡牌（选卡 + 84 种静态支付方案）均在 `MandatoryAction` 单步内原子化完成，避免树搜索深度膨胀与过渡状态价值评估噪音。
 
 ---
 
-## 二、状态特征张量布局 (Total: 987 Float32)
+## 二、状态特征张量布局 (Total: 969 Float32)
 
-全局状态由 5 大特征分块组成，切片严格采用半开区间 `[start, end)`，展平总维度为 **987 维**：
+全局状态由 5 大特征分块组成，切片严格采用半开区间 `[start, end)`，展平总维度为 **969 维**：
 
 ```
 [0, 225)    分块 1: 5×5 棋盘空间 (9 通道 × 25 格 = 225 维)
 [225, 657)  分块 2: 金字塔市场可见卡牌 (12 槽位 × 36 维 = 432 维)
 [657, 661)  分块 3: 场上王室卡 (4 维布尔向量)
 [661, 925)  分块 4: 双方玩家状态仪表板 (2 玩家 × 132 维 = 264 维)
-[925, 987)  分块 5: 全局环境、博弈对称差值与决策上下文 (62 维)
+[925, 969)  分块 5: 全局环境、博弈对称差值与决策上下文 (44 维)
 ```
 
 ---
@@ -82,7 +84,7 @@
 - `[2]`: Royal ID 2 (2分 + 额外回合) 是否在场未被认领 (1.0 或 0.0)
 - `[3]`: Royal ID 3 (3分 + 无能力) 是否在场未被认领 (1.0 或 0.0)
 
-与动作空间 `SelectRoyal[0..3]`（动作 ID 239..242）严格 1:1 绝对对齐。
+与动作空间 `SelectRoyal[0..3]`（动作 ID 1843..1846）严格 1:1 绝对对齐。
 
 ---
 
@@ -109,70 +111,77 @@
     - `[0] present = 1.0`
     - `[1] is_revealed = 0.0`
     - `[2..5) tier = OneHot(tier)` (来源牌堆等阶公开可见)
-    - `[5..36)` 其余所有私密属性（点数、皇冠、费用、颜色、技能、支付能力与缺口）严格填 `0.0` 掩蔽，杜绝信息泄露。
+    - `[5..36)` 其余所有私密属性严格填 `0.0` 掩蔽。
 
 ---
 
-### 5. 全局环境、博弈对称差值与决策上下文 (62 维: `[925, 987)`)
-- `[0..9)`: 当前阶段 `TurnPhase` (9-way One-Hot: OptionalActions, MandatoryAction, SelectReserveCard, Payment, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens；游戏已终局 GameOver 时模型无需决策，全为 0.0)
-- `[9]`: `privilege_pool / 3.0`
-- `[10]`: `bag_total_count / 25.0`
-- `[11..18)`: 布袋中 7 种标记各自具体剩余数量 (W/4, B/4, G/4, R/4, K/4, Pearl/2, Gold/3)
-- `[18]`: 棋盘剩余标记数 `/ 25.0`
-- `[19]`: 全局回合数归一化 `turn_number / 80.0`
-- `[20]`: 额外回合标志位 `extra_turn_granted` (1.0 或 0.0)
-- `[21..24)`: 3 个牌堆剩余比例 `[deck1/30, deck2/24, deck3/13]`
-- `[24..28)`: **双方胜负博弈差值对称映射至 `[-1.0, 1.0]` (4 维)**：
+### 5. 全局环境、博弈对称差值与决策上下文 (44 维: `[925, 969)`)
+- `[0..7)`: 当前阶段 `TurnPhase` (7-way One-Hot: OptionalActions, MandatoryAction, CardAbilityJoker, CardAbilitySameColor, CardAbilitySteal, SelectRoyalCard, DiscardTokens；GameOver 时全为 0.0)
+- `[7]`: `privilege_pool / 3.0`
+- `[8]`: `bag_total_count / 25.0`
+- `[9..16)`: 布袋中 7 种标记各自具体剩余数量 (W/4, B/4, G/4, R/4, K/4, Pearl/2, Gold/3)
+- `[16]`: 棋盘剩余标记数 `/ 25.0`
+- `[17]`: 全局回合数归一化 `turn_number / 80.0`
+- `[18]`: 额外回合标志位 `extra_turn_granted` (1.0 或 0.0)
+- `[19..22)`: 3 个牌堆剩余比例 `[deck1/30, deck2/24, deck3/13]`
+- `[22..26)`: **双方胜负博弈差值对称映射至 `[-1.0, 1.0]` (4 维)**：
   - 声望分差：`(cp.total_points - op.total_points) / 25.0`
   - 皇冠数差：`(cp.total_crowns - op.total_crowns) / 12.0`
   - 最大单色分差：`(cp.max_color - op.max_color) / 12.0`
   - 特权卷轴差：`(cp.privileges - op.privileges) / 3.0`
   *(0.0 严格代表平局，正数代表我方领先，负数代表我方落后)*
-- `[28..30)`: 双方手牌持币余量 `max(0, 10 - total) / 10.0` (我方, 敌方)
-- `[30..32)`: 双方手牌持币超限数量 `max(0, total - 10) / 5.0` (我方, 敌方)
-- `[32..38)`: 双方三项胜利距离 (Gap to Win: 分数差/20, 皇冠差/10, 单色差/10) (6 维)
-- `[38]`: 本回合是否已补充棋盘 `replenished_this_turn` (1.0 或 0.0)
-- `[39]`: 本回合已消耗特权数 `privileges_used_this_turn / 3.0`
-- `[40..62)`: **Pending Decision Context (22 维显式决策上下文，恢复微动作 Markov 性质)**：
-  - `[40..55)` (15 维): `pending_purchase_source` (15-way One-Hot: 槽位 0..11 对应金字塔 12 张明牌，槽位 12..14 对应我方 3 个手牌槽位；非 Payment 阶段全为 0.0)
-  - `[55..61)` (6 维): `pending_resource` (6-way One-Hot: W, B, G, R, K, Pearl；在 `CardAbilitySameColor` 标定技能同色宝石，在 `Payment` 阶段标定最近一次分配自由黄金替代的宝石类型，初始尚未分配自由黄金时保持全 0.0)
-  - `[61]`: `pending_free_gold` (`free_gold / 3.0`，标定当前剩余可自主支配的自由黄金数；非 Payment 阶段为 0.0)
+- `[26..28)`: 双方手牌持币余量 `max(0, 10 - total) / 10.0` (我方, 敌方)
+- `[28..30)`: 双方手牌持币超限数量 `max(0, total - 10) / 5.0` (我方, 敌方)
+- `[30..36)`: 双方三项胜利距离 (Gap to Win: 分数差/20, 皇冠差/10, 单色差/10) (6 维)
+- `[36]`: 本回合是否已补充棋盘 `replenished_this_turn` (1.0 或 0.0)
+- `[37]`: 本回合已消耗特权数 `privileges_used_this_turn / 3.0`
+- `[38..44)`: `pending_resource` (6-way One-Hot: W, B, G, R, K, Pearl；在 `CardAbilitySameColor` 标定技能同色宝石，其余阶段为全 0.0)
 
 ---
 
-## 三、动作空间 (Action Space) 离散编码 (288 维)
+## 三、动作空间 (Action Space) 离散编码 (1856 维)
 
 ```
-ID 范围         动作语义                                  合法触发阶段
-----------------------------------------------------------------------------------------------------
-[0]             SkipOptional (跳过可选行动)               OptionalActions
-[1..=25]        UsePrivilege (棋盘 25 个坐标)             OptionalActions
-[26]            ReplenishBoard (补充棋盘)                 OptionalActions / 极端死锁保护
-[27..=51]       TakeTokens: 单个标记 (25 个坐标)          MandatoryAction
-[52..=171]      TakeTokens: 直线相邻 2~3 连线 (120 组合)  MandatoryAction
-[172..=183]     ReserveCard: 金字塔明牌 (12 个槽位)       SelectReserveCard
-[184..=186]     ReserveCard: 牌堆顶盲抽 (3 个等级)        SelectReserveCard
-[187..=198]     PurchaseCard: 金字塔明牌 (12 个槽位)      MandatoryAction
-[199..=201]     PurchaseCard: 自己预留卡 (3 个槽位)       MandatoryAction
-[202..=206]     AssignJokerColor: 变色卡附着颜色 (5 种)   CardAbilityJoker
-[207..=231]     TakeSameColorToken: 盘上取同色 (25 坐标)  CardAbilitySameColor
-[232..=238]     StealToken: 偷对手标记 (7 类标记)         CardAbilitySteal
-[239..=242]     SelectRoyal: 选择王室卡 (4 个槽位)        SelectRoyalCard
-[243..=249]     DiscardToken: 超限弃牌 (7 类标记)         DiscardTokens
-[250..=274]     TakeGoldToken: 拿黄金预留卡牌入口 (25 坐标) MandatoryAction
-[275]           ConfirmPayment: 确认当前支付方案并结算    Payment
-[276..=281]     PayGoldFor: 消耗黄金替代指定颜色 (6 色)   Payment (W, B, G, R, K, Pearl)
-[282..=287]     预留对齐空间 (6 维)                       -
-----------------------------------------------------------------------------------------------------
-总动作空间大小 ACTION_SIZE = 288
+ID 范围           维度   动作语义                                    合法触发阶段
+------------------------------------------------------------------------------------------------------------------------
+[0]               1      SkipOptional (跳过可选行动)                 OptionalActions
+[1..=25]          25     UsePrivilege (棋盘 25 个坐标)               OptionalActions
+[26]              1      ReplenishBoard (补充棋盘)                   OptionalActions / 极端死锁保护
+[27..=51]         25     TakeTokens: 单个标记 (25 个坐标)            MandatoryAction
+[52..=171]        120    TakeTokens: 直线相邻 2~3 连线 (120 组合)    MandatoryAction
+[172..=546]       375    ReserveCard: 拿黄金 + 预留卡牌              MandatoryAction
+                         (25 黄金坐标 × 15 预留目标: 12明牌 + 3盲抽)
+[547..=1806]      1260   PurchaseCard: 购买卡牌 + 84种支付方案       MandatoryAction
+                         (15 卡牌槽位 × 84 种静态支付方案)
+[1807..=1811]     5      AssignJokerColor: 变色卡附着颜色 (5 基础色) CardAbilityJoker
+[1812..=1836]     25     TakeSameColorToken: 盘上取同色 (25 坐标)    CardAbilitySameColor
+[1837..=1842]     6      StealToken: 偷对手标记 (5 基础色 + 珍珠)    CardAbilitySteal (黄金不可偷)
+[1843..=1846]     4      SelectRoyal: 选择王室卡 (4 个槽位)          SelectRoyalCard
+[1847..=1853]     7      DiscardToken: 超限弃牌 (7 类标记)           DiscardTokens
+[1854..=1855]     2      预留对齐填充位                              -
+------------------------------------------------------------------------------------------------------------------------
+总动作空间大小 ACTION_SIZE = 1856 (严格对齐 64 的整数倍: 29 × 64)
 ```
+
+### 84 种静态支付方案 (Payment Plan) 说明
+玩家购买卡牌时，基础成本扣除已拥有 Bonus 后得到净需求，不足的天然宝石由黄金强制补齐（`mandatory_gold`）。
+若玩家持有剩余自由黄金（最多 3 枚），可自选替代天然宝石保留在手。
+6 种天然资源分配最多 3 枚自由黄金的所有多重组合恰好 $\binom{6+3}{3} = 84$ 种：
+- **Plan 0**：`[0, 0, 0, 0, 0, 0]`（默认方案：消耗 0 自由黄金，纯天然支付）
+- **Plan 1..6**：消耗 1 自由黄金（分别替代 W, B, G, R, K, Pearl）
+- **Plan 7..27**：消耗 2 自由黄金（21 种双颜色组合）
+- **Plan 28..83**：消耗 3 自由黄金（56 种三颜色组合）
+任何买得起的卡牌，Plan 0 必定合法；Plan 1..83 仅当自由黄金与可替代宝石满足物理条件时合法。
 
 ---
 
-## 四、神经网络架构与卡牌实体池设计
+## 四、神经网络架构与策略头设计
 
-在 `SplendorNet` 架构中，卡牌实体池采用 **18 实体全场共享机制**：
-- 18 个实体包含：`12 市场明牌 + 3 我方手牌 + 3 敌方手牌`。
-- 18 个卡牌向量全部通过共享参数的 `CardEncoder` 映射为嵌入向量，并添加 `slot_type_emb` 槽位偏置，经由 `SetSelfAttention` 进行无偏全场注意力交互。
-- 对手暗牌凭借 `is_revealed=0.0` 与 `tier` 嵌入，参与全场自注意力与全局卡牌池化，使网络天然感知对手暗牌的潜在威慑力。
-- 动作打分器保持 288 维动作空间与双线性点积机制，网络兼顾表示充分性、同构性与高计算吞吐。
+在 `SplendorNet` 架构中：
+- 卡牌实体池采用 **18 实体全场共享自注意力机制**（12 市场明牌 + 3 我方手牌 + 3 敌方手牌）。
+- 策略头采用结构化分块打分器：
+  - `token_head`: 172 维 (可选动作、连线取标记)
+  - `reserve_head`: 375 维 (棋盘黄金坐标 × 预留目标)
+  - `buy_head`: 1260 维 (卡牌槽位 × 支付方案)
+  - `ability_head`: 49 维 (连锁能力、王室赞助与超限弃牌)
+  总计输出 1856 维动作 Logits，与离散动作空间 1:1 精确映射。

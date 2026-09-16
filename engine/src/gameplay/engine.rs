@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use super::payment::{check_payment_divergence, compute_card_payment, compute_custom_payment};
+use super::payment::compute_payment_with_plan;
 use super::scoring::check_victory;
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
@@ -22,15 +22,17 @@ impl GameEngine {
             Action::TakeTokens { count, positions } => {
                 Self::step_take_tokens(state, *count, *positions)
             }
-            Action::ReserveCard { tier, slot } => Self::step_reserve_card(state, *tier, *slot),
-            Action::TakeGoldToken { r, c } => Self::step_take_gold_token(state, *r, *c),
+            Action::ReserveCard {
+                gold_pos,
+                tier,
+                slot,
+            } => Self::step_reserve_card(state, *gold_pos, *tier, *slot),
             Action::PurchaseCard {
                 from_reserved,
                 tier,
                 slot,
-            } => Self::step_purchase_card(state, *from_reserved, *tier, *slot),
-            Action::ConfirmPayment => Self::step_confirm_payment(state),
-            Action::PayGoldFor { gem } => Self::step_pay_gold_for(state, *gem),
+                plan_id,
+            } => Self::step_purchase_card(state, *from_reserved, *tier, *slot, *plan_id),
             Action::AssignJokerColor { color } => Self::step_assign_joker(state, *color),
             Action::TakeSameColorToken { r, c } => Self::step_take_same_color(state, *r, *c),
             Action::StealToken { gem } => Self::step_steal_token(state, *gem),
@@ -156,7 +158,12 @@ impl GameEngine {
         Ok(())
     }
 
-    fn step_take_gold_token(state: &mut GameState, r: usize, c: usize) -> Result<(), String> {
+    fn step_reserve_card(
+        state: &mut GameState,
+        gold_pos: (usize, usize),
+        tier: CardTier,
+        slot: Option<usize>,
+    ) -> Result<(), String> {
         if state.phase != TurnPhase::MandatoryAction {
             return Err("Not in MandatoryAction phase".into());
         }
@@ -165,31 +172,15 @@ impl GameEngine {
             return Err("Reserve limit reached (max 3)".into());
         }
 
-        let gem = state.board.get(r, c).ok_or("No token at position")?;
+        let (r, c) = gold_pos;
+        let gem = state.board.get(r, c).ok_or("No token at gold position")?;
         if !gem.is_gold() {
             return Err("Selected token is not gold".into());
         }
 
+        // 拿走黄金
         state.board.take(r, c);
         state.players[current_player].tokens.add(GemType::Gold, 1);
-
-        // 拿取黄金后，进入选择预留卡牌阶段（金字塔市场牌尚未动，牌堆顶也未翻开）
-        state.phase = TurnPhase::SelectReserveCard;
-        Ok(())
-    }
-
-    fn step_reserve_card(
-        state: &mut GameState,
-        tier: CardTier,
-        slot: Option<usize>,
-    ) -> Result<(), String> {
-        if state.phase != TurnPhase::SelectReserveCard {
-            return Err("Not in SelectReserveCard phase".into());
-        }
-        let current_player = state.current_player;
-        if state.players[current_player].reserved_cards.len() >= 3 {
-            return Err("Reserve limit reached (max 3)".into());
-        }
 
         // 预留卡牌
         let (card, is_public) = match slot {
@@ -226,6 +217,7 @@ impl GameEngine {
         from_reserved: bool,
         tier: CardTier,
         slot: usize,
+        plan_id: u8,
     ) -> Result<(), String> {
         if state.phase != TurnPhase::MandatoryAction {
             return Err("Not in MandatoryAction phase".into());
@@ -249,119 +241,10 @@ impl GameEngine {
             return Err("Cannot purchase Joker without existing bonuses".into());
         }
 
-        let info = check_payment_divergence(&state.players[current_player], &card)
-            .ok_or("Cannot afford card")?;
-
-        // 若不存在战略支付分歧（无自由黄金或无可替代天然宝石），直接采用默认方案 0 步极速扣款结算
-        if !info.has_divergence {
-            let payment = compute_card_payment(&state.players[current_player], &card)
-                .ok_or("Payment calculation failed")?;
-            return Self::finalize_card_purchase(state, card, from_reserved, tier, slot, payment);
-        }
-
-        // 存在自由黄金与可替代宝石分歧，转入 Payment 阶段供玩家自主决策
-        state.phase = TurnPhase::Payment {
-            card,
-            from_reserved,
-            tier,
-            slot,
-            free_gold: info.free_gold,
-            last_color_idx: 0,
-            allocated_gold: [0; 6],
-        };
-
-        Ok(())
-    }
-
-    fn step_confirm_payment(state: &mut GameState) -> Result<(), String> {
-        let (card, from_reserved, tier, slot, allocated_gold) = match &state.phase {
-            TurnPhase::Payment {
-                card,
-                from_reserved,
-                tier,
-                slot,
-                allocated_gold,
-                ..
-            } => (*card, *from_reserved, *tier, *slot, *allocated_gold),
-            _ => return Err("Not in Payment phase".into()),
-        };
-
-        let current_player = state.current_player;
-        let payment = compute_custom_payment(&state.players[current_player], &card, &allocated_gold)
-            .ok_or("Invalid custom payment configuration")?;
+        let payment = compute_payment_with_plan(&state.players[current_player], &card, plan_id)
+            .ok_or("Invalid payment plan or cannot afford card")?;
 
         Self::finalize_card_purchase(state, card, from_reserved, tier, slot, payment)
-    }
-
-    fn step_pay_gold_for(state: &mut GameState, gem: GemType) -> Result<(), String> {
-        let (card, from_reserved, tier, slot, mut free_gold, mut last_color_idx, mut allocated_gold) =
-            match &state.phase {
-                TurnPhase::Payment {
-                    card,
-                    from_reserved,
-                    tier,
-                    slot,
-                    free_gold,
-                    last_color_idx,
-                    allocated_gold,
-                } => (
-                    *card,
-                    *from_reserved,
-                    *tier,
-                    *slot,
-                    *free_gold,
-                    *last_color_idx,
-                    *allocated_gold,
-                ),
-                _ => return Err("Not in Payment phase".into()),
-            };
-
-        if free_gold == 0 {
-            return Err("No free gold available".into());
-        }
-
-        let idx = gem.index();
-        if idx >= 6 {
-            return Err("Cannot replace gold with gold".into());
-        }
-        if idx < last_color_idx {
-            return Err("Colors must be selected in non-decreasing order".into());
-        }
-
-        let current_player = state.current_player;
-        let info = check_payment_divergence(&state.players[current_player], &card)
-            .ok_or("Cannot afford card")?;
-
-        if allocated_gold[idx] >= info.max_replaceable[idx] {
-            return Err("No more natural tokens of this color can be replaced".into());
-        }
-
-        allocated_gold[idx] += 1;
-        free_gold -= 1;
-        last_color_idx = idx;
-
-        // 检查自动短路退出条件：
-        // 1. 自由黄金耗尽 (free_gold == 0)；
-        // 2. 或在单向保序约束下，后续区间内已无可替代天然宝石 ((last_color_idx..6).all(...))
-        let no_more_eligible =
-            (last_color_idx..6).all(|i| allocated_gold[i] >= info.max_replaceable[i]);
-        if free_gold == 0 || no_more_eligible {
-            let payment =
-                compute_custom_payment(&state.players[current_player], &card, &allocated_gold)
-                    .ok_or("Auto-settle payment calculation failed")?;
-            Self::finalize_card_purchase(state, card, from_reserved, tier, slot, payment)
-        } else {
-            state.phase = TurnPhase::Payment {
-                card,
-                from_reserved,
-                tier,
-                slot,
-                free_gold,
-                last_color_idx,
-                allocated_gold,
-            };
-            Ok(())
-        }
     }
 
     /// 统一卡牌购买结算与进场结算

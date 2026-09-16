@@ -77,9 +77,9 @@ class SplendorNet(nn.Module):
     RESERVED_CARDS_SLOTS = 3
     PLAYER_BASE_DIM = 24
     PLAYER_DASHBOARD_DIM = PLAYER_BASE_DIM + RESERVED_CARDS_SLOTS * CARD_FEAT_DIM  # 24 + 3 * 36 = 132
-    GLOBAL_CTX_DIM = 62                        # 40 基础环境与差值 + 22 维 Pending Decision Context
-    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + GLOBAL_CTX_DIM  # 987
-    ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE  # 288
+    GLOBAL_CTX_DIM = 44                        # 38 基础环境与差值 + 6 维 pending_resource
+    OBS_SIZE = 225 + 12 * CARD_FEAT_DIM + 4 + 2 * PLAYER_DASHBOARD_DIM + GLOBAL_CTX_DIM  # 969
+    ACTION_SIZE = SplendorDuelEnv.ACTION_SIZE  # 1856
 
     def __init__(
         self,
@@ -151,21 +151,29 @@ class SplendorNet(nn.Module):
         )
 
         # 5. 结构化动作打分器 (Structured Policy Head)
-        # (A) 卡牌实体打分投影: 通过双线性点积与卡牌 Token 交互
-        self.reserve_card_proj = nn.Linear(fusion_hidden, card_embed_dim)
-        self.buy_market_proj = nn.Linear(fusion_hidden, card_embed_dim)
-        self.buy_reserved_proj = nn.Linear(fusion_hidden, card_embed_dim)
-        # 卡牌策略打分缩放因子 1 / sqrt(d) 与可学习增益参数，平衡双线性点积与 MLP 离散头的 Logits 尺度
-        self.card_logit_scale = card_embed_dim ** -0.5
-        self.card_logit_gain = nn.Parameter(torch.ones(1))
-
-        # (B) 其余离散与连线动作打分头 (共 261 维):
-        # 0..171 (172维: 特权、拿标记、连线), 184..186 (3维: 盲抽), 202..287 (86维: Joker、弃牌、拿黄金等)
-        self.num_discrete_actions = self.ACTION_SIZE - 27  # 288 - 27 = 261
-        self.discrete_head = nn.Sequential(
+        # [0..171] 172维: 特权、拿标记、连线动作打分头
+        self.token_head = nn.Sequential(
             nn.Linear(fusion_hidden, fusion_hidden),
             nn.ReLU(),
-            nn.Linear(fusion_hidden, self.num_discrete_actions),
+            nn.Linear(fusion_hidden, 172),
+        )
+        # [172..546] 375维: 预留卡牌动作头 (25 黄金坐标 x 15 目标)
+        self.reserve_head = nn.Sequential(
+            nn.Linear(fusion_hidden, fusion_hidden),
+            nn.ReLU(),
+            nn.Linear(fusion_hidden, 375),
+        )
+        # [547..1806] 1260维: 购买卡牌动作头 (15 槽位 x 84 支付方案)
+        self.buy_head = nn.Sequential(
+            nn.Linear(fusion_hidden, fusion_hidden),
+            nn.ReLU(),
+            nn.Linear(fusion_hidden, 1260),
+        )
+        # [1807..1855] 49维: Joker、同色、偷标记、王室、弃牌等后续能力动作头
+        self.ability_head = nn.Sequential(
+            nn.Linear(fusion_hidden, fusion_hidden),
+            nn.ReLU(),
+            nn.Linear(fusion_hidden, 49),
         )
 
         # 6. 多任务评估头
@@ -278,33 +286,18 @@ class SplendorNet(nn.Module):
         fused = self.fusion(torch.cat([x_board, x_card, x_context], dim=-1))  # [B, 256]
 
         # 6. 结构化动作打分
-        card_scale = self.card_logit_scale * self.card_logit_gain
+        token_logits = self.token_head(fused)        # [B, 172]
+        reserve_logits = self.reserve_head(fused)    # [B, 375]
+        buy_logits = self.buy_head(fused)            # [B, 1260]
+        ability_logits = self.ability_head(fused)    # [B, 49]
 
-        # (A) 卡牌相关操作 (应用缩放 1 / sqrt(d) 与可学习增益)
-        # 预留市场卡 12 张: [172..183]
-        q_reserve = self.reserve_card_proj(fused)  # [B, 128]
-        logits_reserve = torch.einsum("bd,bnd->bn", q_reserve, card_tokens[:, :12]) * card_scale  # [B, 12]
-
-        # 购买市场卡 12 张: [187..198]
-        q_buy_market = self.buy_market_proj(fused)  # [B, 128]
-        logits_buy_market = torch.einsum("bd,bnd->bn", q_buy_market, card_tokens[:, :12]) * card_scale  # [B, 12]
-
-        # 购买预留卡 3 张: [199..201]
-        q_buy_reserved = self.buy_reserved_proj(fused)  # [B, 128]
-        logits_buy_reserved = torch.einsum("bd,bnd->bn", q_buy_reserved, card_tokens[:, 12:15]) * card_scale  # [B, 3]
-
-        # (B) 其余离散动作 (261 维)
-        discrete_logits = self.discrete_head(fused)  # [B, 261]
-
-        # (C) 拼装回完整的 288 维动作空间 (严格保持向后兼容性)
+        # 拼装回完整的 1856 维动作空间
         assembled_logits = torch.cat(
             [
-                discrete_logits[:, :172],       # [0..171]: Skip, Privilege, Replenish, TakeTokens (172维)
-                logits_reserve,                 # [172..183]: Reserve Market (12维)
-                discrete_logits[:, 172:175],    # [184..186]: Reserve Blind Tier 1/2/3 (3维)
-                logits_buy_market,              # [187..198]: Purchase Market (12维)
-                logits_buy_reserved,            # [199..201]: Purchase Reserved (3维)
-                discrete_logits[:, 175:],       # [202..287]: Joker, Steal, Royal, Discard, Gold (86维)
+                token_logits,
+                reserve_logits,
+                buy_logits,
+                ability_logits,
             ],
             dim=-1,
         )
