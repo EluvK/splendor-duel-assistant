@@ -71,10 +71,17 @@
   <!-- 全局对局胜率与局势天平折线走势图 -->
   <div class="eval-chart-container" id="evalChartContainer">
     <div class="eval-chart-header">
-      <span>📈 对局局势与胜率预期走势图 (点击曲线上任意点可直接跳转至该步骤)</span>
-      <span id="evalChartLegend" style="font-size:0.72rem; font-weight:normal; color:var(--text-muted);">
-        <span style="color:#38bdf8; font-weight:700;">■ P0 优势区 (上)</span> · <span style="color:#f472b6; font-weight:700;">■ P1 优势区 (下)</span> · 当前步: <b id="chartCurrentStepBadge" style="color:var(--accent-gold);">#0</b>
-      </span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span>🧠 神经网络胜率走势图</span>
+        <span style="font-size:0.68rem; color:var(--text-muted); font-weight:normal;">(基于深度学习 Policy-Value 纯胜率预期 · 点击任意点跳转)</span>
+      </div>
+      <div id="evalChartLegend" style="font-size:0.72rem; font-weight:normal; color:var(--text-muted); display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span id="chartLegendLines">
+          <span style="color:#38bdf8; font-weight:700;">■ P0 神经网络 (天蓝)</span> · <span style="color:#f472b6; font-weight:700;">■ P1 神经网络 (粉红)</span>
+        </span>
+        <span style="color:#475569;">|</span>
+        <span id="chartCurrentStepBadge" style="color:var(--accent-gold); font-weight:700;">当前步: #0</span>
+      </div>
     </div>
     <div class="eval-chart-canvas-wrap">
       <canvas id="evalChartCanvas" class="eval-chart-canvas"></canvas>
@@ -313,6 +320,7 @@
       renderRoyalsPool,
       renderPlayerDashboard
     } from './js/shared-components.js';
+    import { formatFriendlyAction } from './js/game-controller.js';
 
     let currentStep = 0;
     let totalSteps = 0;
@@ -529,7 +537,26 @@
       renderEvaluationChart(historySteps, currentStep);
     }
 
-    /* 绘制胜率走势天平折线图 */
+    /* 区分单步决策来源类型 */
+    function getStepSourceType(s) {
+      if (!s || s.score === undefined || s.score === null) return 'human';
+      const aiType = (s.ai_type || '').toLowerCase();
+      if (aiType.includes('neural') && !aiType.includes('fallback')) {
+        return 'neural';
+      }
+      if (aiType.includes('heuristic') || aiType.includes('fallback')) {
+        return 'heuristic';
+      }
+      if (aiType === 'random') {
+        return 'random';
+      }
+      return 'human';
+    }
+
+    /* 绘制纯粹的神经网络胜率走势折线图（P0 蓝线 / P1 粉红线，启发式与人类不绘制无意义胜率） */
+    let hoveredChartStep = null;
+    let allChartStepCoords = [];
+
     function renderEvaluationChart(steps, currentIdx) {
       const canvas = document.getElementById('evalChartCanvas');
       if (!canvas || !steps || steps.length === 0) return;
@@ -544,7 +571,10 @@
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, w, h);
 
-      // 50% 均势虚线
+      const total = steps.length;
+      if (total <= 1) return;
+
+      // 50% 均势基准线
       const midY = h / 2;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
       ctx.lineWidth = 1;
@@ -555,54 +585,154 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      const total = steps.length;
-      if (total <= 1) return;
+      // 左侧刻度文本
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.fillText('50%', 4, midY - 3);
 
-      const points = steps.map((s, idx) => {
-        const x = (idx / (total - 1)) * (w - 24) + 12;
-        let winrate = 50;
-        if (s.score !== undefined && s.score !== null) {
-          if (s.ai_type && s.ai_type.includes('neural')) {
-            winrate = (s.score + 100.0) / 2.0;
-          } else {
-            winrate = Math.max(5, Math.min(95, 50 + s.score * 4));
+      // 分角色提取真实的神经网络胜率点集
+      const p0NeuralPoints = [];
+      const p1NeuralPoints = [];
+      allChartStepCoords = [];
+
+      steps.forEach((s, idx) => {
+        const x = (idx / Math.max(1, total - 1)) * (w - 32) + 16;
+        const sourceType = getStepSourceType(s);
+        let winrate = null;
+        let y = null;
+
+        // 仅神经网络有真实对弈胜率模型输出 (0% ~ 100%)
+        if (sourceType === 'neural' && s.score !== undefined && s.score !== null) {
+          winrate = Math.max(0, Math.min(100, (s.score + 100.0) / 2.0));
+          y = h - 8 - ((winrate / 100.0) * (h - 16));
+        }
+
+        const ptInfo = {
+          idx,
+          x,
+          y,
+          winrate,
+          rawScore: s.score,
+          sourceType,
+          player: s.player,
+          step: s,
+        };
+
+        allChartStepCoords.push(ptInfo);
+
+        if (winrate !== null) {
+          if (s.player === 0) {
+            p0NeuralPoints.push(ptInfo);
+          } else if (s.player === 1) {
+            p1NeuralPoints.push(ptInfo);
           }
         }
-        const y = h - 6 - ((winrate / 100) * (h - 12));
-        return { x, y, winrate, step: s };
       });
 
-      // 填充渐变色
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, 'rgba(56, 189, 248, 0.28)');
-      grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.02)');
-      grad.addColorStop(1, 'rgba(244, 114, 182, 0.28)');
+      const hasP0Neural = p0NeuralPoints.length > 0;
+      const hasP1Neural = p1NeuralPoints.length > 0;
 
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
+      // 动态同步顶栏图例文字，保持干净利落
+      const legendLinesEl = document.getElementById('chartLegendLines');
+      if (legendLinesEl) {
+        if (hasP0Neural && hasP1Neural) {
+          legendLinesEl.innerHTML = `<span style="color:#38bdf8; font-weight:700;">■ P0 神经网络</span> · <span style="color:#f472b6; font-weight:700;">■ P1 神经网络</span>`;
+        } else if (hasP0Neural && !hasP1Neural) {
+          legendLinesEl.innerHTML = `<span style="color:#38bdf8; font-weight:700;">■ P0 神经网络</span> · <span style="color:#64748b;">P1 无胜率模型 (启发式/人类)</span>`;
+        } else if (!hasP0Neural && hasP1Neural) {
+          legendLinesEl.innerHTML = `<span style="color:#64748b;">P0 无胜率模型 (人类/启发式)</span> · <span style="color:#f472b6; font-weight:700;">■ P1 神经网络</span>`;
+        } else {
+          legendLinesEl.innerHTML = `<span style="color:#64748b;">本局无神经网络评估 (启发式与人类不输出胜率)</span>`;
+        }
       }
-      ctx.lineTo(points[points.length - 1].x, midY);
-      ctx.lineTo(points[0].x, midY);
-      ctx.closePath();
-      ctx.fillStyle = grad;
-      ctx.fill();
 
-      // 绘制走势折线
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
+      // 若整局均无神经网络胜率，在画布正中给出干净提示
+      if (!hasP0Neural && !hasP1Neural) {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('当前对局无神经网络评估数据（启发式 AI 与人类玩家不输出胜率模型）', w / 2, midY + 4);
+        ctx.textAlign = 'start';
       }
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2.2;
-      ctx.stroke();
 
-      // 当前步高亮游标
-      if (currentIdx >= 0 && currentIdx < points.length) {
-        const curPt = points[currentIdx];
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+      // 1. 绘制 Player 0 神经网络胜率曲线 (天蓝色 #38bdf8)
+      if (hasP0Neural) {
+        if (p0NeuralPoints.length >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(p0NeuralPoints[0].x, p0NeuralPoints[0].y);
+          for (let i = 1; i < p0NeuralPoints.length; i++) {
+            ctx.lineTo(p0NeuralPoints[i].x, p0NeuralPoints[i].y);
+          }
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 2.2;
+          ctx.shadowColor = 'rgba(56, 189, 248, 0.4)';
+          ctx.shadowBlur = 5;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+
+        p0NeuralPoints.forEach(pt => {
+          if (pt.idx === currentIdx || (hoveredChartStep && hoveredChartStep.idx === pt.idx)) return;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 2.8, 0, Math.PI * 2);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fill();
+        });
+      }
+
+      // 2. 绘制 Player 1 神经网络胜率曲线 (粉红色 #f472b6)
+      if (hasP1Neural) {
+        if (p1NeuralPoints.length >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(p1NeuralPoints[0].x, p1NeuralPoints[0].y);
+          for (let i = 1; i < p1NeuralPoints.length; i++) {
+            ctx.lineTo(p1NeuralPoints[i].x, p1NeuralPoints[i].y);
+          }
+          ctx.strokeStyle = '#f472b6';
+          ctx.lineWidth = 2.2;
+          ctx.shadowColor = 'rgba(244, 114, 182, 0.4)';
+          ctx.shadowBlur = 5;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+
+        p1NeuralPoints.forEach(pt => {
+          if (pt.idx === currentIdx || (hoveredChartStep && hoveredChartStep.idx === pt.idx)) return;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 2.8, 0, Math.PI * 2);
+          ctx.fillStyle = '#f472b6';
+          ctx.fill();
+        });
+      }
+
+      // 3. 鼠标悬停游标 (Hover Cursor)
+      if (hoveredChartStep && hoveredChartStep.idx >= 0 && hoveredChartStep.idx < allChartStepCoords.length && hoveredChartStep.idx !== currentIdx) {
+        const hovPt = allChartStepCoords[hoveredChartStep.idx];
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(hovPt.x, 0);
+        ctx.lineTo(hovPt.x, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (hovPt.y !== null) {
+          const hovCol = (hovPt.player === 0) ? '#38bdf8' : '#f472b6';
+          ctx.beginPath();
+          ctx.arc(hovPt.x, hovPt.y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = hovCol;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+
+      // 4. 当前步高亮游标 (Current Step Focus Cursor)
+      if (currentIdx >= 0 && currentIdx < allChartStepCoords.length) {
+        const curPt = allChartStepCoords[currentIdx];
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([2, 2]);
         ctx.beginPath();
@@ -611,17 +741,59 @@
         ctx.stroke();
         ctx.setLineDash([]);
 
-        ctx.beginPath();
-        ctx.arc(curPt.x, curPt.y, 4.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#fbbf24';
-        ctx.shadowColor = '#fbbf24';
-        ctx.shadowBlur = 8;
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        if (curPt.y !== null) {
+          const curCol = (curPt.player === 0) ? '#38bdf8' : '#f472b6';
+          ctx.beginPath();
+          ctx.arc(curPt.x, curPt.y, 5.2, 0, Math.PI * 2);
+          ctx.fillStyle = '#fbbf24';
+          ctx.shadowColor = curCol;
+          ctx.shadowBlur = 8;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        } else {
+          // 当前步无胜率（人类或启发式）：在中线上标出极简空心圆，标识时间轴位置
+          ctx.beginPath();
+          ctx.arc(curPt.x, midY, 3.8, 0, Math.PI * 2);
+          ctx.fillStyle = '#0b0f17';
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 1.5;
+          ctx.fill();
+          ctx.stroke();
+        }
 
-        const badge = document.getElementById('chartCurrentStepBadge');
-        if (badge) badge.innerText = `#${currentIdx} (估值: ${curPt.winrate.toFixed(0)}%)`;
+        if (!hoveredChartStep) {
+          updateChartHeaderBadge(curPt, false);
+        }
       }
+    }
+
+    function updateChartHeaderBadge(pt, isHover = false) {
+      const badge = document.getElementById('chartCurrentStepBadge');
+      if (!badge || !pt) return;
+
+      const pCol = (pt.player === 0) ? '#38bdf8' : '#f472b6';
+      let infoHtml = '';
+
+      if (pt.sourceType === 'neural' && pt.winrate !== null) {
+        infoHtml = `<span style="color:#10b981; font-weight:700;">[🧠 神经网络]</span> <span style="color:${pCol}; font-weight:800;">胜率预期: ${pt.winrate.toFixed(0)}%</span>`;
+      } else if (pt.sourceType === 'heuristic') {
+        const sc = pt.rawScore;
+        const scTxt = (sc !== undefined && sc !== null)
+          ? (sc >= 1000 ? '+9999 斩杀' : (sc >= 0 ? `+${sc.toFixed(1)}分` : `${sc.toFixed(1)}分`))
+          : '无估值';
+        infoHtml = `<span style="color:#818cf8; font-weight:700;">[🤖 启发式 AI]</span> <span style="color:#cbd5e1;">动作评分: <b style="color:#f1f5f9;">${scTxt}</b></span>`;
+      } else {
+        infoHtml = `<span style="color:#94a3b8;">[👤 人类决策]</span> <span style="color:#64748b;">(无模型胜率)</span>`;
+      }
+
+      const prefix = isHover ? '👉 悬停' : '当前步';
+      const actDesc = pt.step ? formatFriendlyAction(pt.step.action) : '';
+      const actHtml = actDesc ? ` · <span style="color:#e2e8f0; font-weight:normal;">${actDesc}</span>` : '';
+
+      badge.innerHTML = `
+        ${prefix}: <b style="color:#fbbf24;">#${pt.idx}</b> (<b style="color:${pCol};">P${pt.player}</b>)
+        ${infoHtml}${actHtml}
+      `;
     }
 
     const chartCanvas = document.getElementById('evalChartCanvas');
@@ -630,9 +802,34 @@
         if (!historySteps || historySteps.length <= 1) return;
         const rect = chartCanvas.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
-        const ratio = Math.max(0, Math.min(1, (clickX - 12) / (rect.width - 24)));
+        const ratio = Math.max(0, Math.min(1, (clickX - 16) / (rect.width - 32)));
         const targetStep = Math.round(ratio * (historySteps.length - 1));
         fetchStep(targetStep);
+      };
+
+      chartCanvas.onmousemove = (e) => {
+        if (!allChartStepCoords || allChartStepCoords.length <= 1) return;
+        const rect = chartCanvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const ratio = Math.max(0, Math.min(1, (mouseX - 16) / (rect.width - 32)));
+        const hoverIdx = Math.round(ratio * (allChartStepCoords.length - 1));
+        if (hoverIdx >= 0 && hoverIdx < allChartStepCoords.length) {
+          if (!hoveredChartStep || hoveredChartStep.idx !== hoverIdx) {
+            hoveredChartStep = { idx: hoverIdx };
+            renderEvaluationChart(historySteps, currentStep);
+            updateChartHeaderBadge(allChartStepCoords[hoverIdx], true);
+          }
+        }
+      };
+
+      chartCanvas.onmouseleave = () => {
+        if (hoveredChartStep !== null) {
+          hoveredChartStep = null;
+          renderEvaluationChart(historySteps, currentStep);
+          if (allChartStepCoords && allChartStepCoords[currentStep]) {
+            updateChartHeaderBadge(allChartStepCoords[currentStep], false);
+          }
+        }
       };
     }
 
@@ -665,10 +862,11 @@
       const scoreHint = (s.score !== undefined && s.score !== null) ? ` [估值: ${s.score.toFixed(1)}]` : '';
       item.title = `第${round}轮 #${s.index} [P${s.player}] ${s.action} (${s.phase})${scoreHint}`;
 
+      const friendlyAct = formatFriendlyAction(s.action);
       item.innerHTML = `
         <span class="log-idx">#${s.index}</span>
         <span class="log-p" style="color:${s.player === 0 ? '#38bdf8' : '#f472b6'};">P${s.player}</span>
-        <span class="log-act">${s.action}</span>
+        <span class="log-act" title="${friendlyAct}">${friendlyAct}</span>
         ${(s.score !== undefined && s.score !== null) ? `<span class="log-score-tag">${s.score.toFixed(0)}</span>` : ''}
       `;
       item.onclick = () => fetchStep(s.index);

@@ -146,6 +146,7 @@ export class GameController {
     this.playerKinds = ['human', 'neural'];
     this.selectedBoardPositions = [];
     this.selectedGoldPos = null;
+    this.pendingReserveTarget = null;
     this.autoStepAi = true;
     this.aiStepTimer = null;
     this.isActionPending = false;
@@ -319,6 +320,7 @@ export class GameController {
     this.clearModal();
     this.selectedBoardPositions = [];
     this.selectedGoldPos = null;
+    this.pendingReserveTarget = null;
     const winnerBanner = document.getElementById('winnerBanner');
     if (winnerBanner) winnerBanner.style.display = 'none';
     const p0 = document.getElementById('p0KindSelect').value;
@@ -376,6 +378,7 @@ export class GameController {
 
     this.selectedBoardPositions = [];
     this.selectedGoldPos = null;
+    this.pendingReserveTarget = null;
 
     // 处理对战操作历史
     if (data.history) {
@@ -740,6 +743,40 @@ export class GameController {
       const reserveActions = this.legalActions.filter(a => a.category === 'reserve_card');
       const goldPositions = [...new Set(reserveActions.map(a => `${a.action.ReserveCard.gold_pos[0]},${a.action.ReserveCard.gold_pos[1]}`))].map(s => s.split(',').map(Number));
 
+      // 若处于“已选定卡牌/牌堆、等待挑选棋盘黄金”的待选阶段
+      if (this.pendingReserveTarget) {
+        return {
+          ...baseOptions,
+          clickable: true,
+          candidatePositions: goldPositions.slice(),
+          goldCandidatePositions: goldPositions.slice(),
+          onCellClick: (r, c, gem) => {
+            if (gem === 'gold') {
+              const isAvailableGold = goldPositions.some(([gr, gc]) => gr === r && gc === c);
+              if (isAvailableGold) {
+                const target = this.pendingReserveTarget;
+                this.pendingReserveTarget = null;
+                this.selectedGoldPos = null;
+                this.submitAction({
+                  ReserveCard: {
+                    gold_pos: [r, c],
+                    tier: target.tier,
+                    slot: target.slot
+                  }
+                });
+                return;
+              }
+            }
+            // 若用户点击了非黄金宝石，放弃待预留状态，平滑转入连线拿宝石逻辑
+            if (gem && gem !== 'gold') {
+              this.pendingReserveTarget = null;
+              this.selectedGoldPos = null;
+              this.handleBoardCellClickForTokens(r, c, gem, takeActions);
+            }
+          }
+        };
+      }
+
       const candidatePositions = this.calculateCandidatePositions(takeActions);
       // 未选定连线时，棋盘上的可用黄金同样作为可点击候选
       if (this.selectedBoardPositions.length === 0) {
@@ -848,13 +885,6 @@ export class GameController {
     const canReserve = isMandatory && reserveActions.length > 0;
     const interactive = isMandatory;
 
-    // 获取可用的黄金坐标 (优先使用已点击选中的黄金，否则默认使用第一个合法黄金)
-    const getGoldPos = () => {
-      if (this.selectedGoldPos) return this.selectedGoldPos;
-      if (reserveActions.length > 0) return reserveActions[0].action.ReserveCard.gold_pos;
-      return null;
-    };
-
     // 提取所有可购买的金字塔卡牌
     const affordableIds = new Set();
     if (isMandatory) {
@@ -872,15 +902,20 @@ export class GameController {
       interactive,
       affordableIds,
       canReserve,
-      isReserveGuidance: Boolean(this.selectedGoldPos),
+      pendingReserveTarget: this.pendingReserveTarget,
+      isReserveGuidance: Boolean(this.selectedGoldPos) || Boolean(this.pendingReserveTarget),
       currentPlayerState: this.state.players ? this.state.players[this.currentPlayer] : null,
       deckInfo: {
         tier: tierNum,
         count: this.state.decks_count[tierIdx],
       },
       onReserveDeck: () => {
-        const gold_pos = getGoldPos();
-        if (canReserve && gold_pos && this.state.decks_count[tierIdx] > 0) {
+        if (!canReserve || this.state.decks_count[tierIdx] <= 0) return;
+        // 若已在棋盘上先选定了黄金，直接完成盲抽预留
+        if (this.selectedGoldPos) {
+          const gold_pos = this.selectedGoldPos;
+          this.selectedGoldPos = null;
+          this.pendingReserveTarget = null;
           this.submitAction({
             ReserveCard: {
               gold_pos,
@@ -888,10 +923,25 @@ export class GameController {
               slot: null
             }
           });
+        } else {
+          // 未选黄金时：开启/切换待预留牌堆目标，由用户自主在棋盘上选择要拿哪颗黄金
+          if (this.pendingReserveTarget && this.pendingReserveTarget.isDeck && this.pendingReserveTarget.tier === tierName) {
+            this.pendingReserveTarget = null;
+          } else {
+            this.pendingReserveTarget = {
+              tier: tierName,
+              slot: null,
+              card: null,
+              isDeck: true
+            };
+          }
+          this.render();
         }
       },
       onPurchase: (card) => {
         if (!isMandatory) return;
+        this.pendingReserveTarget = null;
+        this.selectedGoldPos = null;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
           const buyActs = this.legalActions.filter(a =>
@@ -908,10 +958,15 @@ export class GameController {
         }
       },
       onReserve: (card) => {
-        const gold_pos = getGoldPos();
-        if (!canReserve || !gold_pos) return;
+        if (!canReserve) return;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
-        if (slot >= 0) {
+        if (slot < 0) return;
+
+        // 若已在棋盘上先选定了黄金，直接完成该卡牌预留
+        if (this.selectedGoldPos) {
+          const gold_pos = this.selectedGoldPos;
+          this.selectedGoldPos = null;
+          this.pendingReserveTarget = null;
           this.submitAction({
             ReserveCard: {
               gold_pos,
@@ -919,6 +974,19 @@ export class GameController {
               slot
             }
           });
+        } else {
+          // 未选黄金时：开启/切换待预留卡牌目标，由用户自主在棋盘上选择要拿哪颗黄金
+          if (this.pendingReserveTarget && !this.pendingReserveTarget.isDeck && this.pendingReserveTarget.card?.id === card.id) {
+            this.pendingReserveTarget = null;
+          } else {
+            this.pendingReserveTarget = {
+              tier: tierName,
+              slot,
+              card,
+              isDeck: false
+            };
+          }
+          this.render();
         }
       }
     });
@@ -944,23 +1012,51 @@ export class GameController {
     const isLegal = isHumanTurn && canReserve && hasDeck;
     btn.disabled = !isLegal;
 
-    if (!canReserve && isHumanTurn && this.state.phase === 'MandatoryAction') {
-      const hasGoldToTake = this.legalActions.some(a => a.category === 'take_gold');
-      btn.title = hasGoldToTake
-        ? '💡 预留卡牌：请先在右侧棋盘上点击拿取 1 枚黄金标记开启预留流程'
-        : '当前不可预留（预留手牌已满 3 张或棋盘上无黄金）';
-    } else if (canReserve) {
-      btn.title = '✨ 黄金已在手，点击盲抽预留 1 张牌堆顶暗牌放入手牌';
+    const isPendingDeck = Boolean(
+      this.pendingReserveTarget &&
+      this.pendingReserveTarget.isDeck &&
+      this.pendingReserveTarget.tier === tierName
+    );
+
+    if (isPendingDeck) {
+      btn.classList.add('active-pending-reserve');
+      btn.title = '📌 正在为此牌堆选择棋盘黄金，点击可取消';
+    } else {
+      btn.classList.remove('active-pending-reserve');
+      if (!canReserve && isHumanTurn && this.state.phase === 'MandatoryAction') {
+        btn.title = '当前不可预留（预留手牌已满 3 张或棋盘上无黄金）';
+      } else if (this.selectedGoldPos) {
+        btn.title = `✨ 已选定黄金 (${this.selectedGoldPos[0]},${this.selectedGoldPos[1]})，点击盲抽预留 1 张牌堆顶暗牌放入手牌`;
+      } else if (canReserve) {
+        btn.title = '点击开启该牌堆盲抽预留，随后在棋盘上选定要拿取的黄金';
+      }
     }
 
     btn.onclick = () => {
-      if (isLegal) {
+      if (!isLegal) return;
+      if (this.selectedGoldPos) {
+        const gold_pos = this.selectedGoldPos;
+        this.selectedGoldPos = null;
+        this.pendingReserveTarget = null;
         this.submitAction({
           ReserveCard: {
+            gold_pos,
             tier: tierName,
             slot: null
           }
         });
+      } else {
+        if (isPendingDeck) {
+          this.pendingReserveTarget = null;
+        } else {
+          this.pendingReserveTarget = {
+            tier: tierName,
+            slot: null,
+            card: null,
+            isDeck: true
+          };
+        }
+        this.render();
       }
     };
   }
@@ -1200,6 +1296,52 @@ export class GameController {
         this.actionBarButtons.appendChild(btnClear);
 
         this.guideText.innerHTML = `${lastAiHint}已选 ${this.selectedBoardPositions.length} 颗宝石，点击按钮确认拿取，或点击金字塔卡牌购买。`;
+      } else if (this.pendingReserveTarget) {
+        this.guideBadge.innerText = `📌 预留选金 (P${this.currentPlayer})`;
+        this.guideBadge.style.backgroundColor = '#d97706';
+
+        let targetDesc = '';
+        if (this.pendingReserveTarget.isDeck) {
+          const tNum = this.pendingReserveTarget.tier.replace('Tier', '');
+          targetDesc = `【等级 ${tNum} 牌堆暗牌】`;
+        } else {
+          const c = this.pendingReserveTarget.card;
+          targetDesc = `【等级 ${c.tier} · 卡牌 #${c.id}】`;
+        }
+
+        this.guideText.innerHTML = `${lastAiHint}已选定预留 <b style="color:var(--accent-gold);">${targetDesc}</b>。请在右侧 5×5 棋盘中<b>点击你要拿取的那一颗黄金</b>，或点击快捷按钮：`;
+
+        const reserveActions = this.legalActions.filter(a => a.category === 'reserve_card');
+        const goldPositions = [...new Set(reserveActions.map(a => `${a.action.ReserveCard.gold_pos[0]},${a.action.ReserveCard.gold_pos[1]}`))].map(s => s.split(',').map(Number));
+
+        goldPositions.forEach(([gr, gc]) => {
+          const btnGold = document.createElement('button');
+          btnGold.className = 'btn-accent';
+          btnGold.innerHTML = `💰 拿取黄金 (${gr}, ${gc})`;
+          btnGold.title = `从棋盘坐标 (${gr}, ${gc}) 拿取黄金并预留 ${targetDesc}`;
+          btnGold.onclick = () => {
+            const target = this.pendingReserveTarget;
+            this.pendingReserveTarget = null;
+            this.selectedGoldPos = null;
+            this.submitAction({
+              ReserveCard: {
+                gold_pos: [gr, gc],
+                tier: target.tier,
+                slot: target.slot
+              }
+            });
+          };
+          this.actionBarButtons.appendChild(btnGold);
+        });
+
+        const btnCancel = document.createElement('button');
+        btnCancel.className = 'btn-secondary';
+        btnCancel.innerText = '✖ 取消预留';
+        btnCancel.onclick = () => {
+          this.pendingReserveTarget = null;
+          this.render();
+        };
+        this.actionBarButtons.appendChild(btnCancel);
       } else if (this.selectedGoldPos) {
         const btnCancelGold = document.createElement('button');
         btnCancelGold.className = 'btn-secondary';

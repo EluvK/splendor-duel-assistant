@@ -472,6 +472,72 @@
   50% { box-shadow: 0 0 20px rgba(251, 191, 36, 0.9); }
 }
 
+/* 待选黄金阶段棋盘黄金高亮 (Gold Candidate) */
+.board-cell.cell-gold-candidate {
+  border-color: #fbbf24 !important;
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.85), inset 0 0 10px rgba(251, 191, 36, 0.45) !important;
+  animation: goldCandidatePulse 1.4s infinite ease-in-out;
+  cursor: pointer !important;
+  z-index: 10;
+}
+
+@keyframes goldCandidatePulse {
+  0%, 100% { transform: scale(1.03); box-shadow: 0 0 12px rgba(251, 191, 36, 0.7); }
+  50% { transform: scale(1.10); box-shadow: 0 0 22px rgba(251, 191, 36, 1); }
+}
+
+/* 处于待选黄金状态的目标卡牌 (Pending Reserve Target) */
+.card-item.card-pending-reserve {
+  border: 2px solid #fbbf24 !important;
+  box-shadow: 0 0 20px rgba(251, 191, 36, 0.95), inset 0 0 8px rgba(251, 191, 36, 0.3) !important;
+  animation: pendingCardPulse 1.5s infinite ease-in-out;
+  position: relative;
+  z-index: 8;
+}
+
+@keyframes pendingCardPulse {
+  0%, 100% { transform: translateY(-2px) scale(1.02); box-shadow: 0 0 14px rgba(251, 191, 36, 0.8); }
+  50% { transform: translateY(-4px) scale(1.04); box-shadow: 0 0 26px rgba(251, 191, 36, 1); }
+}
+
+/* 卡牌右上角待选黄金提示角标 */
+.pending-reserve-tag {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  z-index: 15;
+  letter-spacing: 0.5px;
+}
+
+/* 悬停操作覆盖层中激活的取消按钮 */
+.card-action-btn.btn-pending-active {
+  background: #dc2626 !important;
+  border-color: #ef4444 !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+}
+
+/* 牌堆右侧盲抽按钮激活态 */
+.btn-deck-reserve.active-pending-reserve {
+  background: linear-gradient(135deg, #d97706, #b45309) !important;
+  border-color: #fbbf24 !important;
+  color: #fff !important;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.8) !important;
+  animation: pendingBtnGlow 1.2s infinite alternate ease-in-out;
+}
+
+@keyframes pendingBtnGlow {
+  0% { box-shadow: 0 0 6px rgba(251, 191, 36, 0.5); }
+  100% { box-shadow: 0 0 16px rgba(251, 191, 36, 0.95); }
+}
+
 /* =========================================================
    幽灵残留发光标记 (Ghost Highlighting) 
    ========================================================= */

@@ -183,6 +183,15 @@ export function createDeckPileElement(tier, count, options = {}) {
     el.classList.add('deck-empty');
   }
 
+  const isPendingDeck = Boolean(
+    options.pendingReserveTarget &&
+    options.pendingReserveTarget.isDeck &&
+    options.pendingReserveTarget.tier === `Tier${tier}`
+  );
+  if (isPendingDeck) {
+    el.classList.add('card-pending-reserve');
+  }
+
   const tierNames = { 1: '初阶 (L1)', 2: '中阶 (L2)', 3: '高阶 (L3)' };
   el.title = `【${tierNames[tier] || '等级' + tier} 牌库】剩余 ${count} 张${options.canReserve ? ' (点击可盲抽预留)' : ''}`;
 
@@ -191,13 +200,20 @@ export function createDeckPileElement(tier, count, options = {}) {
   countBadge.innerText = `${count} 张`;
   el.appendChild(countBadge);
 
+  if (isPendingDeck) {
+    const pendingTag = document.createElement('span');
+    pendingTag.className = 'pending-reserve-tag';
+    pendingTag.innerText = '📌 待选黄金';
+    el.appendChild(pendingTag);
+  }
+
   if (options.interactive && hasCards && options.canReserve) {
     el.classList.add('deck-clickable');
     const overlay = document.createElement('div');
     overlay.className = 'card-action-overlay';
     const resBtn = document.createElement('button');
-    resBtn.className = 'btn-secondary card-action-btn';
-    resBtn.innerText = '🎴 盲抽预留';
+    resBtn.className = `btn-secondary card-action-btn ${isPendingDeck ? 'btn-pending-active' : ''}`;
+    resBtn.innerText = isPendingDeck ? '✖ 取消预留' : '🎴 盲抽预留';
     resBtn.onclick = (e) => {
       e.stopPropagation();
       if (options.onReserveDeck) options.onReserveDeck(tier);
@@ -405,6 +421,7 @@ export function renderBoard(boardData, containerEl, options = {}) {
   const candidateSet = new Set((options.candidatePositions || []).map(([r, c]) => `${r},${c}`));
   const highlightSet = new Set((options.highlightPositions || []).map(([r, c]) => `${r},${c}`));
   const goldSelected = options.goldSelectedPos ? `${options.goldSelectedPos[0]},${options.goldSelectedPos[1]}` : null;
+  const goldCandidatesSet = new Set((options.goldCandidatePositions || []).map(([r, c]) => `${r},${c}`));
   const ghostMap = new Map();
 
   if (options.ghostTokens && Array.isArray(options.ghostTokens)) {
@@ -434,6 +451,7 @@ export function renderBoard(boardData, containerEl, options = {}) {
       if (candidateSet.has(key)) cell.classList.add('cell-candidate');
       if (highlightSet.has(key)) cell.classList.add('cell-highlight');
       if (goldSelected === key) cell.classList.add('cell-gold-selected');
+      if (goldCandidatesSet.has(key)) cell.classList.add('cell-gold-candidate');
 
       const gem = boardData[r][c];
       if (gem) {
@@ -441,7 +459,8 @@ export function renderBoard(boardData, containerEl, options = {}) {
         const tok = document.createElement('div');
         tok.className = `token token-${gem}`;
         const colIdx = COLOR_KEYS.indexOf(gem);
-        tok.title = `${colIdx >= 0 ? COLOR_NAMES[colIdx] : gem}标记 (${r}, ${c})`;
+        const baseTitle = `${colIdx >= 0 ? COLOR_NAMES[colIdx] : gem}标记 (${r}, ${c})`;
+        tok.title = (gem === 'gold' && goldCandidatesSet.has(key)) ? `💰 拿取此黄金 (${r}, ${c}) 并预留卡牌` : baseTitle;
         cell.appendChild(tok);
 
         if (options.clickable) {
@@ -480,6 +499,7 @@ export function renderCardsList(cards, container, options = {}) {
       interactive: options.interactive,
       canReserve: options.canReserve,
       onReserveDeck: options.onReserveDeck,
+      pendingReserveTarget: options.pendingReserveTarget,
     });
     if (options.isReserveGuidance) {
       deckEl.classList.add('pulse-reservable');
@@ -519,6 +539,18 @@ export function renderCardsList(cards, container, options = {}) {
       el.classList.add('affordable');
     }
 
+    // 若该卡牌正处于等待选择棋盘黄金的预留中
+    const isPendingReserveCard = Boolean(
+      !fromReserved &&
+      options.pendingReserveTarget &&
+      !options.pendingReserveTarget.isDeck &&
+      options.pendingReserveTarget.card?.id === c.id
+    );
+
+    if (isPendingReserveCard) {
+      el.classList.add('card-pending-reserve');
+    }
+
     // 若当前处于黄金已选定的预留引导阶段，所有金字塔明牌带有脉冲引导
     if (options.isReserveGuidance && !fromReserved) {
       el.classList.add('pulse-reservable');
@@ -555,6 +587,11 @@ export function renderCardsList(cards, container, options = {}) {
       lockBadge.style.padding = '1px 3px';
       lockBadge.innerText = '🔒暗';
       el.appendChild(lockBadge);
+    } else if (isPendingReserveCard) {
+      const pendingTag = document.createElement('span');
+      pendingTag.className = 'pending-reserve-tag';
+      pendingTag.innerText = '📌 待选黄金';
+      el.appendChild(pendingTag);
     }
 
     // 交互手柄层（当传入操作回调时）
@@ -575,8 +612,8 @@ export function renderCardsList(cards, container, options = {}) {
 
       if (!fromReserved && options.canReserve && options.onReserve) {
         const resBtn = document.createElement('button');
-        resBtn.className = 'btn-secondary card-action-btn';
-        resBtn.innerText = '📌 预留卡牌';
+        resBtn.className = `btn-secondary card-action-btn ${isPendingReserveCard ? 'btn-pending-active' : ''}`;
+        resBtn.innerText = isPendingReserveCard ? '✖ 取消待选' : '📌 预留卡牌';
         resBtn.onclick = (e) => {
           e.stopPropagation();
           options.onReserve(c);
@@ -599,13 +636,13 @@ export function renderCardsList(cards, container, options = {}) {
  */
 export function renderPurchasedCards(cards, container, bonuses = [0, 0, 0, 0, 0]) {
   container.innerHTML = '';
-  const BASE_COLORS = ['blue', 'white', 'green', 'black', 'red'];
+  const BASE_COLORS = ['white', 'blue', 'green', 'red', 'black'];
   const cardsByColor = {
-    blue: [],
     white: [],
+    blue: [],
     green: [],
-    black: [],
     red: [],
+    black: [],
     points: [],
   };
 
@@ -619,11 +656,14 @@ export function renderPurchasedCards(cards, container, bonuses = [0, 0, 0, 0, 0]
     }
   });
 
-  BASE_COLORS.forEach((colKey, idx) => {
+  BASE_COLORS.forEach((colKey) => {
     const colDiv = document.createElement('div');
     colDiv.className = `tableau-color-col col-${colKey}`;
 
-    const bonusVal = bonuses[idx] || 0;
+    // 通过精确颜色键匹配后端对应的永久减免数值，防止由于遍历顺序不一致导致减免数字偏移错位
+    const colIdx = COLOR_KEYS.indexOf(colKey);
+    const bonusVal = (colIdx >= 0 && colIdx < 5) ? (bonuses[colIdx] || 0) : 0;
+    const colName = (colIdx >= 0) ? COLOR_NAMES[colIdx] : colKey;
     const cardList = cardsByColor[colKey] || [];
 
     // 列头：宝石徽章 + Bonus 减免数
@@ -633,7 +673,7 @@ export function renderPurchasedCards(cards, container, bonuses = [0, 0, 0, 0, 0]
       <span class="badge-gem-icon token-${colKey}"></span>
       <span class="bonus-num">+${bonusVal}</span>
     `;
-    header.title = `${COLOR_NAMES[idx]}永久减免: +${bonusVal} (已拥有 ${cardList.length} 张卡牌)`;
+    header.title = `${colName}永久减免: +${bonusVal} (已拥有 ${cardList.length} 张卡牌)`;
     colDiv.appendChild(header);
 
     // 卡牌垂直堆叠槽 (Stack Body)
