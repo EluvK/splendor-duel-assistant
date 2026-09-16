@@ -54,6 +54,7 @@
         <option value="300">1x (300ms)</option>
         <option value="600">0.5x (600ms)</option>
       </select>
+      <button class="btn-secondary" id="btnToggleSound" style="padding: 4px 8px; font-size: 0.76rem;" title="切换复盘操作音效开关">🔊</button>
       <button class="btn-accent" id="btnPlayToEnd" title="瞬间在引擎内模拟完整局并载入全部历史">推至终局 ⏩</button>
       <button class="btn-secondary" id="btnReset">重置对局 🔄</button>
     </div>
@@ -321,6 +322,7 @@
       renderPlayerDashboard
     } from './js/shared-components.js';
     import { formatFriendlyAction } from './js/game-controller.js';
+    import { soundManager } from './js/sound-manager.js';
 
     let currentStep = 0;
     let totalSteps = 0;
@@ -328,10 +330,63 @@
     let isPlaying = false;
     let playTimer = null;
     let isFetching = false;
+    let lastSoundStepIndex = -1;
 
     // 客户端步骤缓存，避免重复拉取
     const stepCache = new Map();
     let historySteps = [];
+
+    // 音效控制与动作分发
+    const btnToggleSound = document.getElementById('btnToggleSound');
+    function updateSoundButton() {
+      if (btnToggleSound) {
+        const on = soundManager.enabled;
+        btnToggleSound.textContent = on ? '🔊' : '🔇';
+        btnToggleSound.title = on ? '复盘音效已开启（点击静音）' : '复盘音效已静音（点击开启）';
+        btnToggleSound.style.opacity = on ? '1' : '0.6';
+      }
+    }
+    if (btnToggleSound) {
+      btnToggleSound.onclick = () => {
+        soundManager.toggleSound();
+        updateSoundButton();
+      };
+      updateSoundButton();
+    }
+
+    function playActionSound(step) {
+      if (!step) return;
+      // 自动播放时，如果播放速度极快（<100ms），跳过常规音效以防过度炸耳
+      if (isPlaying) {
+        const speed = parseInt(document.getElementById('playSpeed').value, 10);
+        if (speed < 100) return;
+      }
+
+      const desc = (typeof step === 'string' ? step : (step.action_desc || step.action || '')).toString();
+      if (!desc) return;
+
+      if (desc.startsWith('Take') || desc.includes('Take') || desc.startsWith('Steal') || desc.includes('拿取') || desc.includes('偷取')) {
+        if (desc.includes('Gold') || desc.includes('gold') || desc.includes('黄金') || desc.includes('金')) {
+          soundManager.play('gold_clink');
+        } else {
+          soundManager.play('gem_clink');
+        }
+      } else if (desc.startsWith('Reserve') || desc.includes('Reserve') || desc.includes('预留')) {
+        if (desc.includes('gold') || desc.includes('金')) {
+          soundManager.play('gold_clink');
+        } else {
+          soundManager.play('card_flip');
+        }
+      } else if (desc.startsWith('Purchase') || desc.includes('Purchase') || desc.includes('购买')) {
+        soundManager.play('card_buy');
+      } else if (desc.includes('Privilege') || desc.includes('特权')) {
+        soundManager.play('privilege');
+      } else if (desc.includes('Replenish') || desc.includes('补充')) {
+        soundManager.play('replenish');
+      } else if (desc.includes('Royal') || desc.includes('王室')) {
+        soundManager.play('royal_claim');
+      }
+    }
 
     async function fetchStatus() {
       try {
@@ -485,6 +540,7 @@
     async function resetGame() {
       if (isPlaying) togglePlay(false);
       stepCache.clear();
+      lastSoundStepIndex = -1;
       const seed = Math.floor(Math.random() * 100000);
       const p0 = document.getElementById('p0TypeSelect').value;
       const p1 = document.getElementById('p1TypeSelect').value;
@@ -1084,6 +1140,16 @@
 
       renderPlayerDashboard(state.players[0], document.getElementById('player0Card'), p0Acting, p0Next, 'p0', { playerKind: p0Type });
       renderPlayerDashboard(state.players[1], document.getElementById('player1Card'), p1Acting, p1Next, 'p1', { playerKind: p1Type });
+
+      // 触发复盘动作音效
+      if (step && step.step_index !== lastSoundStepIndex && step.step_index > 0) {
+        lastSoundStepIndex = step.step_index;
+        if (state.winner) {
+          soundManager.play('victory');
+        } else {
+          playActionSound(step);
+        }
+      }
     }
 
     function togglePlay(start) {

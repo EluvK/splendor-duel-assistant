@@ -12,6 +12,7 @@ import {
   COLOR_NAMES,
   COLOR_KEYS
 } from './shared-components.js';
+import { soundManager } from './sound-manager.js';
 
 function translateColor(color) {
   const map = {
@@ -160,6 +161,10 @@ export class GameController {
     this.lastRenderedRound = 0;
     this.autoScrollLog = true;
 
+    // 音效追踪
+    this._victoryPlayed = false;
+    this.prevIsHuman = false;
+
     this.initDOMElements();
     this.bindEvents();
   }
@@ -174,6 +179,10 @@ export class GameController {
     this.modalBody = document.getElementById('modalBody');
     this.modalOptions = document.getElementById('modalOptions');
     this.modalFooter = document.getElementById('modalFooter');
+
+    // 音效按钮
+    this.btnToggleSound = document.getElementById('btnToggleSound');
+    this.updateSoundButton();
 
     // 历史面板与单步详情 DOM
     this.logContainer = document.getElementById('gameLogContainer');
@@ -229,6 +238,13 @@ export class GameController {
       };
     }
 
+    if (this.btnToggleSound) {
+      this.btnToggleSound.onclick = () => {
+        soundManager.toggleSound();
+        this.updateSoundButton();
+      };
+    }
+
     const badge = document.getElementById('neuralModelBadge');
     if (badge) {
       badge.onclick = () => this.reloadNeuralModel();
@@ -237,6 +253,43 @@ export class GameController {
     this.checkNeuralStatus();
     // 每 5 秒静默同步一次神经网络状态
     setInterval(() => this.checkNeuralStatus(), 5000);
+  }
+
+  updateSoundButton() {
+    if (this.btnToggleSound) {
+      const on = soundManager.enabled;
+      this.btnToggleSound.textContent = on ? '🔊' : '🔇';
+      this.btnToggleSound.title = on ? '音效已开启（点击静音）' : '音效已静音（点击开启）';
+      this.btnToggleSound.style.opacity = on ? '1' : '0.6';
+    }
+  }
+
+  playActionSound(step) {
+    if (!step) return;
+    const desc = (typeof step === 'string' ? step : (step.action_desc || step.action || '')).toString();
+    if (!desc) return;
+
+    if (desc.startsWith('Take') || desc.includes('Take') || desc.startsWith('Steal') || desc.includes('拿取') || desc.includes('偷取')) {
+      if (desc.includes('Gold') || desc.includes('gold') || desc.includes('黄金') || desc.includes('金')) {
+        soundManager.play('gold_clink');
+      } else {
+        soundManager.play('gem_clink');
+      }
+    } else if (desc.startsWith('Reserve') || desc.includes('Reserve') || desc.includes('预留')) {
+      if (desc.includes('gold') || desc.includes('金')) {
+        soundManager.play('gold_clink');
+      } else {
+        soundManager.play('card_flip');
+      }
+    } else if (desc.startsWith('Purchase') || desc.includes('Purchase') || desc.includes('购买')) {
+      soundManager.play('card_buy');
+    } else if (desc.includes('Privilege') || desc.includes('特权')) {
+      soundManager.play('privilege');
+    } else if (desc.includes('Replenish') || desc.includes('补充')) {
+      soundManager.play('replenish');
+    } else if (desc.includes('Royal') || desc.includes('王室')) {
+      soundManager.play('royal_claim');
+    }
   }
 
   async checkNeuralStatus() {
@@ -321,6 +374,7 @@ export class GameController {
     this.selectedBoardPositions = [];
     this.selectedGoldPos = null;
     this.pendingReserveTarget = null;
+    this._victoryPlayed = false;
     const winnerBanner = document.getElementById('winnerBanner');
     if (winnerBanner) winnerBanner.style.display = 'none';
     const p0 = document.getElementById('p0KindSelect').value;
@@ -386,6 +440,20 @@ export class GameController {
     } else if (data.step) {
       this.appendHistoryStep(data.step, true);
     }
+
+    // 动作音效与阶段提醒
+    const isNewAction = (data.step != null) || (data.history && data.history.length > this.history.length && this.history.length > 0);
+    if (isNewAction && latestStep) {
+      this.playActionSound(latestStep);
+    }
+
+    if (this.state && this.state.winner && !this._victoryPlayed) {
+      soundManager.play('victory');
+      this._victoryPlayed = true;
+    } else if (!this.state.winner && !this.prevIsHuman && this.isHuman && this.history.length > 0) {
+      soundManager.play('turn_notify');
+    }
+    this.prevIsHuman = this.isHuman;
 
     this.render();
     this.handleTurnFlow();
@@ -796,7 +864,9 @@ export class GameController {
         onCellClick: (r, c, gem) => {
           if (gem === 'gold') {
             if (this.selectedBoardPositions.length === 0 && goldPositions.some(([gr, gc]) => gr === r && gc === c)) {
-              this.selectedGoldPos = (this.selectedGoldPos && this.selectedGoldPos[0] === r && this.selectedGoldPos[1] === c) ? null : [r, c];
+              const wasSelected = (this.selectedGoldPos && this.selectedGoldPos[0] === r && this.selectedGoldPos[1] === c);
+              this.selectedGoldPos = wasSelected ? null : [r, c];
+              soundManager.play(wasSelected ? 'gem_select' : 'gold_clink');
               this.render();
             }
             return;
@@ -855,6 +925,7 @@ export class GameController {
     if (idx >= 0) {
       // 取消选中
       this.selectedBoardPositions.splice(idx, 1);
+      soundManager.play('gem_select');
       this.render();
       return;
     }
@@ -874,6 +945,7 @@ export class GameController {
 
     if (isMatch) {
       this.selectedBoardPositions.push([r, c]);
+      soundManager.play('gem_select');
       this.render();
     }
   }
@@ -1388,6 +1460,7 @@ export class GameController {
 
   showPurchasePlanModal(card, buyActs) {
     if (!buyActs || buyActs.length === 0) return;
+    soundManager.play('card_flip');
 
     this.modalTitle.innerText = '💰 卡牌购买支付方案选择';
     this.modalBody.innerText = '检测到你持有自由黄金，你可以选择默认天然支付，或消耗自由黄金替代以保留指定天然宝石：';
