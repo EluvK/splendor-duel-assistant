@@ -2,7 +2,7 @@ use rand::prelude::*;
 use rand_distr::multi::{Dirichlet, MultiDistribution};
 use std::collections::HashMap;
 
-use crate::ai::neural_evaluator::{NeuralPrediction, TractNeuralEvaluator};
+use crate::ai::neural_evaluator::{NeuralEvaluator, NeuralPrediction};
 use crate::bridge::{ACTION_SIZE, action_to_id, encode_state};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
@@ -152,6 +152,37 @@ pub const LAMBDA_TURNS: f32 = 0.20;
 /// 多重确定化信息集洗牌块大小 (MIS-MCTS: 每隔 K 次模拟重抽暗牌，兼顾无偏估计与局部备份一致性)
 pub const MIS_BLOCK_SIZE: usize = 8;
 
+/// 根据当前盘面阶段和合法动作数，计算动态自适应 MCTS 模拟预算
+/// 对 OptionalActions、DiscardTokens、SelectRoyalCard 等简单微步阶段自适应下调模拟次数，
+/// 在保证核心决策质量的同时砍掉单局近半的冗余推演开销
+#[inline]
+pub fn compute_adaptive_sims(phase: &TurnPhase, num_legals: usize, base_sims: usize) -> usize {
+    if num_legals <= 1 || base_sims == 0 {
+        return num_sims_clamp(num_legals, base_sims);
+    }
+    match phase {
+        TurnPhase::OptionalActions | TurnPhase::DiscardTokens | TurnPhase::SelectRoyalCard => {
+            (base_sims / 4).max(10).min(base_sims)
+        }
+        _ => {
+            if num_legals <= 3 {
+                (base_sims / 3).max(12).min(base_sims)
+            } else {
+                base_sims
+            }
+        }
+    }
+}
+
+#[inline]
+fn num_sims_clamp(num_legals: usize, base_sims: usize) -> usize {
+    if num_legals <= 1 {
+        1.min(base_sims)
+    } else {
+        base_sims
+    }
+}
+
 /// 自动折叠确定性单选项微步 (单一合法支付确认、单一合法弃牌)，压缩搜索树无谓深度
 #[inline]
 fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
@@ -187,11 +218,11 @@ impl RustMCTS {
     }
 
     /// 便捷方法：执行神经网络 MCTS 并直接返回选定的最佳动作（无需完整策略分布）
-    pub fn search_action<R: Rng + ?Sized>(
+    pub fn search_action<R: Rng + ?Sized, E: NeuralEvaluator + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
-        evaluator: &TractNeuralEvaluator,
+        evaluator: &E,
         eval_cache: &mut NeuralEvalCache,
         num_simulations: usize,
         rng: &mut R,
@@ -212,11 +243,11 @@ impl RustMCTS {
     }
 
     /// 执行带跨步共享评估转置表的高性能神经网络 MCTS 搜索并返回选择的动作以及完整的策略分布
-    pub fn search_policy<R: Rng + ?Sized>(
+    pub fn search_policy<R: Rng + ?Sized, E: NeuralEvaluator + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
-        evaluator: &TractNeuralEvaluator,
+        evaluator: &E,
         eval_cache: &mut NeuralEvalCache,
         num_simulations: usize,
         add_dirichlet: bool,
@@ -394,10 +425,14 @@ impl RustMCTS {
                 nodes[n_idx].edges[e_idx].w_p0 += v_p0;
             }
 
-            // 自适应早停判断：仅在确定性贪婪模式 (temperature <= 0.01) 下生效
-            // 若根节点第一分支访问量 N1 与第二分支访问量 N2 的差值大于剩余推演次数，
-            // 则即使剩余推演全部给 N2，N2 也绝对无法反超，提前安全截断
-            if temperature <= 0.01 && nodes[root_idx].edges.len() >= 2 {
+            // 自适应早停判断：
+            // 1. 确定性贪婪模式 (temperature <= 0.01):
+            //    若根节点第一分支访问量 N1 与第二分支访问量 N2 的差值大于剩余推演次数，
+            //    则即使剩余推演全部给 N2，N2 也绝对无法反超，纯数学无损提前截断
+            // 2. 自对弈残余温度探索模式 (add_dirichlet == false && 已完成 >= 60% 模拟):
+            //    仅在脱离初始探索噪声后介入，当第一名优势不可逆反超且占有统治级访问比时提前收敛，
+            //    既完全保护前期的探索多样性，又大幅节省平稳局面的无效推演
+            if nodes[root_idx].edges.len() >= 2 {
                 let remaining = (num_simulations - 1 - sim_idx) as u32;
                 let mut max_visits = 0;
                 let mut second_max_visits = 0;
@@ -409,8 +444,14 @@ impl RustMCTS {
                         second_max_visits = edge.visits;
                     }
                 }
-                if max_visits.saturating_sub(second_max_visits) > remaining {
-                    break;
+                if temperature <= 0.01 {
+                    if max_visits.saturating_sub(second_max_visits) > remaining {
+                        break;
+                    }
+                } else if !add_dirichlet && sim_idx >= (num_simulations * 3) / 5 {
+                    if max_visits.saturating_sub(second_max_visits) > remaining {
+                        break;
+                    }
                 }
             }
         }
@@ -474,10 +515,10 @@ impl RustMCTS {
     }
 
     /// 使用神经网络提供先验概率与状态估值 (带极速状态哈希与跨步缓存支持)
-    fn create_edges_with_neural_priors_cached(
+    fn create_edges_with_neural_priors_cached<E: NeuralEvaluator + ?Sized>(
         state: &GameState,
         legals: Vec<Action>,
-        evaluator: &TractNeuralEvaluator,
+        evaluator: &E,
         cache: &mut NeuralEvalCache,
     ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
         let key = fast_state_hash(state);

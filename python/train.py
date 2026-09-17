@@ -67,6 +67,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gate-heuristic-threshold", type=float, default=0.50, help="Win-rate threshold against HeuristicAI in gate")
     parser.add_argument("--gate-heuristic-pairs", type=int, default=10, help="Paired games for heuristic gate (2 * pairs)")
     parser.add_argument(
+        "--cascaded-gate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable cascaded multi-tier promotion gate (fast PolicyNet pre-filter before expensive deep MCTS)",
+    )
+    parser.add_argument(
+        "--cascaded-prefilter-threshold",
+        type=float,
+        default=0.45,
+        help="Win-rate threshold in fast PolicyNet pre-filter stage to qualify for deep MCTS evaluation",
+    )
+    parser.add_argument(
         "--pipeline",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -541,42 +553,82 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
 
         # (C) 竞技场门禁对抗 (Candidate vs Baseline)
         eval_sims = args.mcts_sims if args.eval_agent == "neural_mcts" else 0
-        eval_mode_desc = f"NeuralMCTS-{args.mcts_sims}" if eval_sims > 0 else "PolicyNet"
-        print(f"3. 竞技场门禁对抗评测 ({args.eval_pairs * 2} 局成对严格换座对抗 | 决策: {eval_mode_desc})...")
-        t_arena = time.time()
         bytes_c = candidate_net.export_onnx_bytes()
         bytes_b = baseline_net.export_onnx_bytes()
-        total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
-            bytes_c,
-            bytes_b,
-            num_pairs=args.eval_pairs,
-            base_seed=int(time.time()) + it * 503,
-            num_sims=eval_sims,
-        )
-        win_rate = c_wins / max(total_g, 1)
-        arena_elapsed = time.time() - t_arena
-        print(
-            f"   ⚔️ Rust 并发对决完成 (耗时 {arena_elapsed:.2f}s): 候选胜 {c_wins} 局 | 基准胜 {b_wins} 局 "
-            f"| 平局 {draws} 局 | 候选胜率: {win_rate*100:.1f}%"
-        )
-        avg_rounds = 0.0
-        avg_steps = 0.0
-        if reasons:
-            avg_rounds = reasons.get("total_rounds", 0) / max(total_g, 1)
-            avg_steps = reasons.get("total_steps", 0) / max(total_g, 1)
-            round_stats = [f"平均 {avg_rounds:.1f} 轮 ({avg_steps:.1f} 步)"]
-            if c_wins > 0 and "agent0_win_rounds" in reasons:
-                round_stats.append(f"候选胜均耗 {reasons['agent0_win_rounds'] / c_wins:.1f} 轮")
-            if b_wins > 0 and "agent0_lose_rounds" in reasons:
-                round_stats.append(f"基准胜均耗 {reasons['agent0_lose_rounds'] / b_wins:.1f} 轮")
-            print(f"   ⏱️ 对局回合: {' | '.join(round_stats)}")
-            print(
-                f"   🎯 终局胜因: 20声望胜 {reasons.get('20_points', 0)} 局 | "
-                f"10皇冠胜 {reasons.get('10_crowns', 0)} 局 | "
-                f"10单色胜 {reasons.get('10_color_points', 0)} 局"
+
+        # 级联分层门禁：第 1 层 PolicyNet 极速直觉初筛 (仅需 ~0.2 秒)
+        passed_prefilter = True
+        prefilter_win_rate = 0.0
+        if eval_sims > 0 and getattr(args, "cascaded_gate", True):
+            print(f"3. 启动级联门禁第 1 层: PolicyNet 极速直觉初筛 (40 局换座对决 | 0 sims)...")
+            t_pre = time.time()
+            pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_neural_match(
+                bytes_c,
+                bytes_b,
+                num_pairs=20,
+                base_seed=int(time.time()) + it * 317,
+                num_sims=0,
             )
-        match_agent0_wins = c_wins
-        match_agent1_wins = b_wins
+            prefilter_win_rate = pre_c_wins / max(pre_total, 1)
+            pre_elapsed = time.time() - t_pre
+            print(
+                f"   ⚡ 直觉初筛完成 (耗时 {pre_elapsed:.2f}s): 候选胜 {pre_c_wins} | 基准胜 {pre_b_wins} "
+                f"| 平局 {pre_draws} | 初筛胜率: {prefilter_win_rate*100:.1f}% "
+                f"(进阶门槛: >={args.cascaded_prefilter_threshold*100:.0f}%)"
+            )
+            if prefilter_win_rate < args.cascaded_prefilter_threshold:
+                passed_prefilter = False
+                print(
+                    f"   🛑 候选模型未达直觉初筛门槛 ({prefilter_win_rate*100:.1f}% < {args.cascaded_prefilter_threshold*100:.0f}%)！"
+                    f"提前终止门禁评测，成功避免数百秒深度 MCTS 冗余空转！⚡"
+                )
+
+        eval_mode_desc = f"NeuralMCTS-{args.mcts_sims}" if eval_sims > 0 else "PolicyNet"
+        if passed_prefilter:
+            print(f"   ⚔️ 进阶终验: 竞技场对抗评测 ({args.eval_pairs * 2} 局成对严格换座对抗 | 决策: {eval_mode_desc})...")
+            t_arena = time.time()
+            total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
+                bytes_c,
+                bytes_b,
+                num_pairs=args.eval_pairs,
+                base_seed=int(time.time()) + it * 503,
+                num_sims=eval_sims,
+            )
+            win_rate = c_wins / max(total_g, 1)
+            arena_elapsed = time.time() - t_arena
+            print(
+                f"   ⚔️ Rust 并发对决完成 (耗时 {arena_elapsed:.2f}s): 候选胜 {c_wins} 局 | 基准胜 {b_wins} 局 "
+                f"| 平局 {draws} 局 | 候选胜率: {win_rate*100:.1f}%"
+            )
+            avg_rounds = 0.0
+            avg_steps = 0.0
+            if reasons:
+                avg_rounds = reasons.get("total_rounds", 0) / max(total_g, 1)
+                avg_steps = reasons.get("total_steps", 0) / max(total_g, 1)
+                round_stats = [f"平均 {avg_rounds:.1f} 轮 ({avg_steps:.1f} 步)"]
+                if c_wins > 0 and "agent0_win_rounds" in reasons:
+                    round_stats.append(f"候选胜均耗 {reasons['agent0_win_rounds'] / c_wins:.1f} 轮")
+                if b_wins > 0 and "agent0_lose_rounds" in reasons:
+                    round_stats.append(f"基准胜均耗 {reasons['agent0_lose_rounds'] / b_wins:.1f} 轮")
+                print(f"   ⏱️ 对局回合: {' | '.join(round_stats)}")
+                print(
+                    f"   🎯 终局胜因: 20声望胜 {reasons.get('20_points', 0)} 局 | "
+                    f"10皇冠胜 {reasons.get('10_crowns', 0)} 局 | "
+                    f"10单色胜 {reasons.get('10_color_points', 0)} 局"
+                )
+            match_agent0_wins = c_wins
+            match_agent1_wins = b_wins
+        else:
+            total_g = 40
+            c_wins = int(prefilter_win_rate * total_g)
+            b_wins = total_g - c_wins
+            draws = 0
+            reasons = {}
+            win_rate = prefilter_win_rate
+            match_agent0_wins = c_wins
+            match_agent1_wins = b_wins
+            avg_rounds = 0.0
+            avg_steps = 0.0
 
         # 晋升判定
         promoted = win_rate >= args.promote_threshold

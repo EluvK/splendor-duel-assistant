@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rand::SeedableRng;
+use numpy::PyArrayMethods;
 
 use super::encode::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 use crate::game_state::phase::TurnPhase;
@@ -277,6 +278,127 @@ pub fn generate_neural_mcts_match_samples(
             numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
         )
     });
+
+    Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
+}
+
+/// 由 Python 侧 GPU 批推理提供动力的高性能 AlphaZero MCTS 自博弈采样器
+///
+/// 架构优势:
+/// 1. 游戏规则、合法动作生成与 MCTS 树结构 100% 在 Rust 原生多线程 (Rayon) 栈上极速执行 (零 Python 对象与 GC 开销)
+/// 2. 神经网络评估通过高吞吐通道自动聚合打包为 Batch，由持有 GIL 的主线程直接在 PyTorch CUDA GPU 上执行批前向传播
+/// 3. 单次 GPU 前向即可同时唤醒数十个 MCTS 线程，彻底消除单样本 CPU 推理的性能瓶颈
+#[pyfunction]
+#[pyo3(signature = (eval_callback, num_games=100, num_sims=30, start_seed=42, temp_steps=12, temp_final=0.25, dirichlet_alpha=0.3, dirichlet_eps=0.25, max_batch_size=32))]
+pub fn generate_gpu_batched_neural_mcts_samples(
+    py: Python<'_>,
+    eval_callback: pyo3::Py<pyo3::PyAny>,
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+    temp_steps: usize,
+    temp_final: f32,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
+    max_batch_size: usize,
+) -> PyResult<(
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<u8>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    pyo3::Py<numpy::PyArray1<f32>>,
+    usize,
+)> {
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<crate::ai::neural_evaluator::EvalRequest>();
+    let evaluator = crate::ai::neural_evaluator::ChannelBatchNeuralEvaluator::new(req_tx);
+
+    let handle = std::thread::spawn(move || {
+        crate::ai::sample_channel_batched_mcts_games(
+            &evaluator,
+            num_games,
+            num_sims,
+            start_seed,
+            temp_steps,
+            temp_final,
+            dirichlet_alpha,
+            dirichlet_eps,
+        )
+    });
+
+    let mut req_buffer: Vec<crate::ai::neural_evaluator::EvalRequest> = Vec::with_capacity(max_batch_size);
+
+    loop {
+        if handle.is_finished() {
+            break;
+        }
+
+        match req_rx.recv_timeout(std::time::Duration::from_millis(1)) {
+            Ok(req) => {
+                req_buffer.push(req);
+                while req_buffer.len() < max_batch_size {
+                    match req_rx.try_recv() {
+                        Ok(r) => req_buffer.push(r),
+                        Err(_) => break,
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        if req_buffer.is_empty() {
+            continue;
+        }
+
+        let count = req_buffer.len();
+        let mut flat_obs = Vec::with_capacity(count * OBS_SIZE);
+        for r in &req_buffer {
+            flat_obs.extend_from_slice(&r.obs);
+        }
+
+        let py_flat_obs = numpy::PyArray1::from_vec(py, flat_obs);
+        let py_res = eval_callback.call1(py, (py_flat_obs, count))?;
+
+        let py_tuple = py_res.bind(py);
+        let logits_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_tuple.get_item(0)?.extract()?;
+        let win_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_tuple.get_item(1)?.extract()?;
+        let turns_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_tuple.get_item(2)?.extract()?;
+        let reason_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_tuple.get_item(3)?.extract()?;
+
+        let logits_slice = unsafe { logits_arr.as_slice()? };
+        let win_slice = unsafe { win_arr.as_slice()? };
+        let turns_slice = unsafe { turns_arr.as_slice()? };
+        let reason_slice = unsafe { reason_arr.as_slice()? };
+
+        for (i, req) in req_buffer.drain(..).enumerate() {
+            let mut logits = [0.0f32; ACTION_SIZE];
+            logits.copy_from_slice(&logits_slice[i * ACTION_SIZE..(i + 1) * ACTION_SIZE]);
+            let win_val = win_slice[i];
+            let turns_val = turns_slice[i];
+            let mut reason_probs = [0.0f32; 3];
+            reason_probs.copy_from_slice(&reason_slice[i * 3..(i + 1) * 3]);
+
+            let pred = crate::ai::neural_evaluator::NeuralPrediction {
+                win_value: win_val,
+                turns_value: turns_val,
+                reason_probs,
+            };
+            let _ = req.resp_sender.send((logits, pred));
+        }
+    }
+
+    let batch = handle
+        .join()
+        .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Batched MCTS worker thread panicked"))?
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+
+    let (obs_arr, mask_arr, policy_arr, value_arr, reason_arr) = (
+        numpy::PyArray1::from_vec(py, batch.obs).unbind(),
+        numpy::PyArray1::from_vec(py, batch.masks).unbind(),
+        numpy::PyArray1::from_vec(py, batch.policies).unbind(),
+        numpy::PyArray1::from_vec(py, batch.values).unbind(),
+        numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
+    );
 
     Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
 }

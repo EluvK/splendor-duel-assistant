@@ -3,8 +3,10 @@ use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
 
 use crate::ai::heuristic_ai::HeuristicAI;
-use crate::ai::mcts::RustMCTS;
-use crate::ai::neural_evaluator::TractNeuralEvaluator;
+use crate::ai::mcts::{compute_adaptive_sims, RustMCTS};
+use crate::ai::neural_evaluator::{
+    ChannelBatchNeuralEvaluator, NeuralEvaluator, TractNeuralEvaluator,
+};
 use crate::bridge::encode::{
     action_mask_from_legals, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE,
 };
@@ -204,9 +206,9 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
     }
 }
 
-fn simulate_single_neural_mcts_game(
+fn simulate_single_neural_mcts_game<E: NeuralEvaluator + ?Sized>(
     mcts: &RustMCTS,
-    evaluator: &TractNeuralEvaluator,
+    evaluator: &E,
     num_sims: usize,
     seed: u64,
     temp_steps: usize,
@@ -247,12 +249,14 @@ fn simulate_single_neural_mcts_game(
             (false, temp_final)
         };
 
+        let effective_sims = compute_adaptive_sims(&game.phase, legals.len(), num_sims);
+
         let (action, policy_vec) = mcts.search_policy(
             &game,
             legals,
             evaluator,
             &mut eval_cache,
-            num_sims,
+            effective_sims,
             add_noise,
             dirichlet_alpha,
             dirichlet_eps,
@@ -363,6 +367,64 @@ pub fn sample_neural_mcts_games_parallel(
     })
 }
 
+/// 并行采样 N 局由 GPU 批处理评估器驱动的高性能 AlphaZero MCTS 自博弈对局
+pub fn sample_channel_batched_mcts_games(
+    evaluator: &ChannelBatchNeuralEvaluator,
+    num_games: usize,
+    num_sims: usize,
+    start_seed: u64,
+    temp_steps: usize,
+    temp_final: f32,
+    dirichlet_alpha: f32,
+    dirichlet_eps: f32,
+) -> Result<CompactBatchSamples, String> {
+    let mcts = RustMCTS::default();
+
+    let trajectories: Vec<SingleGameTrajectory> = (0..num_games)
+        .into_par_iter()
+        .filter_map(|idx| {
+            simulate_single_neural_mcts_game(
+                &mcts,
+                evaluator,
+                num_sims,
+                start_seed + idx as u64,
+                temp_steps,
+                temp_final,
+                dirichlet_alpha,
+                dirichlet_eps,
+            )
+        })
+        .collect();
+
+    let total_steps: usize = trajectories.iter().map(|t| t.steps).sum();
+
+    let mut all_obs = Vec::with_capacity(total_steps * OBS_SIZE);
+    let mut all_masks = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
+    let mut all_actions = Vec::with_capacity(total_steps);
+    let mut all_values = Vec::with_capacity(total_steps * 2);
+    let mut all_reasons = Vec::with_capacity(total_steps * 3);
+
+    for t in trajectories {
+        all_obs.extend(t.obs);
+        all_masks.extend(t.masks);
+        all_policies.extend(t.policies);
+        all_actions.extend(t.actions);
+        all_values.extend(t.values);
+        all_reasons.extend(t.reasons);
+    }
+
+    Ok(CompactBatchSamples {
+        total_steps,
+        obs: all_obs,
+        masks: all_masks,
+        policies: all_policies,
+        actions: all_actions,
+        values: all_values,
+        reasons: all_reasons,
+    })
+}
+
 fn simulate_single_neural_mcts_match_game(
     mcts: &RustMCTS,
     evaluator0: &TractNeuralEvaluator,
@@ -416,13 +478,15 @@ fn simulate_single_neural_mcts_match_game(
             (false, temp_final)
         };
 
+        let effective_sims = compute_adaptive_sims(&game.phase, legals.len(), num_sims);
+
         let (action, policy_vec, should_record) = if is_agent0 {
             let (act, pol) = mcts.search_policy(
                 &game,
                 legals,
                 evaluator0,
                 &mut eval_cache0,
-                num_sims,
+                effective_sims,
                 add_noise,
                 dirichlet_alpha,
                 dirichlet_eps,
@@ -436,7 +500,7 @@ fn simulate_single_neural_mcts_match_game(
                 legals,
                 eval1,
                 &mut eval_cache1,
-                num_sims,
+                effective_sims,
                 add_noise,
                 dirichlet_alpha,
                 dirichlet_eps,
@@ -665,12 +729,13 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
+                        let effective_sims = compute_adaptive_sims(&game.phase, legals.len(), num_sims);
                         match mcts.search_action(
                             &game,
                             legals,
                             &eval0,
                             &mut eval_cache0,
-                            num_sims,
+                            effective_sims,
                             &mut rng,
                         ) {
                             Some(act) => act,
@@ -703,12 +768,13 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
+                        let effective_sims = compute_adaptive_sims(&game.phase, legals.len(), num_sims);
                         match mcts.search_action(
                             &game,
                             legals,
                             eval1,
                             &mut eval_cache1,
-                            num_sims,
+                            effective_sims,
                             &mut rng,
                         ) {
                             Some(act) => act,
