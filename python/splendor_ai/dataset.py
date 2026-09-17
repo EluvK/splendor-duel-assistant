@@ -18,7 +18,7 @@ class CompactBatch:
     mask: np.ndarray  # [N, ACTION_SIZE] (1856) bool
     target_policy: np.ndarray  # [N, ACTION_SIZE] (1856) float32 (MCTS visits 软概率分布)
     value: np.ndarray  # [N, 2] float32 (col 0: 纯胜负期望, col 1: 归一化剩余轮数)
-    reason: np.ndarray  # [N, 3] float32 多标签独立胜因 (20_pts, 10_crowns, 10_color)
+    reason: np.ndarray  # [N, 6] float32 区分归属的多标签独立胜因 [我方3项, 敌方3项]
 
     def __init__(
         self,
@@ -34,15 +34,19 @@ class CompactBatch:
         self.value = value
         n = len(obs)
 
-        # 适配 reason 形状 (兼容 1D 标量转为 2D 3维多标签)
+        # 适配 reason 形状 (支持 6 维区分胜负归属多标签，兼容老版本 3 维或 1D 标量)
         if reason.ndim == 1:
-            r_2d = np.zeros((n, 3), dtype=np.float32)
+            r_2d = np.zeros((n, 6), dtype=np.float32)
             for i, r in enumerate(reason):
-                if 0 <= r < 3:
+                if 0 <= r < 6:
                     r_2d[i, r] = 1.0
             self.reason = r_2d
+        elif reason.shape[1] == 3:
+            pad = np.zeros((n, 3), dtype=np.float32)
+            self.reason = np.concatenate([reason, pad], axis=1).astype(np.float32)
         elif reason.shape[1] == 4:
-            self.reason = reason[:, :3].astype(np.float32)
+            pad = np.zeros((n, 3), dtype=np.float32)
+            self.reason = np.concatenate([reason[:, :3], pad], axis=1).astype(np.float32)
         else:
             self.reason = reason.astype(np.float32)
 
@@ -119,17 +123,20 @@ class CompactBatch:
         if "reason" in data:
             raw_reason = data["reason"]
             if raw_reason.ndim == 1:
-                # 兼容老单标签标量 (0..3): 映射为 3 维独立标签
-                reason = np.zeros((n, 3), dtype=np.float32)
+                reason = np.zeros((n, 6), dtype=np.float32)
                 for i, r in enumerate(raw_reason):
-                    if 0 <= r < 3:
+                    if 0 <= r < 6:
                         reason[i, r] = 1.0
+            elif raw_reason.shape[1] == 3:
+                pad = np.zeros((n, 3), dtype=np.float32)
+                reason = np.concatenate([raw_reason, pad], axis=1).astype(np.float32)
             elif raw_reason.shape[1] == 4:
-                reason = raw_reason[:, :3].astype(np.float32)
+                pad = np.zeros((n, 3), dtype=np.float32)
+                reason = np.concatenate([raw_reason[:, :3], pad], axis=1).astype(np.float32)
             else:
                 reason = raw_reason.astype(np.float32)
         else:
-            reason = np.zeros((n, 3), dtype=np.float32)
+            reason = np.zeros((n, 6), dtype=np.float32)
 
         act = data["action"] if "action" in data else None
 
@@ -341,7 +348,7 @@ class ReplayBuffer:
                 mask=np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=bool),
                 target_policy=np.zeros((0, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32),
                 value=np.zeros((0, 2), dtype=np.float32),
-                reason=np.zeros((0, 3), dtype=np.float32),
+                reason=np.zeros((0, 6), dtype=np.float32),
             )
         if len(self.policy_list) == 1:
             return CompactBatch(

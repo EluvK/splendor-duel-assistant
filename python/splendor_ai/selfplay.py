@@ -29,7 +29,7 @@ def generate_heuristic_compact_batch(
     masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     target_policy = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
-    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
+    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 6)
 
     return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
 
@@ -66,7 +66,7 @@ def generate_rust_neural_mcts_compact_batch(
     masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     target_policy = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
-    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
+    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 6)
 
     return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
 
@@ -111,7 +111,7 @@ def generate_rust_neural_mcts_match_compact_batch(
     masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     target_policy = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
     values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
-    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
+    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 6)
 
     return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
 

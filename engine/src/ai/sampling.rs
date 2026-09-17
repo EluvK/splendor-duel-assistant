@@ -24,7 +24,7 @@ pub(crate) struct SingleGameTrajectory {
     pub(crate) policies: Vec<f32>,  // steps * ACTION_SIZE (软概率分布)
     pub(crate) actions: Vec<i32>,   // steps (0..ACTION_SIZE-1)
     pub(crate) values: Vec<f32>,    // steps * 2: [win_value, turns_value]
-    pub(crate) reasons: Vec<f32>,   // steps * 3: 多标签独立胜因 [20_pts, 10_crowns, 10_color]
+    pub(crate) reasons: Vec<f32>,   // steps * 6: 区分胜负归属的多标签胜因 [我方3项, 敌方3项]
     pub(crate) steps: usize,
 }
 
@@ -39,7 +39,7 @@ pub struct CompactBatchSamples {
     pub reasons: Vec<f32>,
 }
 
-/// 计算多任务目标标签 (纯胜率期望、归一化剩余轮数、终局多标签独立胜因)
+/// 计算多任务目标标签 (纯胜率期望、归一化剩余轮数、终局区分归属多标签独立胜因)
 #[inline]
 pub(crate) fn compute_multi_target_labels(
     game: &GameState,
@@ -50,21 +50,21 @@ pub(crate) fn compute_multi_target_labels(
 ) -> (Vec<f32>, Vec<f32>) {
     let steps = raw_players.len();
     let mut values = Vec::with_capacity(steps * 2);
-    let mut reasons = Vec::with_capacity(steps * 3);
+    let mut reasons = Vec::with_capacity(steps * 6);
 
-    // 计算终局多标签胜因 [20_points, 10_crowns, 10_color]
-    let mut reason_multi_hot = [0.0f32; 3];
+    // 计算终局胜利者达成的胜因 [20_points, 10_crowns, 10_color]
+    let mut winner_reasons = [0.0f32; 3];
     if let Some(winner) = winner_opt {
         let p_win = &game.players[winner];
         if p_win.total_points >= 20 {
-            reason_multi_hot[0] = 1.0;
+            winner_reasons[0] = 1.0;
         }
         if p_win.total_crowns >= 10 {
-            reason_multi_hot[1] = 1.0;
+            winner_reasons[1] = 1.0;
         }
         let max_color = p_win.color_points.iter().copied().max().unwrap_or(0);
         if max_color >= 10 {
-            reason_multi_hot[2] = 1.0;
+            winner_reasons[2] = 1.0;
         }
     }
 
@@ -88,7 +88,17 @@ pub(crate) fn compute_multi_target_labels(
 
         values.push(win_target);
         values.push(turns_target);
-        reasons.extend_from_slice(&reason_multi_hot);
+
+        // 3. 区分胜负方归属的 6 维胜因标签: [我方3项, 敌方3项]
+        let mut step_reasons = [0.0f32; 6];
+        if let Some(winner) = winner_opt {
+            if p == winner {
+                step_reasons[0..3].copy_from_slice(&winner_reasons);
+            } else {
+                step_reasons[3..6].copy_from_slice(&winner_reasons);
+            }
+        }
+        reasons.extend_from_slice(&step_reasons);
     }
     (values, reasons)
 }
@@ -183,7 +193,7 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
     let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
     let mut all_values = Vec::with_capacity(total_steps * 2);
-    let mut all_reasons = Vec::with_capacity(total_steps * 3);
+    let mut all_reasons = Vec::with_capacity(total_steps * 6);
 
     for t in trajectories {
         all_obs.extend(t.obs);
@@ -344,7 +354,7 @@ pub fn sample_neural_mcts_games_parallel(
     let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
     let mut all_values = Vec::with_capacity(total_steps * 2);
-    let mut all_reasons = Vec::with_capacity(total_steps * 3);
+    let mut all_reasons = Vec::with_capacity(total_steps * 6);
 
     for t in trajectories {
         all_obs.extend(t.obs);
@@ -554,7 +564,7 @@ pub fn sample_neural_mcts_match_games_parallel(
     let mut all_policies = Vec::with_capacity(total_steps * ACTION_SIZE);
     let mut all_actions = Vec::with_capacity(total_steps);
     let mut all_values = Vec::with_capacity(total_steps * 2);
-    let mut all_reasons = Vec::with_capacity(total_steps * 3);
+    let mut all_reasons = Vec::with_capacity(total_steps * 6);
 
     for t in trajectories {
         all_obs.extend(t.obs);

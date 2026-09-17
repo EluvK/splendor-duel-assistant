@@ -25,7 +25,7 @@ def test_heuristic_compact_generation():
     assert batch.target_policy.shape == (batch.num_samples, SplendorNet.ACTION_SIZE)
     assert batch.action.shape == (batch.num_samples,)
     assert batch.value.shape == (batch.num_samples, 2)
-    assert batch.reason.shape == (batch.num_samples, 3)
+    assert batch.reason.shape == (batch.num_samples, 6)
     assert (batch.action >= 0).all() and (batch.action < SplendorNet.ACTION_SIZE).all()
 
 
@@ -83,3 +83,11 @@ def test_trainer_with_compact_dataset(tmp_path: Path):
     assert trainer2.epoch == 2
     assert meta.get("total_games") == 10
     assert meta.get("total_samples") == batch.num_samples
+
+    # 验证各 Head 梯度诊断功能 (意见 11)
+    sample_batch = next(iter(loader))
+    diag = trainer2.diagnose_head_gradients(sample_batch)
+    for k in ["grad_norm_policy", "grad_norm_win", "grad_norm_turns", "grad_norm_reason", "grad_norm_lead"]:
+        assert k in diag and diag[k] >= 0.0
+    for k in ["cos_sim_policy_win", "cos_sim_policy_lead"]:
+        assert k in diag and -1.0 <= diag[k] <= 1.0

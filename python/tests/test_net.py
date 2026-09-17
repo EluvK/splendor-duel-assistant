@@ -17,7 +17,7 @@ def test_net_forward_shapes():
     assert logits.shape == (1, SplendorNet.ACTION_SIZE)
     assert win_v.shape == (1, 1)
     assert turns_v.shape == (1, 1)
-    assert reason_logits.shape == (1, 3)
+    assert reason_logits.shape == (1, 6)
     assert (-1.0 <= win_v.item() <= 1.0)
     assert (0.0 <= turns_v.item() <= 1.0)
 
@@ -27,7 +27,7 @@ def test_net_forward_shapes():
     assert b_logits.shape == (8, SplendorNet.ACTION_SIZE)
     assert b_win.shape == (8, 1)
     assert b_turns.shape == (8, 1)
-    assert b_reason.shape == (8, 3)
+    assert b_reason.shape == (8, 6)
     assert (b_win >= -1.0).all() and (b_win <= 1.0).all()
     assert (b_turns >= 0.0).all() and (b_turns <= 1.0).all()
 
@@ -45,7 +45,7 @@ def test_net_action_masking():
     assert probs.shape == (1, SplendorNet.ACTION_SIZE)
     assert win_v.shape == (1, 1)
     assert turns_v.shape == (1, 1)
-    assert reason_logits.shape == (1, 3)
+    assert reason_logits.shape == (1, 6)
     probs_np = probs.detach().cpu().numpy()[0]
 
     # 验证非法动作的概率为 0
@@ -107,15 +107,21 @@ def test_splendornet_v3_multi_task_loss_and_backward():
     target_win = torch.tensor([[1.0], [-1.0], [0.5], [-0.5]], dtype=torch.float32)
     target_turns = torch.tensor([[0.2], [0.8], [0.4], [0.6]], dtype=torch.float32)
     target_reason = torch.tensor(
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
+        [
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        ],
         dtype=torch.float32,
     )
 
     logits, win_v, turns_v, reason_logits, win_logits, lead_v = net.forward_train(obs)
+    assert win_logits.shape == (4, 2)
+    assert reason_logits.shape == (4, 6)
     policy_loss = torch.nn.functional.cross_entropy(logits, target_action)
 
-    support = net.support_points.to(obs.device)
-    target_win_dist = SplendorNet.to_two_hot(target_win, support)
+    target_win_dist = SplendorNet.compute_win_target_distribution(target_win)
     win_loss = -(target_win_dist * torch.nn.functional.log_softmax(win_logits, dim=-1)).sum(dim=-1).mean()
 
     turns_loss = torch.nn.functional.smooth_l1_loss(turns_v, target_turns)
@@ -134,12 +140,14 @@ def test_splendornet_v3_multi_task_loss_and_backward():
 
     total_loss.backward()
     assert net.reserve_gold_scorer[0].weight.grad is not None
-    assert net.buy_card_scorer[0].weight.grad is not None
-    assert net.plan_embeddings.grad is not None
-    assert net.token_head[0].weight.grad is not None
+    assert net.buy_card_scorer_c.weight.grad is not None
+    assert net.plan_encoder[0].weight.grad is not None
+    assert net.line_cell_scorer.weight.grad is not None
     assert net.card_encoder[0].weight.grad is not None
     assert net.lead_head[0].weight.grad is not None
     assert net.win_head[0].weight.grad is not None
+    assert lead_v.shape == (4, 3)
+    assert target_leads.shape == (4, 3)
 
 
 def test_policy_head_scale_balance():
@@ -217,6 +225,26 @@ def test_to_two_hot_distribution_and_dimensions():
     dist_oob = SplendorNet.to_two_hot(out_of_bounds, support)
     assert dist_oob[0, 0].item() == 1.0
     assert dist_oob[1, 20].item() == 1.0
+
+
+def test_compute_win_target_distribution():
+    """测试二分类胜率目标分布计算的正确性与边界处理."""
+    # 1. 验证极值点
+    targets = torch.tensor([[1.0], [-1.0], [0.0]], dtype=torch.float32)
+    dist = SplendorNet.compute_win_target_distribution(targets)
+    assert dist.shape == (3, 2)
+    # +1.0 对应 P(win)=1.0, P(loss)=0.0
+    assert torch.allclose(dist[0], torch.tensor([1.0, 0.0]))
+    # -1.0 对应 P(win)=0.0, P(loss)=1.0
+    assert torch.allclose(dist[1], torch.tensor([0.0, 1.0]))
+    # 0.0 对应 P(win)=0.5, P(loss)=0.5
+    assert torch.allclose(dist[2], torch.tensor([0.5, 0.5]))
+
+    # 2. 验证越界值 clamp
+    oob = torch.tensor([[2.0], [-3.0]], dtype=torch.float32)
+    dist_oob = SplendorNet.compute_win_target_distribution(oob)
+    assert torch.allclose(dist_oob[0], torch.tensor([1.0, 0.0]))
+    assert torch.allclose(dist_oob[1], torch.tensor([0.0, 1.0]))
 
 
 

@@ -132,19 +132,25 @@ class Trainer:
                 else:
                     policy_loss = F.cross_entropy(masked_logits, target_action)
 
-                # 2. Two-Hot 分位数胜率交叉熵损失
-                support = getattr(self.net, "support_points", torch.linspace(-1.0, 1.0, 21)).to(obs.device)
-                target_win_dist = SplendorNet.to_two_hot(target_win, support)
+                # 2. 胜负二分类交叉熵损失 [P(win), P(loss)]
+                target_win_dist = SplendorNet.compute_win_target_distribution(target_win)
                 log_win_probs = F.log_softmax(win_logits, dim=-1)
                 win_loss = -(target_win_dist * log_win_probs).sum(dim=-1).mean()
 
                 # 3. 轮数预测损失
                 turns_loss = F.smooth_l1_loss(turns_v, target_turns)
 
-                # 4. 终局胜因多标签损失
-                reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason)
+                # 4. 终局区分归属多标签胜因损失 (6 维)
+                if target_reason.ndim == 1:
+                    target_reason_bc = F.one_hot(target_reason.long(), num_classes=6).float()
+                elif target_reason.shape[-1] == 3:
+                    pad = torch.zeros(target_reason.shape[0], 3, device=target_reason.device, dtype=target_reason.dtype)
+                    target_reason_bc = torch.cat([target_reason, pad], dim=-1)
+                else:
+                    target_reason_bc = target_reason.float()
+                reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
 
-                # 5. 博弈态势差辅助损失 (从 obs 规范提取声望差与皇冠差)
+                # 5. 博弈态势差辅助损失 (从 obs 规范提取声望差、皇冠差与单色差 3 维)
                 target_leads = SplendorNet.extract_state_leads(obs)
                 lead_loss = F.smooth_l1_loss(lead_v, target_leads)
 
@@ -265,16 +271,16 @@ class Trainer:
 
                         policy_loss = F.cross_entropy(masked_logits, target_action)
 
-                        support = getattr(self.net, "support_points", torch.linspace(-1.0, 1.0, 21)).to(obs.device)
-                        target_win_dist = SplendorNet.to_two_hot(target_win, support)
+                        target_win_dist = SplendorNet.compute_win_target_distribution(target_win)
                         log_win_probs = F.log_softmax(win_logits, dim=-1)
                         win_loss = -(target_win_dist * log_win_probs).sum(dim=-1).mean()
 
                         turns_loss = F.smooth_l1_loss(turns_v, target_turns)
                         if target_reason.ndim == 1:
-                            target_reason_bc = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
-                        elif target_reason.shape[-1] == 4:
-                            target_reason_bc = target_reason[:, :3].float()
+                            target_reason_bc = F.one_hot(target_reason.long(), num_classes=6).float()
+                        elif target_reason.shape[-1] == 3:
+                            pad = torch.zeros(target_reason.shape[0], 3, device=target_reason.device, dtype=target_reason.dtype)
+                            target_reason_bc = torch.cat([target_reason, pad], dim=-1)
                         else:
                             target_reason_bc = target_reason.float()
                         reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
@@ -371,16 +377,16 @@ class Trainer:
 
                 policy_loss = F.cross_entropy(masked_logits, target_action)
 
-                support = getattr(self.net, "support_points", torch.linspace(-1.0, 1.0, 21)).to(obs.device)
-                target_win_dist = SplendorNet.to_two_hot(target_win, support)
+                target_win_dist = SplendorNet.compute_win_target_distribution(target_win)
                 log_win_probs = F.log_softmax(win_logits, dim=-1)
                 win_loss = -(target_win_dist * log_win_probs).sum(dim=-1).mean()
 
                 turns_loss = F.smooth_l1_loss(turns_v, target_turns)
                 if target_reason.ndim == 1:
-                    target_reason_bc = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
-                elif target_reason.shape[-1] == 4:
-                    target_reason_bc = target_reason[:, :3].float()
+                    target_reason_bc = F.one_hot(target_reason.long(), num_classes=6).float()
+                elif target_reason.shape[-1] == 3:
+                    pad = torch.zeros(target_reason.shape[0], 3, device=target_reason.device, dtype=target_reason.dtype)
+                    target_reason_bc = torch.cat([target_reason, pad], dim=-1)
                 else:
                     target_reason_bc = target_reason.float()
                 reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
@@ -436,6 +442,78 @@ class Trainer:
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
         return res
+
+    @torch.no_grad()
+    def diagnose_head_gradients(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """诊断各评估头对主干 (fused) 反向梯度的模长与余弦相似度 (意见 11)."""
+        was_training = self.net.training
+        self.net.eval()
+        try:
+            with torch.enable_grad():
+                obs = batch["obs"].to(self.device, non_blocking=True)
+                mask = batch["mask"].to(self.device, non_blocking=True)
+                target_value = batch["value"].to(self.device, non_blocking=True)
+                target_reason = batch["reason"].to(self.device, non_blocking=True)
+                target_win = target_value[:, 0:1]
+                target_turns = target_value[:, 1:2]
+
+                logits, win_v, turns_v, reason_logits, win_logits, lead_v = self.net.forward_train(obs)
+                masked_logits = SplendorNet.mask_logits(logits, mask)
+
+                target_action = batch.get("action")
+                if target_action is None and "target_policy" in batch:
+                    target_policy = batch["target_policy"].to(self.device)
+                    log_probs = F.log_softmax(masked_logits, dim=-1)
+                    p_loss = -(target_policy * log_probs).sum(dim=-1).mean()
+                else:
+                    if target_action is None:
+                        target_action = masked_logits.argmax(dim=-1)
+                    else:
+                        target_action = target_action.to(self.device)
+                    p_loss = F.cross_entropy(masked_logits, target_action)
+
+                target_win_dist = SplendorNet.compute_win_target_distribution(target_win)
+                w_loss = -(target_win_dist * F.log_softmax(win_logits, dim=-1)).sum(dim=-1).mean()
+                t_loss = F.smooth_l1_loss(turns_v, target_turns)
+
+                if target_reason.ndim == 1:
+                    target_reason_bc = F.one_hot(target_reason.long(), num_classes=6).float()
+                elif target_reason.shape[-1] == 3:
+                    pad = torch.zeros(target_reason.shape[0], 3, device=target_reason.device, dtype=target_reason.dtype)
+                    target_reason_bc = torch.cat([target_reason, pad], dim=-1)
+                else:
+                    target_reason_bc = target_reason.float()
+                r_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
+                l_loss = F.smooth_l1_loss(lead_v, SplendorNet.extract_state_leads(obs))
+
+                fusion_param = self.net.fusion[0].weight
+                grad_p = torch.autograd.grad(p_loss, fusion_param, retain_graph=True)[0]
+                grad_w = torch.autograd.grad(w_loss, fusion_param, retain_graph=True)[0]
+                grad_t = torch.autograd.grad(t_loss, fusion_param, retain_graph=True)[0]
+                grad_r = torch.autograd.grad(r_loss, fusion_param, retain_graph=True)[0]
+                grad_l = torch.autograd.grad(l_loss, fusion_param)[0]
+
+                norm_p = grad_p.norm().item()
+                norm_w = grad_w.norm().item()
+                norm_t = grad_t.norm().item()
+                norm_r = grad_r.norm().item()
+                norm_l = grad_l.norm().item()
+
+                cos_pw = F.cosine_similarity(grad_p.flatten(), grad_w.flatten(), dim=0).item()
+                cos_pl = F.cosine_similarity(grad_p.flatten(), grad_l.flatten(), dim=0).item()
+
+                return {
+                    "grad_norm_policy": norm_p,
+                    "grad_norm_win": norm_w,
+                    "grad_norm_turns": norm_t,
+                    "grad_norm_reason": norm_r,
+                    "grad_norm_lead": norm_l,
+                    "cos_sim_policy_win": cos_pw,
+                    "cos_sim_policy_lead": cos_pl,
+                }
+        finally:
+            if was_training:
+                self.net.train()
 
     def save_checkpoint(
         self, filename: str = "latest.pt", is_best: bool = False, meta: Optional[Dict[str, Any]] = None

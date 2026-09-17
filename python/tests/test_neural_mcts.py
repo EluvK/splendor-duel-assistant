@@ -41,7 +41,7 @@ def test_replay_buffer_sliding_window():
     out_batch = buffer.get_compact_batch()
     assert out_batch.num_samples == 70
     assert np.all(out_batch.obs == 2.0)
-    assert out_batch.reason.shape == (70, 3)
+    assert out_batch.reason.shape == (70, 6)
 
 
 def test_generate_rust_neural_mcts_selfplay():
@@ -61,7 +61,7 @@ def test_generate_rust_neural_mcts_selfplay():
     assert batch.target_policy.shape == (batch.num_samples, SplendorDuelEnv.ACTION_SIZE)
     assert len(batch.action) == batch.num_samples
     assert batch.value.shape == (batch.num_samples, 2)
-    assert batch.reason.shape == (batch.num_samples, 3)
+    assert batch.reason.shape == (batch.num_samples, 6)
     # 验证解耦胜率预期 [-1.0, 1.0] 与归一化剩余步数 [0.0, 1.0]
     assert np.all(batch.value[:, 0] >= -1.0) and np.all(batch.value[:, 0] <= 1.0)
     assert np.all(batch.value[:, 1] >= 0.0) and np.all(batch.value[:, 1] <= 1.0)
