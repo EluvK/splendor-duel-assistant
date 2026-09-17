@@ -5,15 +5,12 @@ import numpy as np
 import torch
 
 from splendor_ai._engine import (
-    evaluate_gpu_batched_neural_match,
-    generate_gpu_batched_neural_mcts_samples,
     generate_heuristic_samples,
     generate_neural_mcts_samples,
     generate_neural_mcts_match_samples,
 )
 from splendor_ai.dataset import CompactBatch
 from splendor_ai.env import SplendorDuelEnv
-from splendor_ai.gpu_worker import GpuBatchedEvaluator
 from splendor_ai.net import SplendorNet
 
 # 回合时间衰减折现因子：统一默认 0.98
@@ -117,73 +114,6 @@ def generate_rust_neural_mcts_match_compact_batch(
     reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
 
     return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
-
-
-def generate_gpu_batched_mcts_compact_batch(
-    net: SplendorNet,
-    num_games: int = 100,
-    num_simulations: int = 30,
-    max_concurrent_games: int = 128,
-    start_seed: int = 42,
-    temp_steps: int = 12,
-    temp_final: float = 0.25,
-    dirichlet_alpha: float = 0.3,
-    dirichlet_eps: float = 0.25,
-    heuristic_ratio: float = 0.0,
-    record_opponent: bool = True,
-    device: Optional[Union[torch.device, str]] = None,
-) -> CompactBatch:
-    """调用底层 Rust 向量化批推演引擎与 PyTorch GPU 批评估，全速产出高质量 AlphaZero 自博弈样本."""
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    evaluator = GpuBatchedEvaluator(model=net, device=device)
-
-    raw_obs, raw_masks, raw_policies, raw_values, raw_reasons, total_steps = generate_gpu_batched_neural_mcts_samples(
-        evaluator,
-        num_games,
-        num_simulations,
-        max_concurrent_games,
-        start_seed,
-        temp_steps,
-        temp_final,
-        dirichlet_alpha,
-        dirichlet_eps,
-        heuristic_ratio,
-        record_opponent,
-    )
-
-    obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
-    masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
-    target_policy = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
-    values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
-    reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 3)
-
-    return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
-
-
-def evaluate_gpu_neural_match(
-    net_c: SplendorNet,
-    net_b: Optional[SplendorNet] = None,
-    num_pairs: int = 30,
-    base_seed: int = 1000,
-    num_sims: int = 60,
-    device: Optional[Union[torch.device, str]] = None,
-) -> Tuple[int, int, int, int, dict]:
-    """使用 GPU 批推演执行严格成对换座的模型对抗评测 (支持双网络对决或候选网络对决启发式)."""
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    eval_cb_0 = GpuBatchedEvaluator(model=net_c, device=device)
-    eval_cb_1 = GpuBatchedEvaluator(model=net_b, device=device) if net_b is not None else None
-
-    return evaluate_gpu_batched_neural_match(
-        eval_cb_0,
-        eval_cb_1,
-        num_pairs=num_pairs,
-        base_seed=base_seed,
-        num_sims=num_sims,
-    )
 
 
 def concat_compact_batches(batches: List[CompactBatch]) -> CompactBatch:

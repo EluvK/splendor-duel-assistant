@@ -11,8 +11,6 @@ from splendor_ai.advisor import HealthStatus, IterationRecord, TrainingAdvisor
 from splendor_ai.dataset import FastTensorLoader, ReplayBuffer, ShardedBuffer
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
-    evaluate_gpu_neural_match,
-    generate_gpu_batched_mcts_compact_batch,
     generate_heuristic_compact_batch,
     generate_rust_neural_mcts_compact_batch,
     generate_rust_neural_mcts_match_compact_batch,
@@ -85,20 +83,6 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Enable async double-buffering pipeline (overlap CPU MCTS self-play and GPU training)",
-    )
-    parser.add_argument(
-        "--gpu-selfplay",
-        "--use-gpu-mcts",
-        dest="gpu_selfplay",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Use GPU batched vectorized MCTS for AlphaZero self-play (defaults to True when CUDA is available)",
-    )
-    parser.add_argument(
-        "--concurrent-games",
-        type=int,
-        default=128,
-        help="Number of concurrent active games in GPU batched MCTS (default: 128)",
     )
 
     # 训练超参数
@@ -456,63 +440,28 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
 
     # 异步双缓冲执行器 (派发后台推演任务，实现自对弈生成与训练重叠)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-    use_gpu_selfplay = args.gpu_selfplay
-    if use_gpu_selfplay is None:
-        use_gpu_selfplay = (device_str == "cuda")
-    if use_gpu_selfplay:
-        print(f"🚀 已激活 128 并发 GPU 批推演自博弈引擎 (并发度: {args.concurrent_games} | 设备: {device_str.upper()})")
-        if args.history_ratio > 0:
-            print(
-                f"⚠️  提示: 当前 GPU 批推演自博弈引擎聚焦于最新模型自对弈与启发式对抗 (heuristic_ratio={args.heuristic_ratio:.2f})，"
-                f"暂未接入历史模型池 (history_ratio={args.history_ratio:.2f})。若需多元历史模型对抗，请使用 --no-gpu-selfplay。"
-            )
-
     active_pipeline = args.pipeline
-    if use_gpu_selfplay and active_pipeline:
-        print(
-            "⚠️  提示: 检测到同时开启 GPU 批推演自博弈与 --pipeline 双缓冲流水线。\n"
-            "   为了防止训练反向传播与推演前向对 GPU 算力、模型权重与 GIL 的激烈冲突，已自动调整为同步 GPU 批推演模式。"
-        )
-        active_pipeline = False
 
     def _submit_selfplay_job(it_num: int, model_net: SplendorNet):
         seed = int(time.time()) + it_num * 1009
         t_start = time.time()
-        if use_gpu_selfplay:
-            fut = executor.submit(
-                generate_gpu_batched_mcts_compact_batch,
-                model_net,
-                args.games_per_iter,
-                args.mcts_sims,
-                args.concurrent_games,
-                seed,
-                args.temp_steps,
-                args.temp_final,
-                args.dirichlet_alpha,
-                args.dirichlet_eps,
-                args.heuristic_ratio,
-                True,
-                device,
-            )
-        else:
-            onnx_bytes = model_net.export_onnx_bytes()
-            fut = executor.submit(
-                generate_league_mcts_compact_batch,
-                None,
-                onnx_bytes,
-                history_bytes_pool,
-                args.games_per_iter,
-                args.heuristic_ratio,
-                args.history_ratio,
-                args.mcts_sims,
-                seed,
-                args.temp_steps,
-                args.temp_final,
-                args.dirichlet_alpha,
-                args.dirichlet_eps,
-                True,
-            )
+        onnx_bytes = model_net.export_onnx_bytes()
+        fut = executor.submit(
+            generate_league_mcts_compact_batch,
+            None,
+            onnx_bytes,
+            history_bytes_pool,
+            args.games_per_iter,
+            args.heuristic_ratio,
+            args.history_ratio,
+            args.mcts_sims,
+            seed,
+            args.temp_steps,
+            args.temp_final,
+            args.dirichlet_alpha,
+            args.dirichlet_eps,
+            True,
+        )
         return fut, t_start
 
     next_batch_fut = None
@@ -541,52 +490,32 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
             )
         else:
             t0 = time.time()
-            if use_gpu_selfplay:
-                print(
-                    f"1. 启动 128 并发 GPU 批处理 MCTS 自博弈采样 (总计: {args.games_per_iter} 局 | "
-                    f"并发度: {args.concurrent_games} | 推演: {args.mcts_sims} 次/步 | 启发式比例: {args.heuristic_ratio*100:.0f}%)..."
-                )
-                batch = generate_gpu_batched_mcts_compact_batch(
-                    net=baseline_net,
-                    num_games=args.games_per_iter,
-                    num_simulations=args.mcts_sims,
-                    max_concurrent_games=args.concurrent_games,
-                    start_seed=int(time.time()) + it * 1009,
-                    temp_steps=args.temp_steps,
-                    temp_final=args.temp_final,
-                    dirichlet_alpha=args.dirichlet_alpha,
-                    dirichlet_eps=args.dirichlet_eps,
-                    heuristic_ratio=args.heuristic_ratio,
-                    record_opponent=True,
-                    device=device,
-                )
-            else:
-                n_heu = int(args.games_per_iter * args.heuristic_ratio) // 2 * 2
-                n_hist = int(args.games_per_iter * args.history_ratio) // 2 * 2 if history_bytes_pool else 0
-                n_self = max(2, (args.games_per_iter - n_heu - n_hist) // 2 * 2)
-                league_desc = [f"自对弈 {n_self} 局"]
-                if n_heu > 0:
-                    league_desc.append(f"启发式对抗 {n_heu} 局")
-                if n_hist > 0:
-                    league_desc.append(f"历史模型对抗 {n_hist} 局")
-                print(
-                    f"1. 启动 Rust {threads} 线程并行多元联赛 MCTS 采样 {' + '.join(league_desc)} "
-                    f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入探索噪声)..."
-                )
-                batch = generate_league_mcts_compact_batch(
-                    net=baseline_net,
-                    history_bytes_pool=history_bytes_pool,
-                    total_games=args.games_per_iter,
-                    heuristic_ratio=args.heuristic_ratio,
-                    history_ratio=args.history_ratio,
-                    num_simulations=args.mcts_sims,
-                    start_seed=int(time.time()) + it * 1009,
-                    temp_steps=args.temp_steps,
-                    temp_final=args.temp_final,
-                    dirichlet_alpha=args.dirichlet_alpha,
-                    dirichlet_eps=args.dirichlet_eps,
-                    record_opponent=True,
-                )
+            n_heu = int(args.games_per_iter * args.heuristic_ratio) // 2 * 2
+            n_hist = int(args.games_per_iter * args.history_ratio) // 2 * 2 if history_bytes_pool else 0
+            n_self = max(2, (args.games_per_iter - n_heu - n_hist) // 2 * 2)
+            league_desc = [f"自对弈 {n_self} 局"]
+            if n_heu > 0:
+                league_desc.append(f"启发式对抗 {n_heu} 局")
+            if n_hist > 0:
+                league_desc.append(f"历史模型对抗 {n_hist} 局")
+            print(
+                f"1. 启动 Rust 多线程并行多元联赛 MCTS 采样 ({' + '.join(league_desc)} | "
+                f"推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入探索噪声)..."
+            )
+            batch = generate_league_mcts_compact_batch(
+                net=baseline_net,
+                history_bytes_pool=history_bytes_pool,
+                total_games=args.games_per_iter,
+                heuristic_ratio=args.heuristic_ratio,
+                history_ratio=args.history_ratio,
+                num_simulations=args.mcts_sims,
+                start_seed=int(time.time()) + it * 1009,
+                temp_steps=args.temp_steps,
+                temp_final=args.temp_final,
+                dirichlet_alpha=args.dirichlet_alpha,
+                dirichlet_eps=args.dirichlet_eps,
+                record_opponent=True,
+            )
             gen_time = time.time() - t0
             print(
                 f"   ✅ 本轮自对弈采样完成！新增 {batch.num_samples} 紧凑搜索样本 "
@@ -624,11 +553,8 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
 
         # (C) 竞技场门禁对抗 (Candidate vs Baseline)
         eval_sims = args.mcts_sims if args.eval_agent == "neural_mcts" else 0
-        bytes_c = None
-        bytes_b = None
-        if not use_gpu_selfplay:
-            bytes_c = candidate_net.export_onnx_bytes()
-            bytes_b = baseline_net.export_onnx_bytes()
+        bytes_c = candidate_net.export_onnx_bytes()
+        bytes_b = baseline_net.export_onnx_bytes()
 
         # 级联分层门禁：第 1 层 PolicyNet 极速直觉初筛
         passed_prefilter = True
@@ -636,27 +562,13 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
         if eval_sims > 0 and getattr(args, "cascaded_gate", True):
             print(f"3. 启动级联门禁第 1 层: PolicyNet 极速直觉初筛 (40 局换座对决 | 0 sims)...")
             t_pre = time.time()
-            if use_gpu_selfplay:
-                pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_gpu_neural_match(
-                    net_c=candidate_net,
-                    net_b=baseline_net,
-                    num_pairs=20,
-                    base_seed=int(time.time()) + it * 317,
-                    num_sims=0,
-                    device=device,
-                )
-            else:
-                if bytes_c is None:
-                    bytes_c = candidate_net.export_onnx_bytes()
-                if bytes_b is None:
-                    bytes_b = baseline_net.export_onnx_bytes()
-                pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_neural_match(
-                    bytes_c,
-                    bytes_b,
-                    num_pairs=20,
-                    base_seed=int(time.time()) + it * 317,
-                    num_sims=0,
-                )
+            pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_neural_match(
+                bytes_c,
+                bytes_b,
+                num_pairs=20,
+                base_seed=int(time.time()) + it * 317,
+                num_sims=0,
+            )
             prefilter_win_rate = pre_c_wins / max(pre_total, 1)
             pre_elapsed = time.time() - t_pre
             print(
@@ -675,27 +587,13 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
         if passed_prefilter:
             print(f"   ⚔️ 进阶终验: 竞技场对抗评测 ({args.eval_pairs * 2} 局成对严格换座对抗 | 决策: {eval_mode_desc})...")
             t_arena = time.time()
-            if use_gpu_selfplay:
-                total_g, c_wins, b_wins, draws, reasons = evaluate_gpu_neural_match(
-                    net_c=candidate_net,
-                    net_b=baseline_net,
-                    num_pairs=args.eval_pairs,
-                    base_seed=int(time.time()) + it * 503,
-                    num_sims=eval_sims,
-                    device=device,
-                )
-            else:
-                if bytes_c is None:
-                    bytes_c = candidate_net.export_onnx_bytes()
-                if bytes_b is None:
-                    bytes_b = baseline_net.export_onnx_bytes()
-                total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
-                    bytes_c,
-                    bytes_b,
-                    num_pairs=args.eval_pairs,
-                    base_seed=int(time.time()) + it * 503,
-                    num_sims=eval_sims,
-                )
+            total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
+                bytes_c,
+                bytes_b,
+                num_pairs=args.eval_pairs,
+                base_seed=int(time.time()) + it * 503,
+                num_sims=eval_sims,
+            )
             win_rate = c_wins / max(total_g, 1)
             arena_elapsed = time.time() - t_arena
             print(
@@ -739,23 +637,13 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
 
         if promoted and args.gate_heuristic:
             print(f"   🛡️  启动基准锚点门禁检验: 候选模型 vs HeuristicAI ({args.gate_heuristic_pairs * 2} 局成对严格换座)...")
-            if use_gpu_selfplay:
-                heu_total, heu_c_wins, heu_ai_wins, heu_draws, heu_reasons = evaluate_gpu_neural_match(
-                    net_c=candidate_net,
-                    net_b=None,
-                    num_pairs=args.gate_heuristic_pairs,
-                    base_seed=int(time.time()) + it * 719,
-                    num_sims=eval_sims,
-                    device=device,
-                )
-            else:
-                heu_total, heu_c_wins, heu_ai_wins, heu_draws, heu_reasons = evaluate_neural_match(
-                    bytes_c,
-                    None,
-                    num_pairs=args.gate_heuristic_pairs,
-                    base_seed=int(time.time()) + it * 719,
-                    num_sims=eval_sims,
-                )
+            heu_total, heu_c_wins, heu_ai_wins, heu_draws, heu_reasons = evaluate_neural_match(
+                bytes_c,
+                None,
+                num_pairs=args.gate_heuristic_pairs,
+                base_seed=int(time.time()) + it * 719,
+                num_sims=eval_sims,
+            )
             heu_win_rate = heu_c_wins / max(heu_total, 1)
             print(
                 f"   🥊 HeuristicAI 对抗结果: 候选胜 {heu_c_wins} | 启发式胜 {heu_ai_wins} | "

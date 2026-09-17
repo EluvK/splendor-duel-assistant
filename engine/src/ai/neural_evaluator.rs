@@ -42,40 +42,6 @@ impl<T: NeuralEvaluator + ?Sized> NeuralEvaluator for &T {
     }
 }
 
-/// 跨线程/进程 GPU 批处理评估请求
-pub struct EvalRequest {
-    pub obs: [f32; OBS_SIZE],
-    pub resp_sender: std::sync::mpsc::SyncSender<([f32; ACTION_SIZE], NeuralPrediction)>,
-}
-
-/// 基于通道的高并发 GPU 批处理评估器 (自动打包请求并分发给 GPU 推理线程)
-#[derive(Clone)]
-pub struct ChannelBatchNeuralEvaluator {
-    sender: std::sync::mpsc::Sender<EvalRequest>,
-}
-
-impl ChannelBatchNeuralEvaluator {
-    pub fn new(sender: std::sync::mpsc::Sender<EvalRequest>) -> Self {
-        Self { sender }
-    }
-}
-
-impl NeuralEvaluator for ChannelBatchNeuralEvaluator {
-    fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], NeuralPrediction), String> {
-        let (resp_tx, resp_rx) = std::sync::mpsc::sync_channel(1);
-        self.sender
-            .send(EvalRequest {
-                obs: *obs,
-                resp_sender: resp_tx,
-            })
-            .map_err(|e| format!("ChannelBatchEvaluator send failed: {e}"))?;
-
-        resp_rx
-            .recv()
-            .map_err(|e| format!("ChannelBatchEvaluator recv failed: {e}"))
-    }
-}
-
 /// 神经网络多任务预测结果 (解耦胜负、剩余步数与终局胜因)
 #[derive(Debug, Clone, Copy)]
 pub struct NeuralPrediction {

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rand::SeedableRng;
-use numpy::PyArrayMethods;
 
 use super::encode::{action_mask, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE};
 use crate::game_state::phase::TurnPhase;
@@ -282,108 +281,6 @@ pub fn generate_neural_mcts_match_samples(
     Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
 }
 
-/// 由 Python 侧 GPU 批推理提供动力的高性能 AlphaZero MCTS 自博弈采样器
-///
-/// 架构优势:
-/// 1. 游戏规则、合法动作生成与 MCTS 树结构 100% 在 Rust 原生多线程 (Rayon) 栈上极速执行 (零 Python 对象与 GC 开销)
-/// 2. 神经网络评估通过高吞吐通道自动聚合打包为 Batch，由持有 GIL 的主线程直接在 PyTorch CUDA GPU 上执行批前向传播
-/// 向量化 128 局大规模并发 GPU 批推演自博弈采样
-///
-/// 架构优势：
-/// 1. 采用单调度线程驱动 64~128 局活跃游戏，每个波次集中收集叶子盘面
-/// 2. 连续扁平缓冲区零拷贝直连 Python/CUDA，Batch 始终接近满载 (32~128)
-/// 3. 彻底消除 Rayon 线程锁争用与小并发单人拼车，最大化 GPU Tensor Core 利用率
-#[pyfunction]
-#[pyo3(signature = (
-    eval_callback,
-    num_games=100,
-    num_sims=30,
-    max_concurrent_games=128,
-    start_seed=42,
-    temp_steps=12,
-    temp_final=0.25,
-    dirichlet_alpha=0.3,
-    dirichlet_eps=0.25,
-    heuristic_ratio=0.0,
-    record_opponent=true,
-))]
-pub fn generate_gpu_batched_neural_mcts_samples(
-    py: Python<'_>,
-    eval_callback: pyo3::Py<pyo3::PyAny>,
-    num_games: usize,
-    num_sims: usize,
-    max_concurrent_games: usize,
-    start_seed: u64,
-    temp_steps: usize,
-    temp_final: f32,
-    dirichlet_alpha: f32,
-    dirichlet_eps: f32,
-    heuristic_ratio: f32,
-    record_opponent: bool,
-) -> PyResult<(
-    pyo3::Py<numpy::PyArray1<f32>>,
-    pyo3::Py<numpy::PyArray1<u8>>,
-    pyo3::Py<numpy::PyArray1<f32>>,
-    pyo3::Py<numpy::PyArray1<f32>>,
-    pyo3::Py<numpy::PyArray1<f32>>,
-    usize,
-)> {
-    let mut runner = crate::ai::BatchedMctsRunner::new(
-        num_games,
-        num_sims,
-        max_concurrent_games,
-        start_seed,
-        temp_steps,
-        temp_final,
-        dirichlet_alpha,
-        dirichlet_eps,
-        heuristic_ratio,
-        record_opponent,
-    );
-
-    runner.init_games();
-
-    while !runner.is_finished() {
-        let count = runner.collect_batch_requests();
-        if count == 0 {
-            if runner.is_finished() {
-                break;
-            }
-            continue;
-        }
-
-        // 将当前批次盘面构造成切片视图传递给 Python 评估回调
-        let py_flat_obs = numpy::PyArray1::from_slice(py, &runner.batch_obs);
-        let py_res = eval_callback.call1(py, (py_flat_obs, count))?;
-
-        let fused_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_res.extract(py)?;
-        let fused_slice = unsafe { fused_arr.as_slice()? };
-
-        if fused_slice.len() != count * crate::ai::batched_mcts::FUSED_OUTPUT_SIZE {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Batch evaluation shape mismatch: expected {} elements for count={}, got {}",
-                count * crate::ai::batched_mcts::FUSED_OUTPUT_SIZE,
-                count,
-                fused_slice.len()
-            )));
-        }
-
-        runner.apply_batch_results(fused_slice);
-    }
-
-    let batch = runner.finalize_samples();
-
-    let (obs_arr, mask_arr, policy_arr, value_arr, reason_arr) = (
-        numpy::PyArray1::from_vec(py, batch.obs).unbind(),
-        numpy::PyArray1::from_vec(py, batch.masks).unbind(),
-        numpy::PyArray1::from_vec(py, batch.policies).unbind(),
-        numpy::PyArray1::from_vec(py, batch.values).unbind(),
-        numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
-    );
-
-    Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
-}
-
 /// 纯 Rust 多线程 8 核并发成对严格换座对抗评测 (秒级极速完成门禁对抗，零 Python/CUDA 开销)
 /// - model_bytes_1: None 或空字节时，对抗内置 HeuristicAI
 /// - num_sims: 0 为极速纯直觉 PolicyNet 对决；> 0 时开启纯神经网络 MCTS 树搜索对抗
@@ -408,84 +305,6 @@ pub fn evaluate_neural_match(
             )
         })
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
-
-    let mut reasons = HashMap::new();
-    reasons.insert("20_points".to_string(), res.reasons_20_pts);
-    reasons.insert("10_crowns".to_string(), res.reasons_10_crowns);
-    reasons.insert("10_color_points".to_string(), res.reasons_10_color);
-    reasons.insert("draw".to_string(), res.draws);
-    reasons.insert("p0_seat_wins".to_string(), res.p0_seat_wins);
-    reasons.insert("p1_seat_wins".to_string(), res.p1_seat_wins);
-    reasons.insert("total_steps".to_string(), res.total_steps);
-    reasons.insert("total_rounds".to_string(), res.total_rounds);
-    reasons.insert("agent0_win_steps".to_string(), res.agent0_win_steps);
-    reasons.insert("agent0_win_rounds".to_string(), res.agent0_win_rounds);
-    reasons.insert("agent0_lose_steps".to_string(), res.agent0_lose_steps);
-    reasons.insert("agent0_lose_rounds".to_string(), res.agent0_lose_rounds);
-
-    Ok((
-        res.total_games,
-        res.agent0_wins,
-        res.agent1_wins,
-        res.draws,
-        reasons,
-    ))
-}
-
-/// 向量化 GPU 批推演成对对决门禁评测
-#[pyfunction]
-#[pyo3(signature = (
-    eval_callback_0,
-    eval_callback_1=None,
-    num_pairs=30,
-    base_seed=1000,
-    num_sims=60,
-))]
-pub fn evaluate_gpu_batched_neural_match(
-    py: Python<'_>,
-    eval_callback_0: pyo3::Py<pyo3::PyAny>,
-    eval_callback_1: Option<pyo3::Py<pyo3::PyAny>>,
-    num_pairs: usize,
-    base_seed: u64,
-    num_sims: usize,
-) -> PyResult<(usize, usize, usize, usize, HashMap<String, usize>)> {
-    let is_agent1_heuristic = eval_callback_1.is_none();
-    let mut runner = crate::ai::BatchedMatchRunner::new(
-        num_pairs,
-        base_seed,
-        num_sims,
-        is_agent1_heuristic,
-    );
-
-    while !runner.is_finished() {
-        let (count_0, count_1) = runner.collect_batch_requests();
-        if count_0 == 0 && count_1 == 0 {
-            if runner.is_finished() {
-                break;
-            }
-            continue;
-        }
-
-        if count_0 > 0 {
-            let py_flat_obs = numpy::PyArray1::from_slice(py, &runner.batch_obs_0);
-            let py_res = eval_callback_0.call1(py, (py_flat_obs, count_0))?;
-            let fused_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_res.extract(py)?;
-            let fused_slice = unsafe { fused_arr.as_slice()? };
-            runner.apply_batch_results_0(fused_slice);
-        }
-
-        if count_1 > 0 {
-            if let Some(ref cb1) = eval_callback_1 {
-                let py_flat_obs = numpy::PyArray1::from_slice(py, &runner.batch_obs_1);
-                let py_res = cb1.call1(py, (py_flat_obs, count_1))?;
-                let fused_arr: pyo3::Bound<'_, numpy::PyArray1<f32>> = py_res.extract(py)?;
-                let fused_slice = unsafe { fused_arr.as_slice()? };
-                runner.apply_batch_results_1(fused_slice);
-            }
-        }
-    }
-
-    let res = runner.finalize_match_result();
 
     let mut reasons = HashMap::new();
     reasons.insert("20_points".to_string(), res.reasons_20_pts);
