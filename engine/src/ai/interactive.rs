@@ -290,7 +290,7 @@ impl InteractiveSession {
                     } else {
                         let mcts = RustMCTS::default();
                         let mut eval_cache = NeuralEvalCache::default();
-                        let search_res = mcts.search_neural_policy_with_legals_and_cache(
+                        let search_res = mcts.search_policy(
                             &self.game,
                             legals.clone(),
                             evaluator,
@@ -299,7 +299,7 @@ impl InteractiveSession {
                             false,
                             0.3,
                             0.25,
-                            0.0,
+                            1.0,
                             &mut self.rng,
                         );
 

@@ -3,7 +3,7 @@ use rand_distr::multi::{Dirichlet, MultiDistribution};
 use std::collections::HashMap;
 
 use crate::ai::neural_evaluator::{NeuralPrediction, TractNeuralEvaluator};
-use crate::bridge::{action_to_id, encode_state, ACTION_SIZE};
+use crate::bridge::{ACTION_SIZE, action_to_id, encode_state};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
 use crate::gameplay::engine::GameEngine;
@@ -121,9 +121,9 @@ impl NeuralEvalCache {
 /// 子节点边
 struct Edge {
     action: Action,
-    prior: f32,       // 动作先验概率 P(s, a)
-    visits: u32,      // 访问次数 N
-    w_p0: f32,        // Player-0 绝对累积价值 W
+    prior: f32,               // 动作先验概率 P(s, a)
+    visits: u32,              // 访问次数 N
+    w_p0: f32,                // Player-0 绝对累积价值 W
     child_idx: Option<usize>, // 若已展开则指向子节点索引
 }
 
@@ -177,186 +177,42 @@ pub struct RustMCTS {
 
 impl Default for RustMCTS {
     fn default() -> Self {
-        Self {
-            c_puct: 1.5,
-        }
+        Self { c_puct: 1.5 }
     }
 }
 
 impl RustMCTS {
     pub fn new(c_puct: f32) -> Self {
-        Self {
-            c_puct,
-        }
+        Self { c_puct }
     }
 
-    /// 从根节点分支访问量中提取完整的 288 维软策略分布并进行采样
-    #[inline]
-    fn extract_policy_distribution<R: Rng + ?Sized>(
-        edges: &[Edge],
-        temperature: f32,
-        rng: &mut R,
-    ) -> Option<(Action, [f32; ACTION_SIZE])> {
-        if edges.is_empty() {
-            return None;
-        }
-        let mut policy = [0.0f32; ACTION_SIZE];
-        if temperature <= 0.01 {
-            let best_edge = edges.iter().max_by_key(|e| e.visits)?;
-            let best_id = action_to_id(&best_edge.action);
-            if best_id < ACTION_SIZE {
-                policy[best_id] = 1.0;
-            }
-            Some((best_edge.action.clone(), policy))
-        } else {
-            let inv_temp = 1.0 / temperature;
-            let mut exp_visits = Vec::with_capacity(edges.len());
-            let mut sum_v = 0.0f32;
-            for edge in edges.iter() {
-                let v = (edge.visits as f32).powf(inv_temp);
-                exp_visits.push(v);
-                sum_v += v;
-            }
-            if sum_v <= 1e-6 {
-                let first_edge = edges.first()?;
-                let first_id = action_to_id(&first_edge.action);
-                if first_id < ACTION_SIZE {
-                    policy[first_id] = 1.0;
-                }
-                return Some((first_edge.action.clone(), policy));
-            }
-
-            for (i, edge) in edges.iter().enumerate() {
-                let id = action_to_id(&edge.action);
-                if id < ACTION_SIZE {
-                    policy[id] = exp_visits[i] / sum_v;
-                }
-            }
-
-            let mut pick = rng.random_range(0.0..sum_v);
-            let mut chosen_action = edges.last().unwrap().action.clone();
-            for (i, &v) in exp_visits.iter().enumerate() {
-                if pick <= v {
-                    chosen_action = edges[i].action.clone();
-                    break;
-                }
-                pick -= v;
-            }
-            Some((chosen_action, policy))
-        }
-    }
-
-    /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索 (完全脱离启发式打分与模拟)
-    pub fn search_neural_with_exploration<R: Rng + ?Sized>(
-        &self,
-        state: &GameState,
-        evaluator: &TractNeuralEvaluator,
-        num_simulations: usize,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
-        rng: &mut R,
-    ) -> Option<Action> {
-        let legals = RuleEngine::legal_actions(state);
-        self.search_neural_with_exploration_and_legals(
-            state,
-            legals,
-            evaluator,
-            num_simulations,
-            add_dirichlet,
-            dirichlet_alpha,
-            dirichlet_eps,
-            temperature,
-            rng,
-        )
-    }
-
-    /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索 (支持复用外部已生成的合法动作列表与评估缓存)
-    pub fn search_neural_with_exploration_and_legals<R: Rng + ?Sized>(
-        &self,
-        state: &GameState,
-        legals: Vec<Action>,
-        evaluator: &TractNeuralEvaluator,
-        num_simulations: usize,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
-        rng: &mut R,
-    ) -> Option<Action> {
-        self.search_neural_policy_with_legals(
-            state,
-            legals,
-            evaluator,
-            num_simulations,
-            add_dirichlet,
-            dirichlet_alpha,
-            dirichlet_eps,
-            temperature,
-            rng,
-        )
-        .map(|(a, _)| a)
-    }
-
-    pub fn search_neural_with_exploration_and_legals_and_cache<R: Rng + ?Sized>(
+    /// 便捷方法：执行神经网络 MCTS 并直接返回选定的最佳动作（无需完整策略分布）
+    pub fn search_action<R: Rng + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
         evaluator: &TractNeuralEvaluator,
         eval_cache: &mut NeuralEvalCache,
         num_simulations: usize,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
         rng: &mut R,
     ) -> Option<Action> {
-        self.search_neural_policy_with_legals_and_cache(
+        self.search_policy(
             state,
             legals,
             evaluator,
             eval_cache,
             num_simulations,
-            add_dirichlet,
-            dirichlet_alpha,
-            dirichlet_eps,
-            temperature,
+            false,
+            0.0,
+            0.0,
+            0.0,
             rng,
         )
         .map(|(a, _)| a)
     }
 
-    /// 执行带纯神经网络指导与 AlphaZero 探索机制的 MCTS 搜索并返回选择的动作以及完整的 288 维软策略分布
-    pub fn search_neural_policy_with_legals<R: Rng + ?Sized>(
-        &self,
-        state: &GameState,
-        legals: Vec<Action>,
-        evaluator: &TractNeuralEvaluator,
-        num_simulations: usize,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
-        rng: &mut R,
-    ) -> Option<(Action, [f32; ACTION_SIZE])> {
-        let mut eval_cache = NeuralEvalCache::default();
-        self.search_neural_policy_with_legals_and_cache(
-            state,
-            legals,
-            evaluator,
-            &mut eval_cache,
-            num_simulations,
-            add_dirichlet,
-            dirichlet_alpha,
-            dirichlet_eps,
-            temperature,
-            rng,
-        )
-    }
-
-    /// 执行带跨步共享评估转置表的高性能神经网络 MCTS 搜索
-    pub fn search_neural_policy_with_legals_and_cache<R: Rng + ?Sized>(
+    /// 执行带跨步共享评估转置表的高性能神经网络 MCTS 搜索并返回选择的动作以及完整的策略分布
+    pub fn search_policy<R: Rng + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
@@ -386,7 +242,8 @@ impl RustMCTS {
         let is_term = matches!(state.phase, TurnPhase::GameOver(_));
 
         let (mut root_edges, _root_pred) =
-            Self::create_edges_with_neural_priors_cached(state, legals, evaluator, eval_cache).ok()?;
+            Self::create_edges_with_neural_priors_cached(state, legals, evaluator, eval_cache)
+                .ok()?;
 
         if add_dirichlet && root_edges.len() >= 2 {
             let alphas = vec![dirichlet_alpha; root_edges.len()];
@@ -423,7 +280,8 @@ impl RustMCTS {
             let top_k = nodes[root_idx].edges.len().min(4);
             let mut sorted_indices: Vec<usize> = (0..nodes[root_idx].edges.len()).collect();
             sorted_indices.sort_unstable_by(|&a, &b| {
-                nodes[root_idx].edges[b].prior
+                nodes[root_idx].edges[b]
+                    .prior
                     .partial_cmp(&nodes[root_idx].edges[a].prior)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
@@ -559,6 +417,61 @@ impl RustMCTS {
 
         Self::extract_policy_distribution(&nodes[root_idx].edges, temperature, rng)
     }
+    /// 从根节点分支访问量中提取完整的策略分布并进行采样
+    #[inline]
+    fn extract_policy_distribution<R: Rng + ?Sized>(
+        edges: &[Edge],
+        temperature: f32,
+        rng: &mut R,
+    ) -> Option<(Action, [f32; ACTION_SIZE])> {
+        if edges.is_empty() {
+            return None;
+        }
+        let mut policy = [0.0f32; ACTION_SIZE];
+        if temperature <= 0.01 {
+            let best_edge = edges.iter().max_by_key(|e| e.visits)?;
+            let best_id = action_to_id(&best_edge.action);
+            if best_id < ACTION_SIZE {
+                policy[best_id] = 1.0;
+            }
+            Some((best_edge.action.clone(), policy))
+        } else {
+            let inv_temp = 1.0 / temperature;
+            let mut exp_visits = Vec::with_capacity(edges.len());
+            let mut sum_v = 0.0f32;
+            for edge in edges.iter() {
+                let v = (edge.visits as f32).powf(inv_temp);
+                exp_visits.push(v);
+                sum_v += v;
+            }
+            if sum_v <= 1e-6 {
+                let first_edge = edges.first()?;
+                let first_id = action_to_id(&first_edge.action);
+                if first_id < ACTION_SIZE {
+                    policy[first_id] = 1.0;
+                }
+                return Some((first_edge.action.clone(), policy));
+            }
+
+            for (i, edge) in edges.iter().enumerate() {
+                let id = action_to_id(&edge.action);
+                if id < ACTION_SIZE {
+                    policy[id] = exp_visits[i] / sum_v;
+                }
+            }
+
+            let mut pick = rng.random_range(0.0..sum_v);
+            let mut chosen_action = edges.last().unwrap().action.clone();
+            for (i, &v) in exp_visits.iter().enumerate() {
+                if pick <= v {
+                    chosen_action = edges[i].action.clone();
+                    break;
+                }
+                pick -= v;
+            }
+            Some((chosen_action, policy))
+        }
+    }
 
     /// 使用神经网络提供先验概率与状态估值 (带极速状态哈希与跨步缓存支持)
     fn create_edges_with_neural_priors_cached(
@@ -604,16 +517,6 @@ impl RustMCTS {
             .collect();
 
         Ok((edges, pred))
-    }
-
-    #[allow(dead_code)]
-    fn create_edges_with_neural_priors(
-        state: &GameState,
-        legals: Vec<Action>,
-        evaluator: &TractNeuralEvaluator,
-    ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
-        let mut cache = NeuralEvalCache::default();
-        Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut cache)
     }
 
     fn select_best_edge(&self, node: &Node) -> usize {

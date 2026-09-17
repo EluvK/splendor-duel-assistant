@@ -247,7 +247,7 @@ fn simulate_single_neural_mcts_game(
             (false, temp_final)
         };
 
-        let (action, policy_vec) = mcts.search_neural_policy_with_legals_and_cache(
+        let (action, policy_vec) = mcts.search_policy(
             &game,
             legals,
             evaluator,
@@ -417,7 +417,7 @@ fn simulate_single_neural_mcts_match_game(
         };
 
         let (action, policy_vec, should_record) = if is_agent0 {
-            let (act, pol) = mcts.search_neural_policy_with_legals_and_cache(
+            let (act, pol) = mcts.search_policy(
                 &game,
                 legals,
                 evaluator0,
@@ -431,7 +431,7 @@ fn simulate_single_neural_mcts_match_game(
             )?;
             (act, pol, true)
         } else if let Some(eval1) = evaluator1 {
-            let (act, pol) = mcts.search_neural_policy_with_legals_and_cache(
+            let (act, pol) = mcts.search_policy(
                 &game,
                 legals,
                 eval1,
@@ -665,16 +665,12 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
-                        match mcts.search_neural_with_exploration_and_legals_and_cache(
+                        match mcts.search_action(
                             &game,
                             legals,
                             &eval0,
                             &mut eval_cache0,
                             num_sims,
-                            false,
-                            0.0,
-                            0.0,
-                            0.0,
                             &mut rng,
                         ) {
                             Some(act) => act,
@@ -707,16 +703,12 @@ pub fn evaluate_neural_match_parallel(
                         }
                         best_act
                     } else {
-                        match mcts.search_neural_with_exploration_and_legals_and_cache(
+                        match mcts.search_action(
                             &game,
                             legals,
                             eval1,
                             &mut eval_cache1,
                             num_sims,
-                            false,
-                            0.0,
-                            0.0,
-                            0.0,
                             &mut rng,
                         ) {
                             Some(act) => act,
