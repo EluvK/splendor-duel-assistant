@@ -31,5 +31,6 @@ fn _engine(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bridge::pymod::generate_neural_mcts_match_samples, m)?)?;
     m.add_function(wrap_pyfunction!(bridge::pymod::generate_gpu_batched_neural_mcts_samples, m)?)?;
     m.add_function(wrap_pyfunction!(bridge::pymod::evaluate_neural_match, m)?)?;
+    m.add_function(wrap_pyfunction!(bridge::pymod::evaluate_gpu_batched_neural_match, m)?)?;
     Ok(())
 }

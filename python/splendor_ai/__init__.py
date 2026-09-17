@@ -26,6 +26,8 @@ from splendor_ai.mcts import (
 from splendor_ai.net import SplendorNet
 from splendor_ai.progress import Progress
 from splendor_ai.selfplay import (
+    evaluate_gpu_neural_match,
+    generate_gpu_batched_mcts_compact_batch,
     generate_heuristic_compact_batch,
     generate_rust_neural_mcts_compact_batch,
     generate_selfplay_compact_batch,

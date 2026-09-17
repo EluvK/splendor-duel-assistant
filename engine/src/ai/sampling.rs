@@ -19,14 +19,15 @@ use crate::gameplay::rules::RuleEngine;
 pub const MAX_GAME_STEPS: usize = 400;
 
 /// 单局紧凑对弈轨迹
-struct SingleGameTrajectory {
-    obs: Vec<f32>,       // steps * OBS_SIZE
-    masks: Vec<u8>,      // steps * ACTION_SIZE (0 或 1)
-    policies: Vec<f32>,  // steps * ACTION_SIZE (288 维软概率分布)
-    actions: Vec<i32>,   // steps (0..ACTION_SIZE-1)
-    values: Vec<f32>,    // steps * 2: [win_value, turns_value]
-    reasons: Vec<f32>,   // steps * 3: 多标签独立胜因 [20_pts, 10_crowns, 10_color]
-    steps: usize,
+#[derive(Default)]
+pub(crate) struct SingleGameTrajectory {
+    pub(crate) obs: Vec<f32>,       // steps * OBS_SIZE
+    pub(crate) masks: Vec<u8>,      // steps * ACTION_SIZE (0 或 1)
+    pub(crate) policies: Vec<f32>,  // steps * ACTION_SIZE (288 维软概率分布)
+    pub(crate) actions: Vec<i32>,   // steps (0..ACTION_SIZE-1)
+    pub(crate) values: Vec<f32>,    // steps * 2: [win_value, turns_value]
+    pub(crate) reasons: Vec<f32>,   // steps * 3: 多标签独立胜因 [20_pts, 10_crowns, 10_color]
+    pub(crate) steps: usize,
 }
 
 /// 批量多线程紧凑样本包
@@ -42,7 +43,7 @@ pub struct CompactBatchSamples {
 
 /// 计算多任务目标标签 (纯胜率期望、归一化剩余轮数、终局多标签独立胜因)
 #[inline]
-fn compute_multi_target_labels(
+pub(crate) fn compute_multi_target_labels(
     game: &GameState,
     raw_players: &[usize],
     raw_turns: &[u32],

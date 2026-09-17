@@ -119,17 +119,18 @@ impl NeuralEvalCache {
 }
 
 /// 子节点边
-struct Edge {
-    action: Action,
-    prior: f32,               // 动作先验概率 P(s, a)
-    visits: u32,              // 访问次数 N
-    w_p0: f32,                // Player-0 绝对累积价值 W
-    child_idx: Option<usize>, // 若已展开则指向子节点索引
+#[derive(Clone, Debug)]
+pub struct Edge {
+    pub action: Action,
+    pub prior: f32,               // 动作先验概率 P(s, a)
+    pub visits: u32,              // 访问次数 N
+    pub w_p0: f32,                // Player-0 绝对累积价值 W
+    pub child_idx: Option<usize>, // 若已展开则指向子节点索引
 }
 
 impl Edge {
     #[inline]
-    fn q_p0(&self) -> f32 {
+    pub fn q_p0(&self) -> f32 {
         if self.visits == 0 {
             0.0
         } else {
@@ -139,11 +140,39 @@ impl Edge {
 }
 
 /// 树节点
-struct Node {
-    player: usize,
-    visits: u32,
-    edges: Vec<Edge>,
-    is_terminal: bool,
+#[derive(Clone, Debug)]
+pub struct Node {
+    pub player: usize,
+    pub visits: u32,
+    pub edges: Vec<Edge>,
+    pub is_terminal: bool,
+}
+
+impl Node {
+    #[inline]
+    pub fn select_best_edge(&self, c_puct: f32) -> usize {
+        debug_assert!(!self.edges.is_empty());
+        let c_puct_sqrt = c_puct * (self.visits as f32).sqrt().max(1.0);
+        let mut best_score = f32::NEG_INFINITY;
+        let mut best_idx = 0;
+
+        for (i, edge) in self.edges.iter().enumerate() {
+            // Q 从当前决策者 (node.player) 视角计算
+            let q = edge.q_p0();
+            let q_mover = if self.player == 0 { q } else { -q };
+
+            // PUCT 公式: Q + c * P * (sqrt(N) / (1 + n))
+            let uct = c_puct_sqrt * edge.prior / (1.0 + edge.visits as f32);
+            let score = q_mover + uct;
+
+            if score > best_score {
+                best_score = score;
+                best_idx = i;
+            }
+        }
+
+        best_idx
+    }
 }
 
 /// MCTS 搜索综合价值中的时间敏感度惩罚系数 (鼓励快速斩杀，惩罚拖延苟活)
@@ -185,7 +214,7 @@ fn num_sims_clamp(num_legals: usize, base_sims: usize) -> usize {
 
 /// 自动折叠确定性单选项微步 (单一合法支付确认、单一合法弃牌)，压缩搜索树无谓深度
 #[inline]
-fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
+pub fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
     loop {
         match sim_state.phase {
             TurnPhase::DiscardTokens => {
@@ -199,6 +228,38 @@ fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
             _ => break,
         }
     }
+}
+
+/// 从神经网络预测的 logits 和候选动作集合生成 MCTS 初始边
+#[inline]
+pub fn create_edges_from_logits(legals: &[Action], logits: &[f32; ACTION_SIZE]) -> Vec<Edge> {
+    if legals.is_empty() {
+        return Vec::new();
+    }
+    let mut scores = Vec::with_capacity(legals.len());
+    let mut max_logit = f32::NEG_INFINITY;
+
+    for act in legals.iter() {
+        let id = action_to_id(act);
+        let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
+        max_logit = max_logit.max(logit);
+        scores.push(logit);
+    }
+
+    let exp_scores: Vec<f32> = scores.iter().map(|&s| (s - max_logit).exp()).collect();
+    let sum_exp: f32 = exp_scores.iter().sum::<f32>().max(1e-6);
+
+    legals
+        .iter()
+        .enumerate()
+        .map(|(i, action)| Edge {
+            action: action.clone(),
+            prior: exp_scores[i] / sum_exp,
+            visits: 0,
+            w_p0: 0.0,
+            child_idx: None,
+        })
+        .collect()
 }
 
 /// 基于纯神经网络推理与 AlphaZero 探索机制的高性能 Rust 原生 MCTS
@@ -532,57 +593,12 @@ impl RustMCTS {
             res
         };
 
-        let mut scores = Vec::with_capacity(legals.len());
-        let mut max_logit = f32::NEG_INFINITY;
-
-        for act in legals.iter() {
-            let id = action_to_id(act);
-            let logit = if id < ACTION_SIZE { logits[id] } else { 0.0 };
-            max_logit = max_logit.max(logit);
-            scores.push(logit);
-        }
-
-        let exp_scores: Vec<f32> = scores.iter().map(|&s| (s - max_logit).exp()).collect();
-        let sum_exp: f32 = exp_scores.iter().sum::<f32>().max(1e-6);
-
-        let edges = legals
-            .into_iter()
-            .enumerate()
-            .map(|(i, action)| Edge {
-                action,
-                prior: exp_scores[i] / sum_exp,
-                visits: 0,
-                w_p0: 0.0,
-                child_idx: None,
-            })
-            .collect();
-
+        let edges = create_edges_from_logits(&legals, &logits);
         Ok((edges, pred))
     }
 
+    #[inline]
     fn select_best_edge(&self, node: &Node) -> usize {
-        let total_sqrt = (node.visits as f32).sqrt().max(1.0);
-        let mut best_score = f32::NEG_INFINITY;
-        let mut best_idx = 0;
-
-        for (i, edge) in node.edges.iter().enumerate() {
-            // Q 从当前决策者 (node.player) 视角计算
-            let q_mover = if node.player == 0 {
-                edge.q_p0()
-            } else {
-                -edge.q_p0()
-            };
-
-            // PUCT 公式: Q + c * P * (sqrt(N) / (1 + n))
-            let uct = self.c_puct * edge.prior * (total_sqrt / (1.0 + edge.visits as f32));
-            let score = q_mover + uct;
-
-            if score > best_score {
-                best_score = score;
-                best_idx = i;
-            }
-        }
-
-        best_idx
+        node.select_best_edge(self.c_puct)
     }
 }

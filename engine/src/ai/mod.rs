@@ -1,3 +1,4 @@
+pub mod batched_mcts;
 pub mod heuristic_ai;
 pub mod interactive;
 pub mod mcts;
@@ -7,6 +8,7 @@ pub mod random_ai;
 pub mod replay;
 pub mod sampling;
 
+pub use batched_mcts::{BatchedMatchRunner, BatchedMctsRunner};
 pub use heuristic_ai::HeuristicAI;
 pub use interactive::{InteractiveSession, LegalActionDto, PlayerKind};
 pub use mcts::RustMCTS;
