@@ -19,7 +19,7 @@ def test_replay_buffer_sliding_window():
     # 创建伪 batch 1 (60 样本)
     b1 = CompactBatch(
         obs=np.ones((60, SplendorDuelEnv.OBS_SIZE), dtype=np.float32),
-        mask=np.ones((60, 288), dtype=bool),
+        mask=np.ones((60, SplendorDuelEnv.ACTION_SIZE), dtype=bool),
         action=np.zeros(60, dtype=np.int64),
         value=np.ones((60, 2), dtype=np.float32),
         reason=np.zeros((60, 3), dtype=np.float32),
@@ -30,7 +30,7 @@ def test_replay_buffer_sliding_window():
     # 创建伪 batch 2 (70 样本) -> 触发滑动淘汰，总容量维持在合理区间
     b2 = CompactBatch(
         obs=np.full((70, SplendorDuelEnv.OBS_SIZE), 2.0, dtype=np.float32),
-        mask=np.ones((70, 288), dtype=bool),
+        mask=np.ones((70, SplendorDuelEnv.ACTION_SIZE), dtype=bool),
         action=np.ones(70, dtype=np.int64),
         value=np.full((70, 2), -1.0, dtype=np.float32),
         reason=np.ones((70, 3), dtype=np.float32),

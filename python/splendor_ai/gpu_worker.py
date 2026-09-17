@@ -55,7 +55,7 @@ class GpuBatchedEvaluator:
             count: 当前批次包含的有效盘面数量 (1 ~ 128)
 
         Returns:
-            fused_np: (count * 293,) 融合输出展平数组 [Logits(288) + Win(1) + Turns(1) + Reason(3)]
+            fused_np: (count * 1861,) 融合输出展平数组 [Logits(1856) + Win(1) + Turns(1) + Reason(3)]
         """
         obs_tensor = torch.from_numpy(flat_obs).view(count, SplendorDuelEnv.OBS_SIZE).to(
             self.device, non_blocking=True
@@ -70,7 +70,7 @@ class GpuBatchedEvaluator:
                 policy_logits, win_value, turns_value, reason_logits = self.model(obs_tensor)
                 reason_probs = torch.sigmoid(reason_logits)
 
-            # 在 GPU 端融合成单一连续张量 [count, 293]，仅触发 1 次 D2H 显存拷贝与单个 NumPy 对象分配
+            # 在 GPU 端融合成单一连续张量 [count, 1861]，仅触发 1 次 D2H 显存拷贝与单个 NumPy 对象分配
             fused_tensor = torch.cat(
                 [policy_logits, win_value, turns_value, reason_probs], dim=-1
             )

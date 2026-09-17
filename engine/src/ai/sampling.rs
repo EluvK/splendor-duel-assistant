@@ -23,7 +23,7 @@ pub const MAX_GAME_STEPS: usize = 400;
 pub(crate) struct SingleGameTrajectory {
     pub(crate) obs: Vec<f32>,       // steps * OBS_SIZE
     pub(crate) masks: Vec<u8>,      // steps * ACTION_SIZE (0 或 1)
-    pub(crate) policies: Vec<f32>,  // steps * ACTION_SIZE (288 维软概率分布)
+    pub(crate) policies: Vec<f32>,  // steps * ACTION_SIZE (软概率分布)
     pub(crate) actions: Vec<i32>,   // steps (0..ACTION_SIZE-1)
     pub(crate) values: Vec<f32>,    // steps * 2: [win_value, turns_value]
     pub(crate) reasons: Vec<f32>,   // steps * 3: 多标签独立胜因 [20_pts, 10_crowns, 10_color]

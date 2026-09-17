@@ -38,12 +38,12 @@ impl PyGameState {
         self.clone()
     }
 
-    /// 获取当前行动方规范化视角的 OBS_SIZE (742) 维状态观察向量
+    /// 获取当前行动方规范化视角的 OBS_SIZE (969) 维状态观察向量
     pub fn observe(&self) -> Vec<f32> {
         encode_state(&self.state).to_vec()
     }
 
-    /// 获取当前状态下的合法动作掩码 (ACTION_SIZE (288) 维 bool 数组)
+    /// 获取当前状态下的合法动作掩码 (ACTION_SIZE (1856) 维 bool 数组)
     pub fn action_mask(&self) -> Vec<bool> {
         action_mask(&self.state).to_vec()
     }

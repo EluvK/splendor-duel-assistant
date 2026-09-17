@@ -27,7 +27,7 @@ use crate::gameplay::engine::GameEngine;
 use crate::gameplay::rules::RuleEngine;
 use crate::model::action::Action;
 
-/// GPU 批推理单样本融合输出维度: 288 (Logits) + 1 (Win) + 1 (Turns) + 3 (Reason) = 293
+/// GPU 批推理单样本融合输出维度: ACTION_SIZE (Logits) + 1 (Win) + 1 (Turns) + 3 (Reason) = 1861
 pub const FUSED_OUTPUT_SIZE: usize = ACTION_SIZE + 5;
 
 /// 单局工作单元当前状态
@@ -417,31 +417,46 @@ impl BatchedMctsRunner {
 
                     WorkerState::Simulating => {
                         // 推进单步模拟
-                        // 1. 检查数学无损早停
+                        // 1. 检查自适应早停：
+                        //    - 确定性贪婪模式 (temp <= 0.01): 第一分支优势不可逆反超则纯数学无损截断
+                        //    - 探索模式: 必须脱离初始探索噪声 (!add_dirichlet) 且完成 >= 60% 模拟后才允许提前收敛，
+                        //      保护自博弈探索多样性并防止 MCTS 软策略分布熵塌缩
+                        let add_dirichlet = worker.step_count <= self.temp_steps;
+                        let temp = if add_dirichlet {
+                            1.0f32
+                        } else {
+                            self.temp_final
+                        };
+
                         let early_stopped = if worker.nodes[0].edges.len() >= 2 {
-                            let mut top1 = 0u32;
-                            let mut top2 = 0u32;
-                            for e in &worker.nodes[0].edges {
-                                if e.visits > top1 {
-                                    top2 = top1;
-                                    top1 = e.visits;
-                                } else if e.visits > top2 {
-                                    top2 = e.visits;
+                            let can_check_early_stop = if temp <= 0.01 {
+                                true
+                            } else {
+                                !add_dirichlet && worker.sim_idx >= (worker.effective_sims * 3) / 5
+                            };
+
+                            if can_check_early_stop {
+                                let mut top1 = 0u32;
+                                let mut top2 = 0u32;
+                                for e in &worker.nodes[0].edges {
+                                    if e.visits > top1 {
+                                        top2 = top1;
+                                        top1 = e.visits;
+                                    } else if e.visits > top2 {
+                                        top2 = e.visits;
+                                    }
                                 }
+                                let remaining = worker.effective_sims.saturating_sub(worker.sim_idx) as u32;
+                                top1.saturating_sub(top2) > remaining
+                            } else {
+                                false
                             }
-                            let remaining = worker.effective_sims.saturating_sub(worker.sim_idx) as u32;
-                            top1 > top2 + remaining
                         } else {
                             false
                         };
 
                         if early_stopped || worker.sim_idx >= worker.effective_sims {
                             // MCTS 决策收敛，采样动作并步进游戏
-                            let temp = if worker.step_count <= self.temp_steps {
-                                1.0f32
-                            } else {
-                                self.temp_final
-                            };
 
                             let selected_edge_idx = if temp <= 0.05 {
                                 let mut best_idx = 0;

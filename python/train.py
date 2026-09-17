@@ -77,8 +77,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cascaded-prefilter-threshold",
         type=float,
-        default=0.45,
-        help="Win-rate threshold in fast PolicyNet pre-filter stage to qualify for deep MCTS evaluation",
+        default=0.35,
+        help="Win-rate threshold in fast PolicyNet pre-filter stage to qualify for deep MCTS evaluation (default: 0.35)",
     )
     parser.add_argument(
         "--pipeline",
@@ -630,23 +630,33 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
             bytes_c = candidate_net.export_onnx_bytes()
             bytes_b = baseline_net.export_onnx_bytes()
 
-        # 级联分层门禁：第 1 层 PolicyNet 极速直觉初筛 (纯 CPU 16 线程仅需 ~0.2 秒)
+        # 级联分层门禁：第 1 层 PolicyNet 极速直觉初筛
         passed_prefilter = True
         prefilter_win_rate = 0.0
         if eval_sims > 0 and getattr(args, "cascaded_gate", True):
             print(f"3. 启动级联门禁第 1 层: PolicyNet 极速直觉初筛 (40 局换座对决 | 0 sims)...")
             t_pre = time.time()
-            if bytes_c is None:
-                bytes_c = candidate_net.export_onnx_bytes()
-            if bytes_b is None:
-                bytes_b = baseline_net.export_onnx_bytes()
-            pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_neural_match(
-                bytes_c,
-                bytes_b,
-                num_pairs=20,
-                base_seed=int(time.time()) + it * 317,
-                num_sims=0,
-            )
+            if use_gpu_selfplay:
+                pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_gpu_neural_match(
+                    net_c=candidate_net,
+                    net_b=baseline_net,
+                    num_pairs=20,
+                    base_seed=int(time.time()) + it * 317,
+                    num_sims=0,
+                    device=device,
+                )
+            else:
+                if bytes_c is None:
+                    bytes_c = candidate_net.export_onnx_bytes()
+                if bytes_b is None:
+                    bytes_b = baseline_net.export_onnx_bytes()
+                pre_total, pre_c_wins, pre_b_wins, pre_draws, _ = evaluate_neural_match(
+                    bytes_c,
+                    bytes_b,
+                    num_pairs=20,
+                    base_seed=int(time.time()) + it * 317,
+                    num_sims=0,
+                )
             prefilter_win_rate = pre_c_wins / max(pre_total, 1)
             pre_elapsed = time.time() - t_pre
             print(
@@ -675,6 +685,10 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
                     device=device,
                 )
             else:
+                if bytes_c is None:
+                    bytes_c = candidate_net.export_onnx_bytes()
+                if bytes_b is None:
+                    bytes_b = baseline_net.export_onnx_bytes()
                 total_g, c_wins, b_wins, draws, reasons = evaluate_neural_match(
                     bytes_c,
                     bytes_b,
@@ -718,8 +732,8 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
             avg_rounds = 0.0
             avg_steps = 0.0
 
-        # 晋升判定
-        promoted = win_rate >= args.promote_threshold
+        # 晋升判定 (初筛未通过直接拒绝晋升，杜绝低阈值穿透)
+        promoted = passed_prefilter and (win_rate >= args.promote_threshold)
         heu_win_rate = None
         blocked_by_heuristic = False
 
@@ -786,7 +800,12 @@ def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> No
             trainer.save_checkpoint(iter_filename, is_best=True, meta=meta)
             print(f"   💾 成功归档晋升存档: {ckpt_dir / iter_filename} 并同步更新主力 {best_path}")
         else:
-            reason_str = "未通过启发式基准检验" if blocked_by_heuristic else f"内战胜率 {win_rate*100:.1f}% 未达门禁要求 ({args.promote_threshold*100:.0f}%)"
+            if not passed_prefilter:
+                reason_str = f"直觉初筛胜率 {prefilter_win_rate*100:.1f}% 未达初筛门槛 ({args.cascaded_prefilter_threshold*100:.0f}%)"
+            elif blocked_by_heuristic:
+                reason_str = "未通过启发式基准检验"
+            else:
+                reason_str = f"内战胜率 {win_rate*100:.1f}% 未达门禁要求 ({args.promote_threshold*100:.0f}%)"
             print(f"   ⚠️ {reason_str} -> 淘汰放弃，保留原基准重新探索。")
             candidate_net.load_state_dict(baseline_net.state_dict())
 

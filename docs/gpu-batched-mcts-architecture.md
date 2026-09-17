@@ -39,7 +39,7 @@
 │               Batch Aggregator (平坦内存批收集器)                       │
 │                                                                        │
 │   • 统一轮询活跃 Worker，捕获所有 WaitingRootEval / WaitingLeafEval     │
-│   • 扁平切片预分配组装：batch_obs [B, 1005] 与 batch_indices [B]        │
+│   • 扁平切片预分配组装：batch_obs [B, 969] 与 batch_indices [B]         │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼ PyO3 零拷贝视图传递 (PyArray1)
@@ -47,7 +47,7 @@
 │               GPU 侧：PyTorch CUDA 批前向引擎 (GpuBatchedEvaluator)     │
 │                                                                        │
 │   • 模型驻留 GPU 显存 (SplendorNet, AMP FP16 自动半精度)               │
-│   • 批量输出：Logits [B, 288], Win [B, 1], Turns [B, 1], Reason [B, 3] │
+│   • 批量输出：Logits [B, 1856], Win [B, 1], Turns [B, 1], Reason [B, 3]│
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼ 结果广播与状态推进

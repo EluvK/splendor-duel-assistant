@@ -14,9 +14,9 @@ from splendor_ai.env import SplendorDuelEnv
 class CompactBatch:
     """紧凑内存样本块 (零多余对象开销，纯连续扁平数组)."""
 
-    obs: np.ndarray  # [N, OBS_SIZE] (879) float32
-    mask: np.ndarray  # [N, 288] bool
-    target_policy: np.ndarray  # [N, 288] float32 (MCTS visits 软概率分布)
+    obs: np.ndarray  # [N, OBS_SIZE] (969) float32
+    mask: np.ndarray  # [N, ACTION_SIZE] (1856) bool
+    target_policy: np.ndarray  # [N, ACTION_SIZE] (1856) float32 (MCTS visits 软概率分布)
     value: np.ndarray  # [N, 2] float32 (col 0: 纯胜负期望, col 1: 归一化剩余轮数)
     reason: np.ndarray  # [N, 3] float32 多标签独立胜因 (20_pts, 10_crowns, 10_color)
 

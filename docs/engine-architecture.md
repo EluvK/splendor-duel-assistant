@@ -58,7 +58,7 @@ engine/
 │   │   └── interactive.rs   # 面向 Web 交互与人机对战会话 (InteractiveSession)
 │   ├── bridge/              # 跨语言接口与特征张量化
 │   │   ├── mod.rs
-│   │   ├── encode.rs        # 726 维规范化状态观测与 288 维动作空间编解码
+│   │   ├── encode.rs        # 969 维规范化状态观测与 1856 维动作空间编解码
 │   │   └── pymod.rs         # PyO3 PyGameState 封装与多线程 NumPy 零拷贝转换
 │   └── bin/
 │       ├── bench.rs         # 引擎微基准与吞吐量压测
@@ -196,8 +196,8 @@ TurnPhase::GameOver(Reason)  处理 ExtraTurn 或切换到对手
 
 1. **`PyGameState` 类**：
    - `reset(seed)`: 确定性重置。
-   - `observe()`: 输出当前行动方规范视角的 726 维 `Vec<f32>`。
-   - `action_mask()`: 输出当前合法动作的 288 维 `Vec<bool>`。
+   - `observe()`: 输出当前行动方规范视角的 969 维 `Vec<f32>`。
+   - `action_mask()`: 输出当前合法动作的 1856 维 `Vec<bool>`。
    - `step(action_id)`: 执行动作 ID，推进状态机，返回 `(next_obs, done, winner)`。
    - `clone_state()`: 高效状态深拷贝。
    - `heuristic_action_id()`: 直接调用底层 C 语言级别启发式 AI 决策。

@@ -66,7 +66,7 @@ class SplendorNet(nn.Module):
       3. 集合自注意力机制 (Set Attention): 捕捉卡牌间互相提供加成/购买先后的连带协同
       4. 结构化动作打分器 (Structured Policy Head):
          - 卡牌预留/购买动作通过全局表征与对应卡牌 Token 双线性点积生成
-         - 离散与连线动作经由专用感知头生成，按 288 维标准动作空间装配
+         - 离散与连线动作经由专用感知头生成，按 1856 维标准动作空间装配
       5. 解耦多任务输出与同方差不确定性自适应损失 (Homoscedastic Loss Weighting)
     """
 
@@ -213,7 +213,7 @@ class SplendorNet(nn.Module):
             obs: [B, 1005] 或 [1005] 状态张量.
 
         Returns:
-            policy_logits: [B, 288] 组装好的未掩码动作 logits
+            policy_logits: [B, ACTION_SIZE] (1856) 组装好的未掩码动作 logits
             win_value: [B, 1] 纯胜率期望 ([-1.0, 1.0])
             turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
             reason_logits: [B, 3] 终局胜因 3 维独立多标签 logits
@@ -361,12 +361,12 @@ class SplendorNet(nn.Module):
         """计算合法动作概率分布与多目标评估.
 
         Args:
-            obs: [B, 915] 状态
-            mask: [B, 288] 动作掩码 (bool)
+            obs: [B, OBS_SIZE] 状态
+            mask: [B, ACTION_SIZE] 动作掩码 (bool)
             temperature: 采样温度 (默认 1.0)
 
         Returns:
-            probs: [B, 288] 合法动作概率分布
+            probs: [B, ACTION_SIZE] 合法动作概率分布
             win_value: [B, 1] 纯胜率预期 ([-1.0, 1.0])
             turns_value: [B, 1] 归一化剩余轮数预期 ([0.0, 1.0])
             reason_logits: [B, 3] 终局胜因 Logits

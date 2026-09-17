@@ -49,7 +49,7 @@ python/
 
 ## 3. 策略-价值神经网络架构 (`SplendorNet`)
 
-`SplendorNet` 接收当前行动方视角的 **1005 维**规范化观测向量，前向输出 **288 维**结构化动作对数概率、**1 维**胜负期望、**1 维**预期剩余轮数以及 **3 维**终局胜因预测。
+`SplendorNet` 接收当前行动方视角的 **969 维**规范化观测向量，前向输出 **1856 维**结构化动作对数概率、**1 维**胜负期望、**1 维**预期剩余轮数以及 **3 维**终局胜因预测。
 
 ### 3.1 网络拓扑图
 
@@ -90,7 +90,7 @@ Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Re
  + 3 购买预留卡)              │
  └─────────────┬──────────────┘
                ▼
-   Assembled Logits [B, 288]
+   Assembled Logits [B, 1856]
 ```
 
 ### 3.2 分支实现细节
@@ -108,7 +108,7 @@ Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Re
    - 通过两层 `Linear(128) + LayerNorm + ReLU` 深度提炼当前经济实力差距与斩杀线威胁。
 4. **主干融合与结构化多任务输出 (`fusion`, `policy`, `win`, `turns`, `reason`)**：
    - 将棋盘特征 (128)、卡牌特征 (128) 与上下文特征 (128) 拼接为 384 维，经由带有 LayerNorm 的主干融合层提炼为 256 维统一特征 `fused`。
-   - **Structured Policy Head**：卡牌预留（12维）、市场购买（12维）、手牌购买（3维）由 `fused` 分别投射出的 Query 向量与卡牌实体的 Attention Token 做双线性点积生成，并统一乘以标准注意力缩放因子 $1/\sqrt{d}$（$d=128$）与可学习标量增益 `card_logit_gain`，确保卡牌与离散头的 Logits 处于同等健康的方差数量级；其余 261 维动作通过两层 MLP 生成，最终拼装为完整的 288 维动作空间。
+   - **Structured Policy Head**：结构化动作打分器（token_head 172 维、reserve_head 375 维、buy_head 1260 维、ability_head 49 维），最终拼装为完整的 1856 维动作空间。
    - **Multi-Task Valuation**：同时输出对局胜率预测 `win_value`（$[-1.0, 1.0]$）、剩余轮数预期 `turns_value`（$[0.0, 1.0]$）及三种胜负原因的多标签预测 `reason_logits`（$[20\_pts, 10\_crowns, 10\_color]$），并利用同方差不确定性损失自动平衡梯度。
 
 ### 3.3 ONNX 极速动态导出 (`export_onnx_bytes`)
@@ -129,11 +129,12 @@ Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Re
 ```
 
 ### 4.1 样本紧凑表示 (`CompactBatch`)
-放弃零散 Python 对象，所有数据以 4 个连续 NumPy 数组存储：
-- `obs`: `[N, 1005]` float32
-- `mask`: `[N, 288]` bool
+放弃零散 Python 对象，所有数据以连续 NumPy 数组存储：
+- `obs`: `[N, 969]` float32
+- `mask`: `[N, 1856]` bool
 - `action`: `[N]` int64 (标量动作 ID)
-- `value`: `[N, 1]` float32 (终局归属视角值)
+- `value`: `[N, 2]` float32 (纯胜负与归一化剩余轮数)
+- `reason`: `[N, 3]` float32 (终局胜因多标签)
 
 单个分片支持 `.npz` 直接持久化，并利用 `FastTensorLoader` 直接一次性 `.to(device)` 驻留 GPU 显存，训练迭代时切片开销降至极限。
 

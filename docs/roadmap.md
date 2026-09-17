@@ -11,7 +11,7 @@
   - 官方规则书与 BGA 规则严格对齐 (docs/splendor-duel-rules.md)
   - 纯 Rust 高性能游戏规则引擎 (6.7万局/秒, 2300万步/秒)
   - 本地单页对局回放与时间轴视窗 (engine/src/bin/replay_web.rs & engine/web/)
-  - 726 维状态观察张量 + 288 维离散动作掩码设计 (docs/action-encoding.md)
+  - 969 维状态观察张量 + 1856 维离散动作掩码设计 (docs/action-encoding.md)
 
 [阶段 1: 已完成 ✅] Rust ↔ Python 桥接与 Gym 环境
   - PyO3 导出 _engine 模块与 NumPy 零拷贝转换 (engine/src/bridge/pymod.rs)
@@ -20,7 +20,7 @@
 
 [阶段 2: 已完成 ✅] Policy-Value 神经网络与启发式基准
   - 2D ResNet (5x5 棋盘) + 全局上下文 MLP 混合骨干 (SplendorNet)
-  - Policy Head (288 logits) + Value Head ([-1, 1] 胜率预测)
+  - Policy Head (1856 logits) + Value Head ([-1, 1] 胜率预测)
   - 规则启发式专家 AI (HeuristicAI) 作为冷启动样本生成器与对比基准
   - 动态 ONNX 字节流导出 (export_onnx_bytes) 与 tract-onnx 纯 Rust 极速推理
 
