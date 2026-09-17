@@ -1,4 +1,4 @@
-"""Tests for MCTS agents and Arena evaluation."""
+"""Tests for agents and Arena evaluation."""
 
 import numpy as np
 import pytest
@@ -7,7 +7,6 @@ import torch
 from splendor_ai import (
     Arena,
     HeuristicAgent,
-    MCTSAgent,
     PolicyNetAgent,
     RandomAgent,
     SplendorDuelEnv,
@@ -15,11 +14,11 @@ from splendor_ai import (
 )
 
 
-def test_mcts_agent_action():
+def test_heuristic_agent_action():
     env = SplendorDuelEnv(seed=42)
     env.reset()
 
-    agent = MCTSAgent(num_sims=20)
+    agent = HeuristicAgent()
     action = agent.select_action(env)
 
     assert isinstance(action, int)
@@ -38,13 +37,13 @@ def test_arena_paired_match():
     assert res.avg_steps > 0
 
 
-def test_mcts_vs_random_arena():
-    agent_mcts = MCTSAgent(num_sims=20)
+def test_heuristic_vs_random_arena():
+    agent_heu = HeuristicAgent()
     agent_rand = RandomAgent()
 
-    arena = Arena(agent_mcts, agent_rand, agent0_name="MCTS", agent1_name="Rand")
+    arena = Arena(agent_heu, agent_rand, agent0_name="Heuristic", agent1_name="Rand")
     res = arena.play_match(num_pairs=2, base_seed=999)
 
     assert res.total_games == 4
-    # MCTS 对战纯随机 AI 应该取得压倒性胜利
+    # 启发式规则 AI 对战纯随机 AI 应该取得压倒性胜利
     assert res.agent0_wins >= 3

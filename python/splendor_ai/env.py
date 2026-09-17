@@ -124,15 +124,6 @@ class SplendorDuelEnv:
         actual_seed = seed if seed is not None else int(np.random.randint(0, 2**31 - 1))
         return self.game.heuristic_action_id(actual_seed)
 
-    def rust_mcts_action(
-        self,
-        num_sims: int = 50,
-        seed: Optional[int] = None,
-        max_rollout_steps: int = 15,
-    ) -> Optional[int]:
-        """获取底层 Rust 原生高性能 MCTS 推荐的动作 ID."""
-        return self.game.mcts_action_id(num_sims, seed, max_rollout_steps=max_rollout_steps)
-
     def clone(self) -> "SplendorDuelEnv":
         """深拷贝环境，用于 MCTS 搜索分支模拟."""
         new_env = SplendorDuelEnv.__new__(SplendorDuelEnv)

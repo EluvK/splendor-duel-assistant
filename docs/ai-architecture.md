@@ -123,13 +123,9 @@ Card Dot-Product Proj    Discrete MLP Head            Win Head    Turns Head  Re
    Rust sample_heuristic_games_parallel (8 线程并发)
    └── 吞吐 > 50 万步/秒 ──► 快速生成 5~10 万步专家对局数据，拟合初始策略网络
 
-[Phase 2: MCTS 深度推演样本混合]
-   Rust sample_mcts_games_parallel_with_config
-   └── 融入树搜索与 Dirichlet 探索 ──► 产出更高质量策略分布
-
-[Phase 3: 纯神经网络 AlphaZero 自博弈闭环]
+[Phase 2: 纯神经网络 AlphaZero 自博弈与联盟对决闭环]
    Rust sample_neural_mcts_games_parallel (结合 Tract ONNX)
-   └── 完全脱离规则偏见，网络指导 MCTS 自博弈 ──► 产生超越人类理解的博弈对局
+   └── 完全脱离规则偏见，纯神经指导 MCTS 自博弈与对抗 ──► 产出高质量探索策略与价值对局
 ```
 
 ### 4.1 样本紧凑表示 (`CompactBatch`)

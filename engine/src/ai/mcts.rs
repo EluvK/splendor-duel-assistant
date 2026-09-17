@@ -2,7 +2,6 @@ use rand::prelude::*;
 use rand_distr::multi::{Dirichlet, MultiDistribution};
 use std::collections::HashMap;
 
-use crate::ai::heuristic_ai::HeuristicAI;
 use crate::ai::neural_evaluator::{NeuralPrediction, TractNeuralEvaluator};
 use crate::bridge::{action_to_id, encode_state, ACTION_SIZE};
 use crate::game_state::phase::TurnPhase;
@@ -171,204 +170,24 @@ fn collapse_deterministic_micro_steps(sim_state: &mut GameState) {
     }
 }
 
-/// 基于先验剪枝的高性能 AlphaZero 风格 MCTS
+/// 基于纯神经网络推理与 AlphaZero 探索机制的高性能 Rust 原生 MCTS
 pub struct RustMCTS {
     c_puct: f32,
-    max_rollout_steps: usize,
 }
 
 impl Default for RustMCTS {
     fn default() -> Self {
         Self {
             c_puct: 1.5,
-            max_rollout_steps: 30,
         }
     }
 }
 
 impl RustMCTS {
-    pub fn new(c_puct: f32, max_rollout_steps: usize) -> Self {
+    pub fn new(c_puct: f32) -> Self {
         Self {
             c_puct,
-            max_rollout_steps,
         }
-    }
-
-    /// 执行 MCTS 搜索并返回推荐的最佳动作 (确定性贪婪模式)
-    pub fn search<R: Rng + ?Sized>(
-        &self,
-        state: &GameState,
-        num_simulations: usize,
-        rng: &mut R,
-    ) -> Option<Action> {
-        self.search_with_exploration(state, num_simulations, false, 0.3, 0.25, 0.0, rng)
-    }
-
-    /// 执行带 AlphaZero 探索机制的 MCTS 搜索 (支持根节点 Dirichlet 噪声与温度轮盘赌采样)
-    pub fn search_with_exploration<R: Rng + ?Sized>(
-        &self,
-        state: &GameState,
-        num_simulations: usize,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
-        rng: &mut R,
-    ) -> Option<Action> {
-        self.search_with_exploration_policy(
-            state,
-            num_simulations,
-            add_dirichlet,
-            dirichlet_alpha,
-            dirichlet_eps,
-            temperature,
-            rng,
-        )
-        .map(|(a, _)| a)
-    }
-
-    /// 执行带启发式评估的 MCTS 搜索并返回选择的动作以及完整的 288 维访问频次软策略分布
-    pub fn search_with_exploration_policy<R: Rng + ?Sized>(
-        &self,
-        state: &GameState,
-        num_simulations: usize,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
-        rng: &mut R,
-    ) -> Option<(Action, [f32; ACTION_SIZE])> {
-        let legals = RuleEngine::legal_actions(state);
-        if legals.is_empty() {
-            return None;
-        }
-        // 零开销快捷路径：单一动作免搜索直接返回
-        if legals.len() == 1 {
-            let mut policy = [0.0f32; ACTION_SIZE];
-            let id = action_to_id(&legals[0]);
-            if id < ACTION_SIZE {
-                policy[id] = 1.0;
-            }
-            return Some((legals[0].clone(), policy));
-        }
-
-        let mut nodes: Vec<Node> = Vec::with_capacity(num_simulations * 2);
-        let root_idx = 0;
-        let is_term = matches!(state.phase, TurnPhase::GameOver(_));
-
-        // 根节点利用启发式先验展开所有合法分支
-        let mut root_edges = Self::create_edges_with_priors(state, legals);
-
-        // 注入 Dirichlet 探索噪声 (强行给次优分支分配搜索预算，打破开局盲区)
-        if add_dirichlet && root_edges.len() >= 2 {
-            let alphas = vec![dirichlet_alpha; root_edges.len()];
-            if let Ok(dir) = Dirichlet::new(&alphas) {
-                let mut noise = vec![0.0f32; root_edges.len()];
-                dir.sample_to_slice(rng, &mut noise);
-                let mut sum = 0.0f32;
-                for (i, edge) in root_edges.iter_mut().enumerate() {
-                    edge.prior = (1.0 - dirichlet_eps) * edge.prior + dirichlet_eps * noise[i];
-                    sum += edge.prior;
-                }
-                if sum > 1e-6 {
-                    for edge in root_edges.iter_mut() {
-                        edge.prior /= sum;
-                    }
-                }
-            }
-        }
-
-        nodes.push(Node {
-            player: state.current_player,
-            visits: 1,
-            edges: root_edges,
-            is_terminal: is_term,
-        });
-
-        let mut base_sim_state = state.determinize_for_player(state.current_player, rng);
-        for sim_idx in 0..num_simulations {
-            if sim_idx > 0 && sim_idx % MIS_BLOCK_SIZE == 0 {
-                base_sim_state = state.determinize_for_player(state.current_player, rng);
-            }
-            let mut sim_state = base_sim_state.clone();
-            let mut curr_node_idx = root_idx;
-            // 记录沿途 (node_idx, edge_idx)
-            let mut path: Vec<(usize, usize)> = Vec::with_capacity(16);
-
-            // 1. Selection: 沿着树向下选择 PUCT 最大分支
-            while !nodes[curr_node_idx].is_terminal && !nodes[curr_node_idx].edges.is_empty() {
-                let best_edge_idx = self.select_best_edge(&nodes[curr_node_idx]);
-                let action = nodes[curr_node_idx].edges[best_edge_idx].action.clone();
-                if GameEngine::step(&mut sim_state, &action).is_err() {
-                    break;
-                }
-                collapse_deterministic_micro_steps(&mut sim_state);
-                path.push((curr_node_idx, best_edge_idx));
-
-                // 若该边已有子节点，继续向下探索；否则在当前叶子停止展开
-                if let Some(child_idx) = nodes[curr_node_idx].edges[best_edge_idx].child_idx {
-                    curr_node_idx = child_idx;
-                } else {
-                    break;
-                }
-            }
-
-            if path.is_empty() {
-                continue;
-            }
-
-            // 2. Expansion: 为当前选中的末梢边展开新子节点
-            let &(last_node_idx, last_edge_idx) = path.last().unwrap();
-            let next_is_term = matches!(sim_state.phase, TurnPhase::GameOver(_));
-            let new_node_idx = nodes.len();
-
-            let next_legals = RuleEngine::legal_actions(&sim_state);
-            let next_edges = if next_is_term {
-                Vec::new()
-            } else {
-                Self::create_edges_with_priors(&sim_state, next_legals)
-            };
-
-            nodes.push(Node {
-                player: sim_state.current_player,
-                visits: 0,
-                edges: next_edges,
-                is_terminal: next_is_term,
-            });
-            nodes[last_node_idx].edges[last_edge_idx].child_idx = Some(new_node_idx);
-
-            // 3. Evaluation / Rollout
-            let v_p0 = self.evaluate_or_rollout(&mut sim_state, rng);
-
-            // 4. Backup: 沿路径反向回传 Player-0 绝对价值
-            for &(n_idx, e_idx) in path.iter() {
-                nodes[n_idx].visits += 1;
-                nodes[n_idx].edges[e_idx].visits += 1;
-                nodes[n_idx].edges[e_idx].w_p0 += v_p0;
-            }
-
-            // 自适应早停判断：仅在确定性贪婪模式 (temperature <= 0.01) 下生效
-            // 若根节点第一分支访问量 N1 与第二分支访问量 N2 的差值大于剩余推演次数，
-            // 则即使剩余推演全部给 N2，N2 也绝对无法反超，提前安全截断
-            if temperature <= 0.01 && nodes[root_idx].edges.len() >= 2 {
-                let remaining = (num_simulations - 1 - sim_idx) as u32;
-                let mut max_visits = 0;
-                let mut second_max_visits = 0;
-                for edge in &nodes[root_idx].edges {
-                    if edge.visits > max_visits {
-                        second_max_visits = max_visits;
-                        max_visits = edge.visits;
-                    } else if edge.visits > second_max_visits {
-                        second_max_visits = edge.visits;
-                    }
-                }
-                if max_visits.saturating_sub(second_max_visits) > remaining {
-                    break;
-                }
-            }
-        }
-
-        Self::extract_policy_distribution(&nodes[root_idx].edges, temperature, rng)
     }
 
     /// 从根节点分支访问量中提取完整的 288 维软策略分布并进行采样
@@ -797,39 +616,6 @@ impl RustMCTS {
         Self::create_edges_with_neural_priors_cached(state, legals, evaluator, &mut cache)
     }
 
-    /// 使用先验打分并做平滑 Softmax 归一化初始化分支
-    fn create_edges_with_priors(state: &GameState, legals: Vec<Action>) -> Vec<Edge> {
-        let mut scores = Vec::with_capacity(legals.len());
-        let mut max_score = f32::NEG_INFINITY;
-
-        for act in legals.iter() {
-            // 获取动作评估分
-            let s = HeuristicAI::evaluate_action(state, act);
-            max_score = max_score.max(s);
-            scores.push(s);
-        }
-
-        // 经由带温度的 Softmax 得到先验概率
-        let temperature = 15.0; // 适当平滑，兼顾探索
-        let exp_scores: Vec<f32> = scores
-            .iter()
-            .map(|&s| ((s - max_score) / temperature).exp())
-            .collect();
-        let sum_exp: f32 = exp_scores.iter().sum::<f32>().max(1e-6);
-
-        legals
-            .into_iter()
-            .enumerate()
-            .map(|(i, action)| Edge {
-                action,
-                prior: exp_scores[i] / sum_exp,
-                visits: 0,
-                w_p0: 0.0,
-                child_idx: None,
-            })
-            .collect()
-    }
-
     fn select_best_edge(&self, node: &Node) -> usize {
         let total_sqrt = (node.visits as f32).sqrt().max(1.0);
         let mut best_score = f32::NEG_INFINITY;
@@ -854,48 +640,5 @@ impl RustMCTS {
         }
 
         best_idx
-    }
-
-    /// 极速前瞻评估：终局直接判定，未终局向前启发式推演并计算终态局势差
-    fn evaluate_or_rollout<R: Rng + ?Sized>(&self, state: &mut GameState, rng: &mut R) -> f32 {
-        if let TurnPhase::GameOver(_) = state.phase {
-            return match state.winner.map(|(w, _)| w) {
-                Some(0) => 1.0,
-                Some(1) => -1.0,
-                _ => 0.0,
-            };
-        }
-
-        for _ in 0..self.max_rollout_steps {
-            if matches!(state.phase, TurnPhase::GameOver(_)) {
-                break;
-            }
-            if let Some(act) = HeuristicAI::select_action(state, rng) {
-                if GameEngine::step(state, &act).is_err() {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        if let TurnPhase::GameOver(_) = state.phase {
-            return match state.winner.map(|(w, _)| w) {
-                Some(0) => 1.0,
-                Some(1) => -1.0,
-                _ => 0.0,
-            };
-        }
-
-        // 平滑综合局势差
-        let p0 = &state.players[0];
-        let p1 = &state.players[1];
-
-        let pt_diff = (p0.total_points as f32 - p1.total_points as f32) / 20.0;
-        let crown_diff = (p0.total_crowns as f32 - p1.total_crowns as f32) / 10.0;
-        let priv_diff = (p0.privileges as f32 - p1.privileges as f32) / 3.0;
-
-        let eval = pt_diff + 0.6 * crown_diff + 0.2 * priv_diff;
-        eval.clamp(-1.0, 1.0)
     }
 }

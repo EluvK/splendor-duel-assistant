@@ -43,10 +43,10 @@
           <span id="neuralModelText">Epoch: --</span>
           <span style="font-size:0.68rem; color:#38bdf8;">🔄</span>
         </span>
-        <div class="mcts-config-group" style="display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding-left:6px; border-left:1px solid rgba(255,255,255,0.15);" title="设置 AI 蒙特卡洛树搜索 (MCTS) 推演强度">
-          <span style="font-size:0.75rem; color:#c084fc; font-weight:700;">🌲 MCTS:</span>
+        <div class="mcts-config-group" id="mctsConfigGroup" style="display:inline-flex; align-items:center; gap:4px; margin-left:6px; padding-left:6px; border-left:1px solid rgba(255,255,255,0.15);" title="设置神经网络 AI 蒙特卡洛树搜索 (MCTS) 推演强度">
+          <span style="font-size:0.75rem; color:#c084fc; font-weight:700;">🌲 神经 MCTS:</span>
           <select id="mctsSimsSelect" style="padding: 2px 5px; font-size: 0.72rem; border-radius: 4px; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.15); color: #fff; cursor: pointer;">
-            <option value="0">⚡ 纯直觉 (0次)</option>
+            <option value="0">⚡ 纯直觉网络 (0次)</option>
             <option value="15">🥉 快速 (15次)</option>
             <option value="30" selected>🥈 深度 (30次)</option>
             <option value="60">🥇 强力 (60次)</option>

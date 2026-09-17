@@ -196,8 +196,9 @@ export class GameController {
     this.stepDetailBody = document.getElementById('stepDetailBody');
     this.btnStepDetailClose = document.getElementById('btnStepDetailClose');
 
-    // MCTS 推演强度下拉框
+    // MCTS 推演强度下拉框与配置组
     this.mctsSimsSelect = document.getElementById('mctsSimsSelect');
+    this.mctsConfigGroup = document.getElementById('mctsConfigGroup');
   }
 
   bindEvents() {
@@ -264,8 +265,18 @@ export class GameController {
     }
 
     this.checkNeuralStatus();
+    this.updateMctsVisibility();
     // 每 5 秒静默同步一次神经网络状态
     setInterval(() => this.checkNeuralStatus(), 5000);
+  }
+
+  updateMctsVisibility() {
+    const p0 = document.getElementById('p0KindSelect')?.value || this.playerKinds?.[0];
+    const p1 = document.getElementById('p1KindSelect')?.value || this.playerKinds?.[1];
+    const hasNeural = (p0 === 'neural' || p1 === 'neural');
+    if (this.mctsConfigGroup) {
+      this.mctsConfigGroup.style.display = hasNeural ? 'inline-flex' : 'none';
+    }
   }
 
   updateSoundButton() {
@@ -371,6 +382,7 @@ export class GameController {
         p0Select.value = 'human';
       }
     }
+    this.updateMctsVisibility();
     this.startNewGame();
   }
 
@@ -381,6 +393,7 @@ export class GameController {
     const temp = p0Select.value;
     p0Select.value = p1Select.value;
     p1Select.value = temp;
+    this.updateMctsVisibility();
     await this.startNewGame();
   }
 
@@ -448,6 +461,7 @@ export class GameController {
     const p1Select = document.getElementById('p1KindSelect');
     if (p0Select && this.playerKinds[0]) p0Select.value = this.playerKinds[0];
     if (p1Select && this.playerKinds[1]) p1Select.value = this.playerKinds[1];
+    this.updateMctsVisibility();
 
     this.selectedBoardPositions = [];
     this.selectedGoldPos = null;

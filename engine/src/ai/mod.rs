@@ -19,6 +19,6 @@ pub use replay::{
 };
 pub use sampling::{
     CompactBatchSamples, ParallelMatchResult, evaluate_neural_match_parallel,
-    sample_heuristic_games_parallel, sample_mcts_games_parallel_with_config,
-    sample_neural_mcts_games_parallel, sample_neural_mcts_match_games_parallel,
+    sample_heuristic_games_parallel, sample_neural_mcts_games_parallel,
+    sample_neural_mcts_match_games_parallel,
 };

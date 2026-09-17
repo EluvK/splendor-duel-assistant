@@ -18,10 +18,8 @@ from splendor_ai.arena import Arena
 from splendor_ai.mcts import (
     Agent,
     HeuristicAgent,
-    MCTSAgent,
     PolicyNetAgent,
     RandomAgent,
-    RustMCTSAgent,
 )
 from splendor_ai.net import SplendorNet
 
@@ -79,13 +77,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--agent1",
         type=str,
-        choices=["net", "rust_mcts", "mcts", "heuristic", "random"],
+        choices=["net", "heuristic", "random"],
         default=None,
     )
     parser.add_argument(
         "--agent2",
         type=str,
-        choices=["net", "rust_mcts", "mcts", "heuristic", "random"],
+        choices=["net", "heuristic", "random"],
         default=None,
     )
 
@@ -183,8 +181,6 @@ def load_python_agent(
         return HeuristicAgent(), "HeuristicAI"
     if agent_type == "random":
         return RandomAgent(), "RandomAI"
-    if agent_type in ["rust_mcts", "mcts"]:
-        return MCTSAgent(num_sims=sims), f"HeuristicMCTS-{sims}"
 
     # 神经网络 (Python 模式仅作为纯直觉网络评估，如需 MCTS 树搜索请使用推荐的 Rust 后端)
     net = SplendorNet().to(device)

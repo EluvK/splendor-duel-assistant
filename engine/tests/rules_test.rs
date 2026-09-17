@@ -488,7 +488,7 @@ fn test_determinize_for_player_conservation_and_privacy() {
 }
 
 #[test]
-fn test_mcts_determinization_search() {
+fn test_determinization_with_hidden_cards() {
     let mut game = GameState::new_game(777);
     let mut rng = ChaCha8Rng::seed_from_u64(888);
 
@@ -496,15 +496,9 @@ fn test_mcts_determinization_search() {
     let opp_blind = game.decks[0].pop().unwrap();
     game.players[1].reserved_cards.push(ReservedCard::new(opp_blind, false));
 
-    let mcts = RustMCTS::default();
-    let action = mcts.search_with_exploration(&game, 30, false, 0.3, 0.25, 0.0, &mut rng);
-
-    assert!(action.is_some(), "带有对手盲抽暗牌的局面下，MCTS 搜索必须顺利生成合法决策！");
-    let legal = RuleEngine::legal_actions(&game);
-    assert!(
-        legal.contains(&action.unwrap()),
-        "MCTS 产生的决策必须属于当前真实局面的合法动作！"
-    );
+    let det_state = game.determinize_for_player(0, &mut rng);
+    let legal = RuleEngine::legal_actions(&det_state);
+    assert!(!legal.is_empty(), "确定化后的状态必须能正常生成合法动作！");
 }
 
 #[test]

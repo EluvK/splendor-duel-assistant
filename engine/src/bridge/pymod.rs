@@ -140,38 +140,6 @@ impl PyGameState {
         })
     }
 
-    /// 调用底层 Rust 原生高性能 MCTS 进行推演并返回最佳动作 ID (微秒级响应，释放 GIL 允许 Python 全核并发)
-    #[pyo3(signature = (num_sims=50, seed=None, add_dirichlet=false, dirichlet_alpha=0.3, dirichlet_eps=0.25, temperature=0.0, max_rollout_steps=15))]
-    pub fn mcts_action_id(
-        &self,
-        py: Python<'_>,
-        num_sims: usize,
-        seed: Option<u64>,
-        add_dirichlet: bool,
-        dirichlet_alpha: f32,
-        dirichlet_eps: f32,
-        temperature: f32,
-        max_rollout_steps: usize,
-    ) -> Option<usize> {
-        py.detach(|| {
-            let mut rng = match seed {
-                Some(s) => rand_chacha::ChaCha8Rng::seed_from_u64(s),
-                None => rand_chacha::ChaCha8Rng::from_rng(&mut rand::rng()),
-            };
-            let mcts = crate::ai::RustMCTS::new(1.5, max_rollout_steps);
-            mcts.search_with_exploration(
-                &self.state,
-                num_sims,
-                add_dirichlet,
-                dirichlet_alpha,
-                dirichlet_eps,
-                temperature,
-                &mut rng,
-            )
-            .map(|a| action_to_id(&a))
-        })
-    }
-
     #[staticmethod]
     pub fn observation_space_size() -> usize {
         OBS_SIZE
@@ -199,51 +167,6 @@ pub fn generate_heuristic_samples(
     usize,
 )> {
     let batch = py.detach(|| crate::ai::sample_heuristic_games_parallel(num_games, start_seed));
-
-    let (obs_arr, mask_arr, policy_arr, value_arr, reason_arr) = Python::attach(|py| {
-        (
-            numpy::PyArray1::from_vec(py, batch.obs).unbind(),
-            numpy::PyArray1::from_vec(py, batch.masks).unbind(),
-            numpy::PyArray1::from_vec(py, batch.policies).unbind(),
-            numpy::PyArray1::from_vec(py, batch.values).unbind(),
-            numpy::PyArray1::from_vec(py, batch.reasons).unbind(),
-        )
-    });
-
-    Ok((obs_arr, mask_arr, policy_arr, value_arr, reason_arr, batch.total_steps))
-}
-
-/// 批量多线程并行生成带 MCTS 深度推演与 AlphaZero 探索机制的自博弈样本 (8 线程全速并发)
-#[pyfunction]
-#[pyo3(signature = (num_games=100, num_sims=30, start_seed=42, temp_steps=12, temp_final=0.25, dirichlet_alpha=0.3, dirichlet_eps=0.25))]
-pub fn generate_mcts_samples(
-    py: Python<'_>,
-    num_games: usize,
-    num_sims: usize,
-    start_seed: u64,
-    temp_steps: usize,
-    temp_final: f32,
-    dirichlet_alpha: f32,
-    dirichlet_eps: f32,
-) -> PyResult<(
-    pyo3::Py<numpy::PyArray1<f32>>,
-    pyo3::Py<numpy::PyArray1<u8>>,
-    pyo3::Py<numpy::PyArray1<f32>>,
-    pyo3::Py<numpy::PyArray1<f32>>,
-    pyo3::Py<numpy::PyArray1<f32>>,
-    usize,
-)> {
-    let batch = py.detach(|| {
-        crate::ai::sample_mcts_games_parallel_with_config(
-            num_games,
-            num_sims,
-            start_seed,
-            temp_steps,
-            temp_final,
-            dirichlet_alpha,
-            dirichlet_eps,
-        )
-    });
 
     let (obs_arr, mask_arr, policy_arr, value_arr, reason_arr) = Python::attach(|py| {
         (

@@ -20,10 +20,8 @@ from splendor_ai.env import SplendorDuelEnv
 from splendor_ai.mcts import (
     Agent,
     HeuristicAgent,
-    MCTSAgent,
     PolicyNetAgent,
     RandomAgent,
-    RustMCTSAgent,
 )
 from splendor_ai.net import SplendorNet
 from splendor_ai.progress import Progress
@@ -55,11 +53,9 @@ __all__ = [
     "TerminationDecision",
     "AdviceReport",
     "Agent",
-    "MCTSAgent",
     "PolicyNetAgent",
     "HeuristicAgent",
     "RandomAgent",
-    "RustMCTSAgent",
     "Arena",
     "ArenaResult",
     "generate_heuristic_compact_batch",

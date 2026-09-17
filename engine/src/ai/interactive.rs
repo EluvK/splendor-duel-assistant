@@ -237,83 +237,7 @@ impl InteractiveSession {
         let (action, decision) = match kind {
             PlayerKind::Human => return Ok(None),
             PlayerKind::Heuristic => {
-                if sims > 0 {
-                    let mcts = RustMCTS::new(1.5, 15);
-                    let legals = RuleEngine::legal_actions(&self.game);
-                    if legals.is_empty() {
-                        (None, None)
-                    } else if legals.len() == 1 {
-                        let chosen = legals[0].clone();
-                        let decision = DecisionDto {
-                            ai_type: format!("heuristic mcts ({} sims)", sims),
-                            chosen_score: None,
-                            top_candidates: vec![ScoredActionDto {
-                                action_desc: format_action(&chosen),
-                                score: 100.0,
-                                is_chosen: true,
-                            }],
-                        };
-                        (Some(chosen), Some(decision))
-                    } else if let Some((best_act, policy)) = mcts.search_with_exploration_policy(
-                        &self.game,
-                        sims,
-                        false,
-                        0.3,
-                        0.25,
-                        0.0,
-                        &mut self.rng,
-                    ) {
-                        let mut scored: Vec<(Action, f32)> = legals
-                            .into_iter()
-                            .map(|a| {
-                                let id = action_to_id(&a);
-                                let p = if id < ACTION_SIZE { policy[id] } else { 0.0 };
-                                (a, p)
-                            })
-                            .collect();
-                        scored.sort_unstable_by(|a, b| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-
-                        let top_candidates: Vec<ScoredActionDto> = scored
-                            .into_iter()
-                            .take(8)
-                            .map(|(act, p)| ScoredActionDto {
-                                action_desc: format_action(&act),
-                                score: p * 100.0,
-                                is_chosen: act == best_act,
-                            })
-                            .collect();
-
-                        let decision = DecisionDto {
-                            ai_type: format!("heuristic mcts ({} sims)", sims),
-                            chosen_score: None,
-                            top_candidates,
-                        };
-                        (Some(best_act), Some(decision))
-                    } else if let Some((best_act, score, scored_list)) =
-                        HeuristicAI::evaluate_and_select(&self.game, &mut self.rng)
-                    {
-                        let top_candidates: Vec<ScoredActionDto> = scored_list
-                            .iter()
-                            .take(8)
-                            .map(|(act, s)| ScoredActionDto {
-                                action_desc: format_action(act),
-                                score: *s,
-                                is_chosen: act == &best_act,
-                            })
-                            .collect();
-
-                        let decision = DecisionDto {
-                            ai_type: "heuristic (fallback)".to_string(),
-                            chosen_score: Some(score),
-                            top_candidates,
-                        };
-                        (Some(best_act), Some(decision))
-                    } else {
-                        (None, None)
-                    }
-                } else if let Some((best_act, score, scored_list)) =
+                if let Some((best_act, score, scored_list)) =
                     HeuristicAI::evaluate_and_select(&self.game, &mut self.rng)
                 {
                     let top_candidates: Vec<ScoredActionDto> = scored_list
@@ -364,7 +288,7 @@ impl InteractiveSession {
                         };
                         (Some(chosen), Some(decision))
                     } else {
-                        let mcts = RustMCTS::new(1.5, 15);
+                        let mcts = RustMCTS::default();
                         let mut eval_cache = NeuralEvalCache::default();
                         let search_res = mcts.search_neural_policy_with_legals_and_cache(
                             &self.game,

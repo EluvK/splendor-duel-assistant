@@ -1,4 +1,4 @@
-"""Agents and MCTS interfaces for Splendor Duel."""
+"""Agents and interfaces for Splendor Duel."""
 
 import random
 from typing import Optional
@@ -14,21 +14,6 @@ class Agent:
 
     def select_action(self, env: SplendorDuelEnv) -> int:
         raise NotImplementedError
-
-
-class MCTSAgent(Agent):
-    """纯 Rust 底层原生高性能 MCTS 智能体 (单步微秒级推演，棋力超越启发式规则)."""
-
-    def __init__(self, num_sims: int = 50) -> None:
-        self.num_sims = num_sims
-
-    def select_action(self, env: SplendorDuelEnv) -> int:
-        act = env.rust_mcts_action(num_sims=self.num_sims)
-        return act if act is not None else 0
-
-
-# 保持命名兼容
-RustMCTSAgent = MCTSAgent
 
 
 class PolicyNetAgent(Agent):

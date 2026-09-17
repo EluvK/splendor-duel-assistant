@@ -184,8 +184,8 @@ TurnPhase::GameOver(Reason)  处理 ExtraTurn 或切换到对手
 ### 5.4 并行自博弈与严格换座对抗 (`sampling.rs`)
 - 基于 `rayon` 实现线程级并行数据生成：
   - `sample_heuristic_games_parallel`: 8 线程并行生成启发式专家自对弈轨迹，吞吐超 50 万步/秒。
-  - `sample_mcts_games_parallel_with_config`: 并行 MCTS 采样。
   - `sample_neural_mcts_games_parallel`: 结合 tract-onnx 进行纯神经引导 MCTS 并发采样。
+  - `sample_neural_mcts_match_games_parallel`: 结合模型与对手进行多轮对抗采样。
   - `evaluate_neural_match_parallel`: 严格成对换座双向对战评测（种子 S 下分别以先手和后手进行对抗），彻底消除荷官发牌运气方差，在 2~3 秒内完成 20 局成对门禁对抗。
 
 ---
@@ -200,9 +200,9 @@ TurnPhase::GameOver(Reason)  处理 ExtraTurn 或切换到对手
    - `action_mask()`: 输出当前合法动作的 288 维 `Vec<bool>`。
    - `step(action_id)`: 执行动作 ID，推进状态机，返回 `(next_obs, done, winner)`。
    - `clone_state()`: 高效状态深拷贝。
-   - `heuristic_action_id()`, `mcts_action_id()`: 直接调用底层 C 语言级别 AI 决策。
+   - `heuristic_action_id()`: 直接调用底层 C 语言级别启发式 AI 决策。
 2. **多线程采样导出函数**：
-   - `generate_heuristic_samples`, `generate_mcts_samples`, `generate_neural_mcts_samples`, `evaluate_neural_match`。
+   - `generate_heuristic_samples`, `generate_neural_mcts_samples`, `generate_neural_mcts_match_samples`, `evaluate_neural_match`。
    - 全部在 `py.detach(|| ...)` 中执行，**完全释放 Python 全局解释器锁 (GIL)**，在后台全核跑满 CPU；完成后通过 `numpy::PyArray1::from_vec` 零拷贝交还 Python 托管，杜绝序列化损耗。
 
 ---
