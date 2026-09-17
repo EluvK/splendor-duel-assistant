@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use crate::ai::heuristic_ai::HeuristicAI;
 use crate::ai::mcts::{compute_adaptive_sims, RustMCTS};
-use crate::ai::neural_evaluator::{NeuralEvaluator, TractNeuralEvaluator};
+use crate::ai::neural_evaluator::TractNeuralEvaluator;
 use crate::bridge::encode::{
     action_mask_from_legals, action_to_id, encode_state, ACTION_SIZE, OBS_SIZE,
 };
@@ -205,9 +205,9 @@ pub fn sample_heuristic_games_parallel(num_games: usize, start_seed: u64) -> Com
     }
 }
 
-fn simulate_single_neural_mcts_game<E: NeuralEvaluator + ?Sized>(
+fn simulate_single_neural_mcts_game(
     mcts: &RustMCTS,
-    evaluator: &E,
+    evaluator: &TractNeuralEvaluator,
     num_sims: usize,
     seed: u64,
     temp_steps: usize,

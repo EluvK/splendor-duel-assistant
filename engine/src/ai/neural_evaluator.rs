@@ -6,42 +6,6 @@ use crate::bridge::{ACTION_SIZE, OBS_SIZE};
 
 pub type RunnableModel = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
 
-/// 神经网络评估器统一 Trait (抽象 CPU tract-onnx、GPU PyTorch 批推理回调等各种推理后端)
-pub trait NeuralEvaluator: Send + Sync {
-    fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], NeuralPrediction), String>;
-
-    fn evaluate_batch(
-        &self,
-        obs_list: &[[f32; OBS_SIZE]],
-    ) -> Result<Vec<([f32; ACTION_SIZE], NeuralPrediction)>, String> {
-        obs_list.iter().map(|obs| self.evaluate(obs)).collect()
-    }
-}
-
-impl<T: NeuralEvaluator + ?Sized> NeuralEvaluator for Arc<T> {
-    #[inline]
-    fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], NeuralPrediction), String> {
-        (**self).evaluate(obs)
-    }
-
-    #[inline]
-    fn evaluate_batch(&self, obs_list: &[[f32; OBS_SIZE]]) -> Result<Vec<([f32; ACTION_SIZE], NeuralPrediction)>, String> {
-        (**self).evaluate_batch(obs_list)
-    }
-}
-
-impl<T: NeuralEvaluator + ?Sized> NeuralEvaluator for &T {
-    #[inline]
-    fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], NeuralPrediction), String> {
-        (**self).evaluate(obs)
-    }
-
-    #[inline]
-    fn evaluate_batch(&self, obs_list: &[[f32; OBS_SIZE]]) -> Result<Vec<([f32; ACTION_SIZE], NeuralPrediction)>, String> {
-        (**self).evaluate_batch(obs_list)
-    }
-}
-
 /// 神经网络多任务预测结果 (解耦胜负、剩余步数与终局胜因)
 #[derive(Debug, Clone, Copy)]
 pub struct NeuralPrediction {
@@ -250,20 +214,5 @@ impl TractNeuralEvaluator {
         }
 
         Ok(results)
-    }
-}
-
-impl NeuralEvaluator for TractNeuralEvaluator {
-    #[inline]
-    fn evaluate(&self, obs: &[f32; OBS_SIZE]) -> Result<([f32; ACTION_SIZE], NeuralPrediction), String> {
-        self.evaluate(obs)
-    }
-
-    #[inline]
-    fn evaluate_batch(
-        &self,
-        obs_list: &[[f32; OBS_SIZE]],
-    ) -> Result<Vec<([f32; ACTION_SIZE], NeuralPrediction)>, String> {
-        self.evaluate_batch(obs_list)
     }
 }

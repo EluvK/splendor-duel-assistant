@@ -11,7 +11,7 @@ pub use heuristic_ai::HeuristicAI;
 pub use interactive::{InteractiveSession, LegalActionDto, PlayerKind};
 pub use mcts::RustMCTS;
 pub use neural_ai::NeuralAI;
-pub use neural_evaluator::{NeuralEvaluator, TractNeuralEvaluator};
+pub use neural_evaluator::TractNeuralEvaluator;
 pub use random_ai::RandomAI;
 pub use replay::{
     CardDto, DecisionDto, PlayerDto, PlayerType, ReplaySession, ReplayStep, RoyalDto,

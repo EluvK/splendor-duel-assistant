@@ -2,7 +2,7 @@ use rand::prelude::*;
 use rand_distr::multi::{Dirichlet, MultiDistribution};
 use std::collections::HashMap;
 
-use crate::ai::neural_evaluator::{NeuralEvaluator, NeuralPrediction};
+use crate::ai::neural_evaluator::{NeuralPrediction, TractNeuralEvaluator};
 use crate::bridge::{ACTION_SIZE, action_to_id, encode_state};
 use crate::game_state::phase::TurnPhase;
 use crate::game_state::state::GameState;
@@ -279,11 +279,11 @@ impl RustMCTS {
     }
 
     /// 便捷方法：执行神经网络 MCTS 并直接返回选定的最佳动作（无需完整策略分布）
-    pub fn search_action<R: Rng + ?Sized, E: NeuralEvaluator + ?Sized>(
+    pub fn search_action<R: Rng + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
-        evaluator: &E,
+        evaluator: &TractNeuralEvaluator,
         eval_cache: &mut NeuralEvalCache,
         num_simulations: usize,
         rng: &mut R,
@@ -304,11 +304,11 @@ impl RustMCTS {
     }
 
     /// 执行带跨步共享评估转置表的高性能神经网络 MCTS 搜索并返回选择的动作以及完整的策略分布
-    pub fn search_policy<R: Rng + ?Sized, E: NeuralEvaluator + ?Sized>(
+    pub fn search_policy<R: Rng + ?Sized>(
         &self,
         state: &GameState,
         legals: Vec<Action>,
-        evaluator: &E,
+        evaluator: &TractNeuralEvaluator,
         eval_cache: &mut NeuralEvalCache,
         num_simulations: usize,
         add_dirichlet: bool,
@@ -576,10 +576,10 @@ impl RustMCTS {
     }
 
     /// 使用神经网络提供先验概率与状态估值 (带极速状态哈希与跨步缓存支持)
-    fn create_edges_with_neural_priors_cached<E: NeuralEvaluator + ?Sized>(
+    fn create_edges_with_neural_priors_cached(
         state: &GameState,
         legals: Vec<Action>,
-        evaluator: &E,
+        evaluator: &TractNeuralEvaluator,
         cache: &mut NeuralEvalCache,
     ) -> Result<(Vec<Edge>, NeuralPrediction), String> {
         let key = fast_state_hash(state);
