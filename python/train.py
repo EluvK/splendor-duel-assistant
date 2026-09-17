@@ -94,10 +94,104 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ckpt-dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint file to resume from")
 
+    # 资源与并发控制 (支持 --quiet-mode 与 --quite-mode)
+    parser.add_argument(
+        "--quiet-mode",
+        "--quite-mode",
+        dest="quiet_mode",
+        action="store_true",
+        help="Quiet/Low-resource background mode: allocate half CPU cores and lower process priority so system remains responsive for other tasks",
+    )
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=None,
+        help="Explicit number of CPU threads for Rust Rayon and PyTorch (defaults to half cores under quiet-mode, full cores otherwise)",
+    )
+
     return parser.parse_args()
 
 
-def train_imitation(args: argparse.Namespace) -> None:
+def set_low_process_priority() -> bool:
+    """将当前进程调度优先级设置为低于正常 (BELOW_NORMAL)，确保后台计算不抢占前台 UI/浏览器交互."""
+    import sys
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel32.SetPriorityClass.restype = wintypes.BOOL
+            handle = kernel32.GetCurrentProcess()
+            BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+            return bool(kernel32.SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS))
+        except Exception:
+            return False
+    else:
+        try:
+            import os
+            os.nice(10)
+            return True
+        except Exception:
+            return False
+
+
+def configure_resource_limits(
+    quiet_mode: bool = False,
+    cpu_threads: int | None = None,
+) -> dict:
+    """根据运行模式配置 CPU 线程配额与系统调度优先级.
+
+    在 quiet_mode 下：
+    - 仅使用系统一半的 CPU 核心并发
+    - 降低进程调度优先级至低于正常 (BELOW_NORMAL)，保证日常工作/前台操作丝滑流畅
+    - 绝不改动 MCTS 搜索次数、对弈局数等任何影响训练效果的超参数，仅以更低算力平稳推进
+    """
+    import os
+    total_cpus = os.cpu_count() or 4
+
+    if cpu_threads is not None and cpu_threads > 0:
+        allocated_threads = cpu_threads
+    elif quiet_mode:
+        allocated_threads = max(1, total_cpus // 2)
+    else:
+        allocated_threads = total_cpus
+
+    # 1. 限制 Rust Rayon 及底层计算库多线程并发数
+    os.environ["RAYON_NUM_THREADS"] = str(allocated_threads)
+    os.environ["OMP_NUM_THREADS"] = str(allocated_threads)
+    os.environ["MKL_NUM_THREADS"] = str(allocated_threads)
+
+    # 2. 限制 PyTorch 内部算子并发线程数
+    torch.set_num_threads(allocated_threads)
+    try:
+        torch.set_num_interop_threads(max(1, allocated_threads // 2))
+    except RuntimeError:
+        pass
+
+    # 3. 若处于静默模式，降低进程调度优先级为后台空闲/低于正常
+    lowered_priority = False
+    if quiet_mode:
+        lowered_priority = set_low_process_priority()
+
+    return {
+        "total_cpus": total_cpus,
+        "allocated_threads": allocated_threads,
+        "quiet_mode": quiet_mode,
+        "lowered_priority": lowered_priority,
+    }
+
+
+def train_imitation(args: argparse.Namespace, res_info: dict | None = None) -> None:
+    if res_info is None:
+        res_info = configure_resource_limits(
+            quiet_mode=getattr(args, "quiet_mode", False),
+            cpu_threads=getattr(args, "cpu_threads", None),
+        )
+    threads = res_info["allocated_threads"]
+    total_cpus = res_info["total_cpus"]
+
     print(f"\n🚀 启动大规模分片模仿学习 (Sharded Imitation Learning)...")
     device_str = (
         "cuda" if (args.device == "auto" and torch.cuda.is_available()) or args.device == "cuda" else "cpu"
@@ -110,6 +204,14 @@ def train_imitation(args: argparse.Namespace) -> None:
         f"⚙️  硬件设备: {device_str.upper()} | 目标局数: {args.games} 局 | 分片粒度: {args.shard_games} 局/分片 "
         f"| Batch: {args.batch_size} | 学习率: {args.lr} | 轮次: {args.epochs} Epochs"
     )
+    if getattr(args, "quiet_mode", False):
+        prio_desc = "已设为后台优先 (BELOW_NORMAL)" if res_info["lowered_priority"] else "系统默认"
+        print(
+            f"🍃 [Quiet Mode] 后台静默模式已生效: 仅占用系统 50% CPU 算力 "
+            f"(分配: {threads}/{total_cpus} 线程 | 调度优先级: {prio_desc})"
+        )
+    else:
+        print(f"⚡ [Full-Speed Mode] 全速算力模式: 启用系统全部 CPU 资源 ({threads}/{total_cpus} 线程)")
 
     buffer = ShardedBuffer(Path(args.data_dir))
     if args.clear_data:
@@ -125,7 +227,7 @@ def train_imitation(args: argparse.Namespace) -> None:
             buffer.clear()
 
         num_shards = (args.games + args.shard_games - 1) // args.shard_games
-        print(f"开始分批全核并发生成 {num_shards} 个磁盘分片 (每分片 {args.shard_games} 局，内存严格受控)...")
+        print(f"开始分批并发生成 {num_shards} 个磁盘分片 ({threads} 线程，每分片 {args.shard_games} 局，内存严格受控)...")
 
         t_start = time.time()
         for i in range(num_shards):
@@ -218,7 +320,15 @@ def train_imitation(args: argparse.Namespace) -> None:
     print(f"🎉 模仿学习完成！最优模型已保存至 {Path(args.ckpt_dir) / 'best.pt'}\n")
 
 
-def train_selfplay(args: argparse.Namespace) -> None:
+def train_selfplay(args: argparse.Namespace, res_info: dict | None = None) -> None:
+    if res_info is None:
+        res_info = configure_resource_limits(
+            quiet_mode=getattr(args, "quiet_mode", False),
+            cpu_threads=getattr(args, "cpu_threads", None),
+        )
+    threads = res_info["allocated_threads"]
+    total_cpus = res_info["total_cpus"]
+
     print(f"\n🚀 启动 AlphaZero 自博弈强化学习飞轮 (MCTS Self-Play Loop)...")
     device_str = (
         "cuda" if (args.device == "auto" and torch.cuda.is_available()) or args.device == "cuda" else "cpu"
@@ -228,6 +338,15 @@ def train_selfplay(args: argparse.Namespace) -> None:
         f"⚙️  硬件: {device_str.upper()} | 迭代: {args.iterations} 轮 | 每轮自对弈: {args.games_per_iter} 局 "
         f"| MCTS 推演: {args.mcts_sims} 次/步 | 晋升门禁: {args.promote_threshold*100:.0f}%"
     )
+    if getattr(args, "quiet_mode", False):
+        prio_desc = "已设为后台优先 (BELOW_NORMAL)" if res_info["lowered_priority"] else "系统默认"
+        print(
+            f"🍃 [Quiet Mode] 后台静默模式已生效: 仅占用系统 50% CPU 算力 "
+            f"(分配: {threads}/{total_cpus} 线程 | 调度优先级: {prio_desc})\n"
+            f"   💡 训练核心质量超参保持 100% 完整 (MCTS 推演仍为 {args.mcts_sims} 次/步)，绝不牺牲策略水平，仅运行耗时适度放缓。"
+        )
+    else:
+        print(f"⚡ [Full-Speed Mode] 全速算力模式: 启用系统全部 CPU 资源 ({threads}/{total_cpus} 线程)")
 
     ckpt_dir = Path(args.ckpt_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -368,7 +487,7 @@ def train_selfplay(args: argparse.Namespace) -> None:
             if n_hist > 0:
                 league_desc.append(f"历史模型对抗 {n_hist} 局")
             print(
-                f"1. 启动 Rust 8 线程并行多元联赛 MCTS 采样 {' + '.join(league_desc)} "
+                f"1. 启动 Rust {threads} 线程并行多元联赛 MCTS 采样 {' + '.join(league_desc)} "
                 f"(推演: {args.mcts_sims} 次/步 | 前 {args.temp_steps} 步注入探索噪声)..."
             )
             batch = generate_league_mcts_compact_batch(
@@ -565,10 +684,14 @@ def train_selfplay(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+    res_info = configure_resource_limits(
+        quiet_mode=args.quiet_mode,
+        cpu_threads=args.cpu_threads,
+    )
     if args.mode == "imitation":
-        train_imitation(args)
+        train_imitation(args, res_info)
     elif args.mode == "selfplay":
-        train_selfplay(args)
+        train_selfplay(args, res_info)
 
 
 if __name__ == "__main__":
