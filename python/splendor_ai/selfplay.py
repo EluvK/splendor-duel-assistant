@@ -27,11 +27,13 @@ def generate_heuristic_compact_batch(
 
     obs = np.asarray(raw_obs, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.OBS_SIZE)
     masks = np.asarray(raw_masks, dtype=np.uint8).view(bool).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
-    target_policy = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
+    raw_pol = np.asarray(raw_policies, dtype=np.float32).reshape(total_steps, SplendorDuelEnv.ACTION_SIZE)
+    actions = raw_pol.argmax(axis=-1).astype(np.int64)
+    del raw_pol
     values = np.asarray(raw_values, dtype=np.float32).reshape(total_steps, 2)
     reasons = np.asarray(raw_reasons, dtype=np.float32).reshape(total_steps, 6)
 
-    return CompactBatch(obs=obs, mask=masks, target_policy=target_policy, value=values, reason=reasons)
+    return CompactBatch(obs=obs, mask=masks, value=values, reason=reasons, action=actions)
 
 
 def generate_rust_neural_mcts_compact_batch(

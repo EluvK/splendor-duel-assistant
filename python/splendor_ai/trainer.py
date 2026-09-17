@@ -234,7 +234,9 @@ class Trainer:
 
         def _load_loader(shard_p: Path) -> FastTensorLoader:
             batch_d = CompactBatch.load_npz(shard_p)
-            return FastTensorLoader(batch_d, batch_size=batch_size, shuffle=True, device=self.device)
+            loader = FastTensorLoader(batch_d, batch_size=batch_size, shuffle=True, device=self.device)
+            del batch_d
+            return loader
 
         with ThreadPoolExecutor(max_workers=1) as prefetcher:
             next_future = prefetcher.submit(_load_loader, files[0]) if num_shards > 0 else None
@@ -321,6 +323,8 @@ class Trainer:
                     pbar.update(frac_done, extra=f"loss: {cur_loss:.3f} | top1: {cur_top1:.1f}%")
 
                 del loader
+                import gc
+                gc.collect()
 
         pbar.done(f"loss: {total_loss/total_samples:.4f} | top1: {correct_top1/total_samples*100:.1f}%")
         self.epoch += 1

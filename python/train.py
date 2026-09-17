@@ -8,7 +8,7 @@ import torch
 
 from splendor_ai._engine import evaluate_neural_match
 from splendor_ai.advisor import HealthStatus, IterationRecord, TrainingAdvisor
-from splendor_ai.dataset import FastTensorLoader, ReplayBuffer, ShardedBuffer
+from splendor_ai.dataset import CompactBatch, FastTensorLoader, ReplayBuffer, ShardedBuffer
 from splendor_ai.net import SplendorNet
 from splendor_ai.selfplay import (
     generate_heuristic_compact_batch,
@@ -30,11 +30,17 @@ def parse_args() -> argparse.Namespace:
     )
     # 模仿学习参数
     parser.add_argument("--games", type=int, default=20000, help="Total games to generate/train for imitation")
-    parser.add_argument("--shard-games", type=int, default=2000, help="Games per shard (keeps memory bounded < 1GB)")
+    parser.add_argument("--shard-games", type=int, default=1000, help="Games per shard (default 1000 keeps memory < 600MB and prevents system thrashing)")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--data-dir", type=str, default="data/shards", help="Directory to store sharded data")
     parser.add_argument("--reuse-data", action="store_true", help="Reuse existing shards in data-dir without re-generating")
     parser.add_argument("--clear-data", action="store_true", help="Clear data-dir before generating new shards")
+    parser.add_argument(
+        "--compress-shards",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Compress sharded data files with zip (default: False for 20x faster disk I/O)",
+    )
 
     # 自博弈参数
     parser.add_argument("--iterations", type=int, default=30, help="Number of self-play iterations")
@@ -239,23 +245,48 @@ def train_imitation(args: argparse.Namespace, res_info: dict | None = None) -> N
             buffer.clear()
 
         num_shards = (args.games + args.shard_games - 1) // args.shard_games
-        print(f"开始分批并发生成 {num_shards} 个磁盘分片 ({threads} 线程，每分片 {args.shard_games} 局，内存严格受控)...")
+        comp_desc = "ZIP压缩存储" if args.compress_shards else "极速原始存储 (快20倍)"
+        print(
+            f"开始分批并发生成 {num_shards} 个磁盘分片 ({threads} 线程，每分片 {args.shard_games} 局，"
+            f"模式: {comp_desc}，启用异步写盘流水线)..."
+        )
 
         t_start = time.time()
-        for i in range(num_shards):
-            t0 = time.time()
-            seed = int(time.time()) + i * 10007
-            games_this_shard = min(args.shard_games, args.games - i * args.shard_games)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as disk_writer:
+            prev_write_fut = None
+            last_sim_time = 0.0
+            last_shard_idx = 0
 
-            batch = generate_heuristic_compact_batch(num_games=games_this_shard, start_seed=seed)
-            shard_path = buffer.add_shard(batch, compressed=True)
-            gen_time = time.time() - t0
+            for i in range(num_shards):
+                t0 = time.time()
+                seed = int(time.time()) + i * 10007
+                games_this_shard = min(args.shard_games, args.games - i * args.shard_games)
 
-            print(
-                f"  [{i+1}/{num_shards}] 写入 {shard_path.name} | 样本: {batch.num_samples} 步 "
-                f"(耗时: {gen_time:.2f}s | 吞吐: {batch.num_samples/gen_time:.0f} 步/秒)"
-            )
-            del batch
+                batch = generate_heuristic_compact_batch(num_games=games_this_shard, start_seed=seed)
+                sim_time = time.time() - t0
+
+                if prev_write_fut is not None:
+                    shard_path, write_time = prev_write_fut.result()
+                    print(
+                        f"  [{last_shard_idx}/{num_shards}] 写入 {shard_path.name} "
+                        f"(模拟: {last_sim_time:.2f}s | 写盘: {write_time:.2f}s)"
+                    )
+
+                def _write_task(b=batch, comp=args.compress_shards):
+                    tw0 = time.time()
+                    sp = buffer.add_shard(b, compressed=comp)
+                    return sp, time.time() - tw0
+
+                prev_write_fut = disk_writer.submit(_write_task)
+                last_sim_time = sim_time
+                last_shard_idx = i + 1
+
+            if prev_write_fut is not None:
+                shard_path, write_time = prev_write_fut.result()
+                print(
+                    f"  [{last_shard_idx}/{num_shards}] 写入 {shard_path.name} "
+                    f"(模拟: {last_sim_time:.2f}s | 写盘: {write_time:.2f}s)"
+                )
 
         total_gen_time = time.time() - t_start
         print(f"✅ 全部分片落盘完成！总耗时: {total_gen_time:.2f}s | 目录: {args.data_dir}")
@@ -274,6 +305,12 @@ def train_imitation(args: argparse.Namespace, res_info: dict | None = None) -> N
         train_shards = all_shards
 
     print(f"📊 分片划分: 训练分片 = {len(train_shards)} 个 | 验证分片 = {val_shard.name}")
+    print("⏳ 预热载入验证集分片至常驻内存/显存...")
+    val_data = CompactBatch.load_npz(val_shard)
+    val_loader = FastTensorLoader(val_data, batch_size=args.batch_size, shuffle=False, device=torch.device(device_str))
+    del val_data
+    import gc
+    gc.collect()
     total_samples = buffer.count_total_samples()
 
     net = SplendorNet()
@@ -303,7 +340,7 @@ def train_imitation(args: argparse.Namespace, res_info: dict | None = None) -> N
         train_metrics = trainer.train_epoch_sharded(
             shard_files=train_shards, batch_size=args.batch_size, shuffle_shards=True
         )
-        val_metrics = trainer.evaluate_sharded(val_shard, batch_size=args.batch_size)
+        val_metrics = trainer.evaluate(val_loader)
 
         meta = {
             "epoch": ep,

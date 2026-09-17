@@ -16,7 +16,6 @@ class CompactBatch:
 
     obs: np.ndarray  # [N, OBS_SIZE] (969) float32
     mask: np.ndarray  # [N, ACTION_SIZE] (1856) bool
-    target_policy: np.ndarray  # [N, ACTION_SIZE] (1856) float32 (MCTS visits 软概率分布)
     value: np.ndarray  # [N, 2] float32 (col 0: 纯胜负期望, col 1: 归一化剩余轮数)
     reason: np.ndarray  # [N, 6] float32 区分归属的多标签独立胜因 [我方3项, 敌方3项]
 
@@ -50,66 +49,75 @@ class CompactBatch:
         else:
             self.reason = reason.astype(np.float32)
 
-        if target_policy is not None:
-            self.target_policy = target_policy
-            self._action = action
-        elif action is not None:
-            # 由 action 自动构造 one-hot 策略分布以保持兼容
-            tp = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
-            for i, a in enumerate(action):
-                if 0 <= a < SplendorDuelEnv.ACTION_SIZE:
-                    tp[i, a] = 1.0
-            self.target_policy = tp
-            self._action = action
-        else:
-            self.target_policy = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
-            self._action = None
+        self._target_policy = target_policy
+        self._action = action
 
     @property
     def action(self) -> np.ndarray:
-        """保持向后兼容的标量动作索引 (从软概率分布中提取最大概率动作)."""
+        """保持向后兼容的标量动作索引 (从软概率分布或已有动作中提取)."""
         if self._action is not None:
             return self._action
-        if self.target_policy.ndim == 2 and len(self.target_policy) > 0:
-            return self.target_policy.argmax(axis=-1).astype(np.int64)
+        if self._target_policy is not None and self._target_policy.ndim == 2 and len(self._target_policy) > 0:
+            return self._target_policy.argmax(axis=-1).astype(np.int64)
         return np.zeros(len(self.obs), dtype=np.int64)
+
+    @property
+    def target_policy(self) -> np.ndarray:
+        """策略分布 (若未显式指定，按需由 action 构造 one-hot 分布保持 100% 接口兼容)."""
+        if self._target_policy is not None:
+            return self._target_policy
+        n = len(self.obs)
+        if self._action is not None:
+            tp = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+            for i, a in enumerate(self._action):
+                if 0 <= a < SplendorDuelEnv.ACTION_SIZE:
+                    tp[i, a] = 1.0
+            return tp
+        return np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+
+    @target_policy.setter
+    def target_policy(self, val: Optional[np.ndarray]) -> None:
+        self._target_policy = val
 
     @property
     def num_samples(self) -> int:
         return len(self.obs)
 
     def save_npz(self, path: Path, compressed: bool = True) -> None:
-        """持久化保存为分片文件 (默认启用压缩，极大降低稀疏动作空间下的磁盘占用)."""
+        """持久化保存为分片文件 (采用 bitpack 压缩动作掩码，极大减小体积并加速读写)."""
         path.parent.mkdir(parents=True, exist_ok=True)
         save_fn = np.savez_compressed if compressed else np.savez
-        save_fn(
-            path,
-            obs=self.obs,
-            mask=self.mask,
-            target_policy=self.target_policy,
-            action=self.action,
-            value=self.value,
-            reason=self.reason,
-        )
+
+        mask_packed = np.packbits(self.mask, axis=-1)
+        save_data = {
+            "obs": self.obs,
+            "mask_packed": mask_packed,
+            "action": self.action,
+            "value": self.value,
+            "reason": self.reason,
+        }
+        # 仅当显式存在非平凡软策略分布 (如 MCTS visits) 时才落盘 target_policy
+        if self._target_policy is not None:
+            save_data["target_policy"] = self._target_policy
+
+        save_fn(path, **save_data)
 
     @classmethod
     def load_npz(cls, path: Path) -> "CompactBatch":
         """从分片文件加载样本 (平滑兼容老旧单动作与单标签分片)."""
         data = np.load(path)
         obs = data["obs"]
-        mask = data["mask"]
         n = len(obs)
 
-        if "target_policy" in data:
-            target_policy = data["target_policy"]
-        elif "action" in data:
-            actions = data["action"]
-            target_policy = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
-            for i, a in enumerate(actions):
-                if 0 <= a < SplendorDuelEnv.ACTION_SIZE:
-                    target_policy[i, a] = 1.0
+        if "mask_packed" in data:
+            mask = np.unpackbits(data["mask_packed"], axis=-1)[:, :SplendorDuelEnv.ACTION_SIZE].view(bool)
         else:
-            target_policy = np.zeros((n, SplendorDuelEnv.ACTION_SIZE), dtype=np.float32)
+            mask = data["mask"]
+
+        target_policy = data["target_policy"] if "target_policy" in data else None
+        act = data["action"] if "action" in data else None
+        if act is None and target_policy is not None:
+            act = target_policy.argmax(axis=-1).astype(np.int64)
 
         raw_val = data["value"]
         if raw_val.ndim == 1:
@@ -138,8 +146,6 @@ class CompactBatch:
         else:
             reason = np.zeros((n, 6), dtype=np.float32)
 
-        act = data["action"] if "action" in data else None
-
         return cls(
             obs=obs,
             mask=mask,
@@ -166,13 +172,17 @@ class FastTensorLoader:
         self.num_batches = (self.num_samples + batch_size - 1) // batch_size
         self.device = device
 
-        # 转为 PyTorch 张量
+        # 转为 PyTorch 张量 (按需分配，无软分布时显存与内存直降 60%+)
         self.obs = torch.from_numpy(batch.obs).float()
         self.mask = torch.from_numpy(batch.mask).bool()
-        self.target_policy = torch.from_numpy(batch.target_policy).float()
         self.action = torch.from_numpy(batch.action).long()
         self.value = torch.from_numpy(batch.value).float()
         self.reason = torch.from_numpy(batch.reason).float()
+
+        if batch._target_policy is not None:
+            self.target_policy = torch.from_numpy(batch._target_policy).float()
+        else:
+            self.target_policy = None
 
         self.resident_on_device = False
         if device is not None and device.type == "cuda":
@@ -180,7 +190,8 @@ class FastTensorLoader:
                 # 单个分片通常约几百MB，直接常驻显存，零总线传输延迟
                 self.obs = self.obs.to(device)
                 self.mask = self.mask.to(device)
-                self.target_policy = self.target_policy.to(device)
+                if self.target_policy is not None:
+                    self.target_policy = self.target_policy.to(device)
                 self.action = self.action.to(device)
                 self.value = self.value.to(device)
                 self.reason = self.reason.to(device)
@@ -211,7 +222,7 @@ class FastTensorLoader:
 
             b_obs = self.obs[idx]
             b_mask = self.mask[idx]
-            b_policy = self.target_policy[idx]
+            b_policy = self.target_policy[idx] if self.target_policy is not None else None
             b_action = self.action[idx]
             b_value = self.value[idx]
             b_reason = self.reason[idx]
@@ -219,19 +230,22 @@ class FastTensorLoader:
             if not self.resident_on_device and self.device is not None:
                 b_obs = b_obs.to(self.device, non_blocking=True)
                 b_mask = b_mask.to(self.device, non_blocking=True)
-                b_policy = b_policy.to(self.device, non_blocking=True)
+                if b_policy is not None:
+                    b_policy = b_policy.to(self.device, non_blocking=True)
                 b_action = b_action.to(self.device, non_blocking=True)
                 b_value = b_value.to(self.device, non_blocking=True)
                 b_reason = b_reason.to(self.device, non_blocking=True)
 
-            yield {
+            batch_item = {
                 "obs": b_obs,
                 "mask": b_mask,
-                "target_policy": b_policy,
                 "action": b_action,
                 "value": b_value,
                 "reason": b_reason,
             }
+            if b_policy is not None:
+                batch_item["target_policy"] = b_policy
+            yield batch_item
 
 
 class CompactDataset(Dataset):
@@ -291,10 +305,10 @@ class ShardedBuffer:
         total = 0
         for p in self.shard_files:
             with np.load(p) as data:
-                if "target_policy" in data:
-                    total += len(data["target_policy"])
-                elif "action" in data:
+                if "action" in data:
                     total += len(data["action"])
+                elif "target_policy" in data:
+                    total += len(data["target_policy"])
                 else:
                     total += len(data["obs"])
         return total
