@@ -15,19 +15,22 @@ pub struct NeuralPrediction {
 }
 
 impl NeuralPrediction {
-    /// 计算用于 MCTS 驱动的综合搜索价值 (结合时间敏感度惩罚与逆风拖延激励)
+    /// 计算用于 MCTS 驱动的综合搜索价值 (结合时间敏感度惩罚与逆风拖延激励，采用平滑连续激活消除非线性阶跃)
     #[inline]
     pub fn combined_value(&self, lambda_turns: f32) -> f32 {
-        if self.win_value > 0.05 {
-            // 优势局：剩余步数越少，速胜奖励越高 [win_value, win_value + lambda]
-            self.win_value + lambda_turns * (1.0 - self.turns_value)
-        } else if self.win_value < -0.05 {
-            // 劣势局：剩余步数越多，拖延奖励越高 (使 -1.0 趋向 -1.0 + lambda)
-            self.win_value + lambda_turns * self.turns_value
+        // 使用连续激活实现双向平滑门控：
+        // 1. 均势局 (win_value -> 0) 时门控平滑趋向 0，完全消除 +/- 0.05 处的突变阶跃；
+        // 2. 优势局 (win_value > 0) 时连续增强速胜奖励 [win_value, win_value + lambda * (1 - turns)]；
+        // 3. 劣势局 (win_value < 0) 时连续增强逆风拖延激励 [win_value, win_value + lambda * turns]，
+        //    始终保持正向补偿，确保下界不跌破 -1.0。
+        let bias = if self.win_value >= 0.0 {
+            let gate = (2.5 * self.win_value).tanh();
+            gate * (1.0 - self.turns_value)
         } else {
-            // 胶着均势局：以纯胜率为准，不施加步数偏置
-            self.win_value
-        }
+            let gate = (-2.5 * self.win_value).tanh();
+            gate * self.turns_value
+        };
+        self.win_value + lambda_turns * bias
     }
 }
 

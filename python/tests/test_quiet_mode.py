@@ -15,17 +15,17 @@ def test_cli_quite_mode_and_quiet_mode():
         args = parse_args()
         assert args.quiet_mode is True
         # 验证核心质量超参保持完整默认值
-        assert args.mcts_sims == 60
-        assert args.games_per_iter == 50
+        assert args.mcts_sims == 100
+        assert args.games_per_iter == 60
         assert args.iterations == 30
-        assert args.train_epochs == 3
-        assert args.promote_threshold == 0.56
+        assert args.train_epochs == 4
+        assert args.promote_threshold == 0.53
 
     # 2. 测试 --quiet-mode (标准写法)
     with patch.object(sys, "argv", ["train.py", "--mode", "selfplay", "--quiet-mode"]):
         args = parse_args()
         assert args.quiet_mode is True
-        assert args.mcts_sims == 60
+        assert args.mcts_sims == 100
 
     # 3. 测试默认情况
     with patch.object(sys, "argv", ["train.py", "--mode", "selfplay"]):

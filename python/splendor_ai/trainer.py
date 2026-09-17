@@ -21,11 +21,10 @@ class TrainerConfig:
     lr: float = 1e-3
     min_lr: float = 1e-5
     weight_decay: float = 1e-4
-    use_homoscedastic_loss: bool = True  # 同方差不确定性多任务动态加权
-    value_loss_coeff: float = 1.0
     win_loss_coeff: float = 1.0
-    turns_loss_coeff: float = 0.5
-    reason_loss_coeff: float = 0.3
+    turns_loss_coeff: float = 0.30
+    reason_loss_coeff: float = 0.15
+    lead_loss_coeff: float = 0.20
     grad_clip_norm: float = 5.0
     batch_size: int = 256
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -35,7 +34,7 @@ class TrainerConfig:
 
 
 class Trainer:
-    """策略价值网络综合训练器."""
+    """策略价值网络综合训练器 (SplendorNet v3 支持 Two-Hot 分位数与辅助分差损失)."""
 
     def __init__(self, net: SplendorNet, config: Optional[TrainerConfig] = None) -> None:
         self.cfg = config or TrainerConfig()
@@ -62,6 +61,17 @@ class Trainer:
         self.ckpt_dir = Path(self.cfg.ckpt_dir)
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+    def reset_learning_rate(self, lr: Optional[float] = None) -> None:
+        """重置优化器学习率并重新构建余弦退火调度器，避免退火至谷底后无法恢复探索活力."""
+        target_lr = lr if lr is not None else self.cfg.lr
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = target_lr
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=self.cfg.t_max_epochs,
+            eta_min=self.cfg.min_lr,
+        )
+
     def train_epoch(self, dataloader: Any) -> Dict[str, float]:
         """训练单个 Epoch (单一 DataLoader/FastTensorLoader)."""
         self.net.train()
@@ -71,6 +81,7 @@ class Trainer:
         total_win_loss = 0.0
         total_turns_loss = 0.0
         total_reason_loss = 0.0
+        total_lead_loss = 0.0
         correct_top1 = 0
         correct_top3 = 0
         total_samples = 0
@@ -98,7 +109,6 @@ class Trainer:
             if target_reason is not None:
                 target_reason = target_reason.to(self.device, non_blocking=True).float()
                 if target_reason.ndim == 1:
-                    # 单标量兼容转换
                     target_reason = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
                 elif target_reason.shape[-1] == 4:
                     target_reason = target_reason[:, :3]
@@ -112,33 +122,40 @@ class Trainer:
             self.optimizer.zero_grad()
 
             with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
-                logits, win_v, turns_v, reason_logits = self.net(obs)
+                logits, win_v, turns_v, reason_logits, win_logits, lead_v = self.net.forward_train(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
-                # M7: 软标签交叉熵损失；若无软分布则回退为传统交叉熵
+                # 1. 策略损失 (软分布交叉熵或硬标签交叉熵)
                 if target_policy is not None:
                     log_probs = F.log_softmax(masked_logits, dim=-1)
                     policy_loss = -(target_policy * log_probs).sum(dim=-1).mean()
                 else:
                     policy_loss = F.cross_entropy(masked_logits, target_action)
 
-                win_loss = F.mse_loss(win_v, target_win)
+                # 2. Two-Hot 分位数胜率交叉熵损失
+                support = getattr(self.net, "support_points", torch.linspace(-1.0, 1.0, 21)).to(obs.device)
+                target_win_dist = SplendorNet.to_two_hot(target_win, support)
+                log_win_probs = F.log_softmax(win_logits, dim=-1)
+                win_loss = -(target_win_dist * log_win_probs).sum(dim=-1).mean()
+
+                # 3. 轮数预测损失
                 turns_loss = F.smooth_l1_loss(turns_v, target_turns)
-                # M2: 3 维独立 Sigmoid 多标签二值交叉熵损失
+
+                # 4. 终局胜因多标签损失
                 reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason)
 
-                if getattr(self.cfg, "use_homoscedastic_loss", False) and hasattr(self.net, "compute_homoscedastic_loss"):
-                    loss, _ = self.net.compute_homoscedastic_loss(
-                        policy_loss, win_loss, turns_loss, reason_loss
-                    )
-                    value_loss = win_loss + turns_loss + reason_loss
-                else:
-                    value_loss = (
-                        self.cfg.win_loss_coeff * win_loss
-                        + self.cfg.turns_loss_coeff * turns_loss
-                        + self.cfg.reason_loss_coeff * reason_loss
-                    )
-                    loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                # 5. 博弈态势差辅助损失 (从 obs 规范提取声望差与皇冠差)
+                target_leads = SplendorNet.extract_state_leads(obs)
+                lead_loss = F.smooth_l1_loss(lead_v, target_leads)
+
+                # 6. 固化多任务总损失 (绝不给优化器调大学习方差躺平的机会)
+                value_loss = (
+                    self.cfg.win_loss_coeff * win_loss
+                    + self.cfg.turns_loss_coeff * turns_loss
+                    + self.cfg.reason_loss_coeff * reason_loss
+                    + self.cfg.lead_loss_coeff * lead_loss
+                )
+                loss = policy_loss + value_loss
 
             self.scaler.scale(loss).backward()
             self.scaler.unscale_(self.optimizer)
@@ -152,6 +169,7 @@ class Trainer:
             total_win_loss += win_loss.item() * b_size
             total_turns_loss += turns_loss.item() * b_size
             total_reason_loss += reason_loss.item() * b_size
+            total_lead_loss += lead_loss.item() * b_size
 
             pred_top3 = masked_logits.topk(k=3, dim=-1).indices
             correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
@@ -175,6 +193,7 @@ class Trainer:
             "win_loss": total_win_loss / total_samples,
             "turns_loss": total_turns_loss / total_samples,
             "reason_loss": total_reason_loss / total_samples,
+            "lead_loss": total_lead_loss / total_samples,
             "top1_acc": correct_top1 / total_samples,
             "top3_acc": correct_top3 / total_samples,
             "lr": self.optimizer.param_groups[0]["lr"],
@@ -195,6 +214,7 @@ class Trainer:
         total_win_loss = 0.0
         total_turns_loss = 0.0
         total_reason_loss = 0.0
+        total_lead_loss = 0.0
         correct_top1 = 0
         correct_top3 = 0
         total_samples = 0
@@ -210,15 +230,12 @@ class Trainer:
             batch_d = CompactBatch.load_npz(shard_p)
             return FastTensorLoader(batch_d, batch_size=batch_size, shuffle=True, device=self.device)
 
-        # 异步预加载流水线 (双缓冲)：后台线程在 GPU 计算当前分片时提前加载下一分片，消除 GPU 等待横跳
         with ThreadPoolExecutor(max_workers=1) as prefetcher:
             next_future = prefetcher.submit(_load_loader, files[0]) if num_shards > 0 else None
 
             for s_idx, shard_path in enumerate(files):
-                # 瞬间获取已就绪的分片加载器
                 loader = next_future.result()
 
-                # 立即向后台调度下一个分片的 I/O 与反序列化
                 if s_idx + 1 < num_shards:
                     next_future = prefetcher.submit(_load_loader, files[s_idx + 1])
                 else:
@@ -243,11 +260,16 @@ class Trainer:
                     self.optimizer.zero_grad()
 
                     with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
-                        logits, win_v, turns_v, reason_logits = self.net(obs)
+                        logits, win_v, turns_v, reason_logits, win_logits, lead_v = self.net.forward_train(obs)
                         masked_logits = SplendorNet.mask_logits(logits, mask)
 
                         policy_loss = F.cross_entropy(masked_logits, target_action)
-                        win_loss = F.mse_loss(win_v, target_win)
+
+                        support = getattr(self.net, "support_points", torch.linspace(-1.0, 1.0, 21)).to(obs.device)
+                        target_win_dist = SplendorNet.to_two_hot(target_win, support)
+                        log_win_probs = F.log_softmax(win_logits, dim=-1)
+                        win_loss = -(target_win_dist * log_win_probs).sum(dim=-1).mean()
+
                         turns_loss = F.smooth_l1_loss(turns_v, target_turns)
                         if target_reason.ndim == 1:
                             target_reason_bc = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
@@ -257,18 +279,16 @@ class Trainer:
                             target_reason_bc = target_reason.float()
                         reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
 
-                        if getattr(self.cfg, "use_homoscedastic_loss", False) and hasattr(self.net, "compute_homoscedastic_loss"):
-                            loss, _ = self.net.compute_homoscedastic_loss(
-                                policy_loss, win_loss, turns_loss, reason_loss
-                            )
-                            value_loss = win_loss + turns_loss + reason_loss
-                        else:
-                            value_loss = (
-                                self.cfg.win_loss_coeff * win_loss
-                                + self.cfg.turns_loss_coeff * turns_loss
-                                + self.cfg.reason_loss_coeff * reason_loss
-                            )
-                            loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                        target_leads = SplendorNet.extract_state_leads(obs)
+                        lead_loss = F.smooth_l1_loss(lead_v, target_leads)
+
+                        value_loss = (
+                            self.cfg.win_loss_coeff * win_loss
+                            + self.cfg.turns_loss_coeff * turns_loss
+                            + self.cfg.reason_loss_coeff * reason_loss
+                            + self.cfg.lead_loss_coeff * lead_loss
+                        )
+                        loss = policy_loss + value_loss
 
                     self.scaler.scale(loss).backward()
                     self.scaler.unscale_(self.optimizer)
@@ -282,13 +302,13 @@ class Trainer:
                     total_win_loss += win_loss.item() * b_size
                     total_turns_loss += turns_loss.item() * b_size
                     total_reason_loss += reason_loss.item() * b_size
+                    total_lead_loss += lead_loss.item() * b_size
 
                     pred_top3 = masked_logits.topk(k=3, dim=-1).indices
                     correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
                     correct_top3 += (pred_top3 == target_action.unsqueeze(1)).any(dim=-1).sum().item()
                     total_samples += b_size
 
-                    # 分片内平滑进度推进 (内置 0.15s 节流，零性能损耗)
                     frac_done = s_idx + (b_idx + 1) / max(n_batches, 1)
                     cur_top1 = (correct_top1 / max(total_samples, 1)) * 100.0
                     cur_loss = total_loss / max(total_samples, 1)
@@ -307,6 +327,7 @@ class Trainer:
             "win_loss": total_win_loss / total_samples,
             "turns_loss": total_turns_loss / total_samples,
             "reason_loss": total_reason_loss / total_samples,
+            "lead_loss": total_lead_loss / total_samples,
             "top1_acc": correct_top1 / total_samples,
             "top3_acc": correct_top3 / total_samples,
             "lr": self.optimizer.param_groups[0]["lr"],
@@ -322,6 +343,7 @@ class Trainer:
         total_win_loss = 0.0
         total_turns_loss = 0.0
         total_reason_loss = 0.0
+        total_lead_loss = 0.0
         correct_top1 = 0
         correct_top3 = 0
         total_samples = 0
@@ -344,11 +366,16 @@ class Trainer:
                 target_turns = target_value[:, 1:2]
                 b_size = obs.shape[0]
 
-                logits, win_v, turns_v, reason_logits = self.net(obs)
+                logits, win_v, turns_v, reason_logits, win_logits, lead_v = self.net.forward_train(obs)
                 masked_logits = SplendorNet.mask_logits(logits, mask)
 
                 policy_loss = F.cross_entropy(masked_logits, target_action)
-                win_loss = F.mse_loss(win_v, target_win)
+
+                support = getattr(self.net, "support_points", torch.linspace(-1.0, 1.0, 21)).to(obs.device)
+                target_win_dist = SplendorNet.to_two_hot(target_win, support)
+                log_win_probs = F.log_softmax(win_logits, dim=-1)
+                win_loss = -(target_win_dist * log_win_probs).sum(dim=-1).mean()
+
                 turns_loss = F.smooth_l1_loss(turns_v, target_turns)
                 if target_reason.ndim == 1:
                     target_reason_bc = F.one_hot(target_reason.long(), num_classes=4)[:, :3].float()
@@ -358,18 +385,16 @@ class Trainer:
                     target_reason_bc = target_reason.float()
                 reason_loss = F.binary_cross_entropy_with_logits(reason_logits, target_reason_bc)
 
-                if getattr(self.cfg, "use_homoscedastic_loss", False) and hasattr(self.net, "compute_homoscedastic_loss"):
-                    loss, _ = self.net.compute_homoscedastic_loss(
-                        policy_loss, win_loss, turns_loss, reason_loss
-                    )
-                    value_loss = win_loss + turns_loss + reason_loss
-                else:
-                    value_loss = (
-                        self.cfg.win_loss_coeff * win_loss
-                        + self.cfg.turns_loss_coeff * turns_loss
-                        + self.cfg.reason_loss_coeff * reason_loss
-                    )
-                    loss = policy_loss + self.cfg.value_loss_coeff * value_loss
+                target_leads = SplendorNet.extract_state_leads(obs)
+                lead_loss = F.smooth_l1_loss(lead_v, target_leads)
+
+                value_loss = (
+                    self.cfg.win_loss_coeff * win_loss
+                    + self.cfg.turns_loss_coeff * turns_loss
+                    + self.cfg.reason_loss_coeff * reason_loss
+                    + self.cfg.lead_loss_coeff * lead_loss
+                )
+                loss = policy_loss + value_loss
 
                 total_loss += loss.item() * b_size
                 total_p_loss += policy_loss.item() * b_size
@@ -377,6 +402,7 @@ class Trainer:
                 total_win_loss += win_loss.item() * b_size
                 total_turns_loss += turns_loss.item() * b_size
                 total_reason_loss += reason_loss.item() * b_size
+                total_lead_loss += lead_loss.item() * b_size
 
                 pred_top3 = masked_logits.topk(k=3, dim=-1).indices
                 correct_top1 += (pred_top3[:, 0] == target_action).sum().item()
@@ -395,6 +421,7 @@ class Trainer:
             "eval_win_loss": total_win_loss / total_samples,
             "eval_turns_loss": total_turns_loss / total_samples,
             "eval_reason_loss": total_reason_loss / total_samples,
+            "eval_lead_loss": total_lead_loss / total_samples,
             "eval_top1_acc": correct_top1 / total_samples,
             "eval_top3_acc": correct_top3 / total_samples,
         }
