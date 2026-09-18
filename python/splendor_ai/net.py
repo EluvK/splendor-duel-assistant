@@ -155,8 +155,8 @@ class SplendorNet(nn.Module):
       2. 严格空槽掩码与无偏集合自注意力 (Masked Set Attention & Category Embedding):
          - 引入 Empty-Slot Padding Mask 与 Masked Pooling，彻底杜绝未翻出卡牌或空手牌的虚假注意力模式
          - 采用 5 类语义类别嵌入 (Tier1/2/3 市场、我方手牌、敌方手牌)，完全保持同阶市场的置换等价性
-      3. 固定支撑点分布价值头 (Categorical Distributional Value Head with Fixed Support):
-         - 21 桶支撑点 [-1.0, 1.0]，使用软分类交叉熵训练，导出 ONNX 时闭式点积求期望，无缝兼容 Rust 推理
+      3. 胜负二分类概率价值头 (Binary Classification Win Head):
+         - 采用正统 AlphaZero [P(win), P(loss)] 概率分布建模，使用交叉熵训练杜绝 Tanh 饱和，输出严格有界胜负期望 [-1.0, 1.0]
       4. 三重终局对称态势辅助头 (3D Victory Lead Head):
          - 严格对称覆盖终局声望差 (/25.0)、皇冠差 (/12.0) 与最大单色差 (/12.0)，为三重获胜线提供无遗漏的强方向梯度
       5. 固化多任务损失加权 (Fixed Multi-Task Loss Weighting):
@@ -582,32 +582,6 @@ class SplendorNet(nn.Module):
             target_win = target_win.unsqueeze(-1)
         p_win = (target_win.clamp(-1.0, 1.0) + 1.0) * 0.5
         return torch.cat([p_win, 1.0 - p_win], dim=-1)
-
-    @staticmethod
-    def to_two_hot(target: torch.Tensor, support: torch.Tensor) -> torch.Tensor:
-        """将连续胜率目标标量 ([-1.0, 1.0]) 转换为 21 桶 Two-Hot 软分类目标分布."""
-        if target.dim() == 1:
-            target = target.unsqueeze(-1)
-
-        low = support[0].item()
-        high = support[-1].item()
-        num_bins = support.shape[0]
-        clamped = target.clamp(low, high)
-
-        span = high - low
-        float_idx = ((clamped - low) / span) * (num_bins - 1)
-        float_idx = float_idx.clamp(0.0, float(num_bins - 1))
-
-        lower_idx = float_idx.floor().long().clamp(0, num_bins - 2)
-        upper_idx = lower_idx + 1
-        weight_upper = float_idx - lower_idx.float()
-        weight_lower = 1.0 - weight_upper
-
-        b_size = target.shape[0]
-        dist = torch.zeros(b_size, num_bins, device=target.device, dtype=target.dtype)
-        dist.scatter_add_(1, lower_idx, weight_lower)
-        dist.scatter_add_(1, upper_idx, weight_upper)
-        return dist
 
     @staticmethod
     def mask_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:

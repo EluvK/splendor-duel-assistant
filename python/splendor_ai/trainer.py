@@ -34,7 +34,7 @@ class TrainerConfig:
 
 
 class Trainer:
-    """策略价值网络综合训练器 (SplendorNet v3 支持 Two-Hot 分位数与辅助分差损失)."""
+    """策略价值网络综合训练器 (SplendorNet 支持二分类胜率与辅助分差损失)."""
 
     def __init__(self, net: SplendorNet, config: Optional[TrainerConfig] = None) -> None:
         self.cfg = config or TrainerConfig()

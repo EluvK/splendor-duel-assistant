@@ -47,9 +47,9 @@ python/
 
 ---
 
-## 3. 策略-价值神经网络架构 (`SplendorNet v3`)
+## 3. 策略-价值神经网络架构 (`SplendorNet v3+`)
 
-`SplendorNet` 接收当前行动方视角的 **969 维**规范化观测向量，前向输出 **1856 维**跨模态解耦动作对数概率、**1 维**胜负期望（基于 21 桶 Two-Hot 分位数期望内积）、**1 维**预期剩余轮数以及 **3 维**终局胜因预测，并在训练态提供 2 维博弈态势差辅助预测。
+`SplendorNet` 接收当前行动方视角的 **969 维**规范化观测向量，前向输出 **1856 维**跨模态解耦动作对数概率、**1 维**胜负期望（基于二分类概率差 $P(win) - P(loss)$）、**1 维**预期剩余轮数以及 **6 维**终局胜因预测，并在训练态提供 3 维博弈态势差辅助预测。
 
 ### 3.1 网络拓扑图
 
@@ -86,16 +86,16 @@ python/
  ┌───────────────────────────┐                           ┌───────────┼───────────┼───────────┐
  │ Token Head (172 维)       │                           ▼           ▼           ▼           ▼
  │ 连线与特权打分            │                        Win Head   Turns Head  Reason Head Lead Head
- ├───────────────────────────┤                        (21-bin     (Sigmoid    (3-way BCE  (2-way Tanh
- │ Reserve Head (375 维)     │                        Two-Hot)    [0, 1])     Logits)     [-1, 1])
+ ├───────────────────────────┤                        (2-way      (Sigmoid    (6-way BCE  (3-way Tanh
+ │ Reserve Head (375 维)     │                        Softmax)    [0, 1])     Logits)     [-1, 1])
  │ 25 黄金网格 + 15 目标卡   │                           │
  ├───────────────────────────┤                           ▼
- │ Buy Head (1260 维)        │                      Expectation
- │ 15 卡意愿 + 84 方案偏好   │                      Dot-Product
- │ + 32 维低秩双线性交互     │                           │
- ├───────────────────────────┤                           ▼
- │ Ability Head (49 维)      │                      Scalar Win
- │ 变色/连击/偷取/王室/弃牌  │                      ([-1, 1])
+ │ Buy Head (1260 维)        │                     P(win)-P(loss)
+ │ 15 卡意愿 + 84 方案偏好   │                           │
+ │ + 32 维低秩双线性交互     │                           ▼
+ ├───────────────────────────┤                      Scalar Win
+ │ Ability Head (49 维)      │                      ([-1, 1])
+ │ 变色/连击/偷取/王室/弃牌  │
  └─────────────┬─────────────┘
                ▼
    Assembled Logits [B, 1856]
@@ -120,14 +120,14 @@ python/
    - `buy_head`: 1260 维，解耦为 15 槽位卡牌购买意愿（卡牌 Token 独立打分）+ 84 种支付方案经济偏好（全局融合表征）+ 32 维卡牌因子与支付方案静态嵌入矩阵的双线性低秩交互。
    - `ability_head`: 49 维，处理变色卡、同色取盘、偷对手标记、选王室卡与超限弃牌等后续能力动作。
    - 最终按标准动作空间物理索引拼装回 1856 维完整动作分布。
-5. **分位数胜率与多任务评估 (Multi-Task Valuation)**：
-   - **Win Head**：采用 21 桶均匀支撑点 $[-1.0, 1.0]$ 的 Two-Hot 分位数分布输出，使用软分类交叉熵训练，杜绝传统 Tanh 饱和区梯度消失与 MSE 均方误差震荡；在模型推理与 ONNX 导出时内部自动与支撑点内积计算标量数学期望 $[-1.0, 1.0]$，对外保持完全一致的标量胜率契约。
+5. **二分类胜率与多任务评估 (Multi-Task Valuation)**：
+   - **Win Head**：采用正统 AlphaZero 的 2 维二分类概率输出 $[P(win), P(loss)]$，使用软标签交叉熵训练，杜绝传统 Tanh 饱和区梯度消失与 MSE 均方误差震荡；输出直接通过 $P(win) - P(loss)$ 得到严格落在 $[-1.0, 1.0]$ 的标量胜率期望，对外保持完全一致的标量胜率契约。
    - **Turns Head**：输出归一化剩余轮数预期（$[0.0, 1.0]$，Sigmoid 激活，Smooth L1 损失）。
-   - **Reason Head**：输出 3 维独立多标签终局胜因 Logits（$[20\_pts, 10\_crowns, 10\_color]$，BCE 损失）。
-   - **Lead Head**：博弈态势差辅助头，输出声望分差与皇冠差估计（Tanh 激活，Smooth L1 损失），强化融合主干对胜负关键差值的表征敏锐度。
+   - **Reason Head**：输出 6 维区分归属的胜因 Logits（我方/敌方的 20 分、10 冠、10 单色分，BCE 损失）。
+   - **Lead Head**：三重胜负线态势差辅助头，输出声望分差、皇冠差与最大单色差估计（Tanh 激活，Smooth L1 损失），强化融合主干对胜负关键差值的表征敏锐度。
 
 ### 3.3 ONNX 极速动态导出 (`export_onnx_bytes`)
-网络内置 `export_onnx_bytes` 方法，利用 `torch.onnx.export` 将当前 PyTorch 模型直接序列化为内存中的 ONNX 二进制流（Opset 17），开启常量折叠与动态 batch 轴。Two-Hot 支撑点常量折叠后内积生成标准 `win_value` 标量，该字节流可直接无缝传递给 Rust 的 `tract-onnx` 引擎，实现零磁盘 I/O 的跨语言模型传递。
+网络内置 `export_onnx_bytes` 方法，利用 `torch.onnx.export` 将当前 PyTorch 模型直接序列化为内存中的 ONNX 二进制流（Opset 17），开启常量折叠与动态 batch 轴。导出模型直接输出标准 `win_value` 标量，该字节流可直接无缝传递给 Rust 的 `tract-onnx` 引擎，实现零磁盘 I/O 的跨语言模型传递。
 
 ---
 
@@ -149,7 +149,7 @@ python/
 - `mask`: `[N, 1856]` bool
 - `action`: `[N]` int64 (标量动作 ID)
 - `value`: `[N, 2]` float32 (纯胜负与归一化剩余轮数)
-- `reason`: `[N, 3]` float32 (终局胜因多标签)
+- `reason`: `[N, 6]` float32 (终局胜因多标签)
 
 单个分片支持 `.npz` 直接持久化，并利用 `FastTensorLoader` 直接一次性 `.to(device)` 驻留 GPU 显存，训练迭代时切片开销降至极限。
 
@@ -164,12 +164,12 @@ python/
 ## 5. 训练器与优化系统 (`Trainer`)
 
 ### 5.1 固化多任务联合损失函数
-对局样本的目标动作为 MCTS 访问频次或专家选择动作 $a$，终局胜负目标 $z \in \{-1.0, 1.0\}$ 经 `SplendorNet.to_two_hot` 映射为 21 桶软标签分布 $\mathbf{q}_{two\_hot}$：
+对局样本的目标动作为 MCTS 访问频次或专家选择动作 $a$，终局胜负目标 $z \in \{-1.0, 1.0\}$ 经 `SplendorNet.compute_win_target_distribution` 映射为二分类软标签分布 $\mathbf{q}_{win} = [\frac{z+1}{2}, \frac{1-z}{2}]$：
 
 $$\mathcal{L}_{total} = w_p \mathcal{L}_{policy} + w_w \mathcal{L}_{win} + w_t \mathcal{L}_{turns} + w_r \mathcal{L}_{reason} + w_l \mathcal{L}_{lead}$$
 
 - $\mathcal{L}_{policy} = -\sum \pi_{target}(a) \log \pi_{pred}(a)$（软分布交叉熵或掩码交叉熵）
-- $\mathcal{L}_{win} = -\sum_{k=1}^{21} q_{two\_hot}^{(k)} \log p_{win}^{(k)}$（Two-Hot 软分类交叉熵）
+- $\mathcal{L}_{win} = -\sum_{k \in \{win, loss\}} q_{win}^{(k)} \log p_{win}^{(k)}$（二分类软标签交叉熵）
 - $\mathcal{L}_{turns} = \text{SmoothL1}(v_{turns}, z_{turns})$
 - $\mathcal{L}_{reason} = \text{BCEWithLogits}(logits_{reason}, targets_{reason})$
 - $\mathcal{L}_{lead} = \text{SmoothL1}(pred_{lead}, \text{extract\_state\_leads}(obs))$

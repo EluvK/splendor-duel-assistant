@@ -100,7 +100,7 @@ def test_heuristic_ai_vs_random():
 
 
 def test_splendornet_v3_multi_task_loss_and_backward():
-    """测试 SplendorNet v3 实体解耦策略头、Two-Hot 分位数胜率与稠密辅助头的完整反向传播."""
+    """测试 SplendorNet 实体解耦策略头、二分类胜率与稠密辅助头的完整反向传播."""
     net = SplendorNet()
     obs = torch.randn(4, SplendorNet.OBS_SIZE)
     target_action = torch.tensor([10, 175, 550, 600], dtype=torch.long)
@@ -191,40 +191,6 @@ def test_policy_head_scale_balance():
 
     # 开局连线动作总概率应具有可观的探索空间 (不应被预留卡牌压制至 < 5%)
     assert gem_line_prob_sum > 0.05, f"开局连线拿宝石动作被过度压制: {gem_line_prob_sum:.4f}"
-
-
-def test_to_two_hot_distribution_and_dimensions():
-    """测试 Two-Hot 软分类离散分桶转换在不同维度与极端边界下的鲁棒性与数学正确性."""
-    support = torch.linspace(-1.0, 1.0, 21)
-
-    # 1. 验证 1D 形状 [B] 与 2D 形状 [B, 1] 输出一致性
-    targets_1d = torch.tensor([-1.0, -0.5, 0.0, 0.5, 1.0], dtype=torch.float32)
-    targets_2d = targets_1d.unsqueeze(-1)
-
-    dist_1d = SplendorNet.to_two_hot(targets_1d, support)
-    dist_2d = SplendorNet.to_two_hot(targets_2d, support)
-
-    assert dist_1d.shape == (5, 21)
-    assert dist_2d.shape == (5, 21)
-    assert torch.allclose(dist_1d, dist_2d)
-
-    # 2. 验证软分布总概率和恒为 1.0
-    row_sums = dist_1d.sum(dim=-1)
-    assert torch.allclose(row_sums, torch.ones_like(row_sums))
-
-    # 3. 验证端点值 (落在支撑点上的硬单热性)
-    # -1.0 对应第 0 桶
-    assert dist_1d[0, 0].item() == 1.0
-    # +1.0 对应第 20 桶
-    assert dist_1d[4, 20].item() == 1.0
-    # 0.0 对应第 10 桶
-    assert dist_1d[2, 10].item() == 1.0
-
-    # 4. 验证越界截断
-    out_of_bounds = torch.tensor([-3.0, 3.0], dtype=torch.float32)
-    dist_oob = SplendorNet.to_two_hot(out_of_bounds, support)
-    assert dist_oob[0, 0].item() == 1.0
-    assert dist_oob[1, 20].item() == 1.0
 
 
 def test_compute_win_target_distribution():
