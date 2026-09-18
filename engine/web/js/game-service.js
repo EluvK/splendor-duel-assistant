@@ -9,6 +9,22 @@
 
 import initWasm, { WasmGameSession, WasmReplaySession } from '../pkg/splendor_duel_wasm.js';
 
+// 全局单例 WebAssembly 模块初始化 Promise，确保 wasm 内存与实例只初始化一次，杜绝并发加载导致内存越界与借用冲突
+let wasmInitPromise = null;
+async function ensureWasmLoaded() {
+  if (!wasmInitPromise) {
+    wasmInitPromise = (async () => {
+      await initWasm();
+      console.log('[WasmCore] Rust WASM 规则与推演引擎加载完成！');
+      return true;
+    })().catch(err => {
+      wasmInitPromise = null; // 允许失败重试
+      throw err;
+    });
+  }
+  return await wasmInitPromise;
+}
+
 /**
  * 浏览器端 ONNX 神经网络推理器
  */
@@ -145,31 +161,42 @@ class OnnxPredictor {
   }
 }
 
+// 全局共享单例 ONNX 模型推理器
+const sharedPredictor = new OnnxPredictor();
+
 /**
  * WASM 纯前端驱动器 (GitHub Pages 模式)
  */
 class WasmGameDriver {
   constructor() {
     this.session = null;
-    this.wasmInitialized = false;
-    this.predictor = new OnnxPredictor();
+    this.predictor = sharedPredictor;
     this.seed = 42;
     this.playerKinds = ['human', 'neural'];
     this.mctsSims = 0;
+    this.isActionLocked = false;
   }
 
   async init() {
-    if (!this.wasmInitialized) {
-      await initWasm();
-      this.wasmInitialized = true;
-      console.log('[WasmGameDriver] Rust WASM 核心规则引擎加载成功！');
+    await ensureWasmLoaded();
+    // 异步后台拉取 ONNX 模型（若尚未就绪）
+    if (!this.predictor.ready && !this.predictor.loading) {
+      this.predictor.loadModel().then(ready => {
+        if (ready && this.session && !this.isActionLocked) {
+          this.setNeuralReadySafe(true);
+        }
+      });
     }
-    // 异步后台拉取 ONNX 模型
-    this.predictor.loadModel().then(ready => {
-      if (this.session) {
+  }
+
+  setNeuralReadySafe(ready) {
+    if (this.session && typeof this.session.set_neural_ready === 'function' && !this.isActionLocked) {
+      try {
         this.session.set_neural_ready(ready);
+      } catch (e) {
+        console.warn('[WasmGameDriver] set_neural_ready 非致命警告:', e);
       }
-    });
+    }
   }
 
   ensureSession() {
@@ -180,7 +207,7 @@ class WasmGameDriver {
         try {
           this.session = WasmGameSession.from_saved_state(saved);
           this.session.set_mcts_simulations(this.mctsSims);
-          this.session.set_neural_ready(this.predictor.ready);
+          this.setNeuralReadySafe(this.predictor.ready);
 
           // 依据恢复的会话同步 driver 内部参数，保证先后手与配置一致
           try {
@@ -202,13 +229,13 @@ class WasmGameDriver {
       }
       this.session = new WasmGameSession(BigInt(this.seed), this.playerKinds[0], this.playerKinds[1]);
       this.session.set_mcts_simulations(this.mctsSims);
-      this.session.set_neural_ready(this.predictor.ready);
+      this.setNeuralReadySafe(this.predictor.ready);
       this.persistSession();
     }
   }
 
   persistSession() {
-    if (this.session) {
+    if (this.session && !this.isActionLocked) {
       try {
         const exported = this.session.export_saved_state();
         if (exported && exported.length > 0) {
@@ -237,7 +264,7 @@ class WasmGameDriver {
     this.mctsSims = Number(sims) || 0;
     this.session = new WasmGameSession(BigInt(this.seed), this.playerKinds[0], this.playerKinds[1]);
     this.session.set_mcts_simulations(this.mctsSims);
-    this.session.set_neural_ready(this.predictor.ready);
+    this.setNeuralReadySafe(this.predictor.ready);
     this.persistSession();
     const data = JSON.parse(this.session.get_state_json());
     data.neural_available = this.predictor.ready;
@@ -248,8 +275,14 @@ class WasmGameDriver {
   async stepHuman(actionPayload) {
     await this.init();
     this.ensureSession();
-    const raw = this.session.step_human(JSON.stringify(actionPayload));
-    const data = JSON.parse(raw);
+    this.isActionLocked = true;
+    let data;
+    try {
+      const raw = this.session.step_human(JSON.stringify(actionPayload));
+      data = JSON.parse(raw);
+    } finally {
+      this.isActionLocked = false;
+    }
     data.neural_available = this.predictor.ready;
     if (data.ok) {
       this.persistSession();
@@ -274,12 +307,18 @@ class WasmGameDriver {
 
         const pred = await this.predictor.predict(new Float32Array(obsArray), legalIds, legalsDto);
         if (pred) {
-          const raw = this.session.apply_neural_step(
-            pred.bestActionId,
-            pred.winrate,
-            JSON.stringify(pred.topCandidates)
-          );
-          const result = JSON.parse(raw);
+          this.isActionLocked = true;
+          let result;
+          try {
+            const raw = this.session.apply_neural_step(
+              pred.bestActionId,
+              pred.winrate,
+              JSON.stringify(pred.topCandidates)
+            );
+            result = JSON.parse(raw);
+          } finally {
+            this.isActionLocked = false;
+          }
           if (result.ok) {
             this.persistSession();
           }
@@ -287,12 +326,18 @@ class WasmGameDriver {
         }
       }
       // 若 ONNX 未就绪或推理失败，平滑降级至启发式 AI
-      console.warn('[WasmGameDriver] 神经网络尚未就绪，使用启发式 AI 替代落子');
+      console.warn('[WasmGameDriver] 神经网络未就绪，使用启发式 AI 走步');
     }
 
     // Heuristic 或 Random 直接由 Rust WASM 极速推演
-    const raw = this.session.step_ai(currentSims > 0 ? currentSims : undefined);
-    const result = JSON.parse(raw);
+    this.isActionLocked = true;
+    let result;
+    try {
+      const raw = this.session.step_ai(currentSims > 0 ? currentSims : undefined);
+      result = JSON.parse(raw);
+    } finally {
+      this.isActionLocked = false;
+    }
     if (result.ok) {
       this.persistSession();
     }
@@ -540,23 +585,32 @@ export const gameService = new GameService();
 class WasmReplayDriver {
   constructor() {
     this.session = null;
-    this.wasmInitialized = false;
     this.seed = 42;
     this.playerTypes = ['heuristic', 'heuristic'];
-    this.predictor = new OnnxPredictor();
+    this.predictor = sharedPredictor;
+    this.isActionLocked = false;
   }
 
   async init() {
-    if (!this.wasmInitialized) {
-      await initWasm();
-      this.wasmInitialized = true;
-    }
+    await ensureWasmLoaded();
     // 异步加载 ONNX 模型
-    this.predictor.loadModel().then(ready => {
-      if (this.session && typeof this.session.set_neural_ready === 'function') {
+    if (!this.predictor.ready && !this.predictor.loading) {
+      this.predictor.loadModel().then(ready => {
+        if (ready && this.session && !this.isActionLocked) {
+          this.setNeuralReadySafe(true);
+        }
+      });
+    }
+  }
+
+  setNeuralReadySafe(ready) {
+    if (this.session && typeof this.session.set_neural_ready === 'function' && !this.isActionLocked) {
+      try {
         this.session.set_neural_ready(ready);
+      } catch (e) {
+        console.warn('[WasmReplayDriver] set_neural_ready 异常忽略:', e);
       }
-    });
+    }
   }
 
   ensureSession() {
@@ -566,9 +620,7 @@ class WasmReplayDriver {
       if (transferData) {
         try {
           this.session = WasmReplaySession.from_replay_data(transferData);
-          if (typeof this.session.set_neural_ready === 'function') {
-            this.session.set_neural_ready(this.predictor.ready);
-          }
+          this.setNeuralReadySafe(this.predictor.ready);
           console.log('[WasmReplayDriver] 成功从对战会话恢复历史局势！');
           sessionStorage.removeItem('splendor_duel_replay_transfer');
           return;
@@ -577,9 +629,7 @@ class WasmReplayDriver {
         }
       }
       this.session = new WasmReplaySession(BigInt(this.seed), this.playerTypes[0], this.playerTypes[1]);
-      if (typeof this.session.set_neural_ready === 'function') {
-        this.session.set_neural_ready(this.predictor.ready);
-      }
+      this.setNeuralReadySafe(this.predictor.ready);
     }
   }
 
@@ -588,9 +638,7 @@ class WasmReplayDriver {
     try {
       const jsonStr = typeof replayData === 'string' ? replayData : JSON.stringify(replayData);
       this.session = WasmReplaySession.from_replay_data(jsonStr);
-      if (typeof this.session.set_neural_ready === 'function') {
-        this.session.set_neural_ready(this.predictor.ready);
-      }
+      this.setNeuralReadySafe(this.predictor.ready);
       return true;
     } catch (e) {
       console.error('[WasmReplayDriver] loadReplayData 失败:', e);
@@ -626,35 +674,40 @@ class WasmReplayDriver {
     await this.init();
     this.ensureSession();
 
+    this.isActionLocked = true;
     let lastResult = null;
     const targetCount = Math.max(1, count);
-    for (let c = 0; c < targetCount; c++) {
-      // 检查当前走步方是否为神经网络
-      const currentType = this.session.current_player_type();
-      if (currentType === 'neural') {
-        if (this.predictor.ready) {
-          const obsArray = this.session.encode_observation();
-          const legalIds = Array.from(this.session.get_legal_action_ids());
-          const legalsDto = JSON.parse(this.session.get_legal_actions_dto());
+    try {
+      for (let c = 0; c < targetCount; c++) {
+        // 检查当前走步方是否为神经网络
+        const currentType = this.session.current_player_type();
+        if (currentType === 'neural') {
+          if (this.predictor.ready) {
+            const obsArray = this.session.encode_observation();
+            const legalIds = Array.from(this.session.get_legal_action_ids());
+            const legalsDto = JSON.parse(this.session.get_legal_actions_dto());
 
-          const pred = await this.predictor.predict(new Float32Array(obsArray), legalIds, legalsDto);
-          if (pred) {
-            const raw = this.session.step_with_neural(
-              pred.bestActionId,
-              pred.winrate,
-              JSON.stringify(pred.topCandidates)
-            );
-            lastResult = JSON.parse(raw);
-            if (!lastResult.advanced) break;
-            continue;
+            const pred = await this.predictor.predict(new Float32Array(obsArray), legalIds, legalsDto);
+            if (pred) {
+              const raw = this.session.step_with_neural(
+                pred.bestActionId,
+                pred.winrate,
+                JSON.stringify(pred.topCandidates)
+              );
+              lastResult = JSON.parse(raw);
+              if (!lastResult.advanced) break;
+              continue;
+            }
           }
+          console.warn('[WasmReplayDriver] 神经网络未就绪，使用启发式 AI 走步');
         }
-        console.warn('[WasmReplayDriver] 神经网络未就绪，使用启发式 AI 走步');
-      }
 
-      const raw = this.session.step_forward(1);
-      lastResult = JSON.parse(raw);
-      if (!lastResult.advanced) break;
+        const raw = this.session.step_forward(1);
+        lastResult = JSON.parse(raw);
+        if (!lastResult.advanced) break;
+      }
+    } finally {
+      this.isActionLocked = false;
     }
 
     return lastResult || JSON.parse(this.session.get_status_json());
