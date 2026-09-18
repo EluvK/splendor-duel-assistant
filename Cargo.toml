@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["engine"]
+members = ["engine", "engine-wasm"]
 
 [profile.dev]
 opt-level = 0

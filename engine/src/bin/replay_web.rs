@@ -352,6 +352,29 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
             }
         }
 
+        // 动态设置 MCTS 模拟搜索强度
+        ("POST", "/api/game/set_sims") | ("GET", "/api/game/set_sims") => {
+            let mut sims: usize = 30;
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "sims" || k == "mcts_sims" {
+                        if let Ok(s) = v.parse::<usize>() {
+                            sims = s;
+                        }
+                    }
+                }
+            }
+            let mut game = state.game.write().unwrap();
+            game.set_mcts_simulations(sims);
+            let res = serde_json::json!({
+                "ok": true,
+                "mcts_simulations": game.mcts_simulations,
+            });
+            let json = serde_json::to_vec(&res).unwrap();
+            respond(&mut stream, "200 OK", &json, "application/json");
+        }
+
         // 重置交互对战对局
         ("POST", "/api/game/reset") | ("GET", "/api/game/reset") | ("POST", "/api/game/new") => {
             let mut seed: u64 = 42;

@@ -1,3 +1,4 @@
+#[cfg(feature = "native")]
 use std::sync::Arc;
 
 use rand::prelude::*;
@@ -5,14 +6,18 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 use super::heuristic_ai::HeuristicAI;
+#[cfg(feature = "native")]
 use super::mcts::{NeuralEvalCache, RustMCTS};
+#[cfg(feature = "native")]
 use super::neural_ai::NeuralAI;
+#[cfg(feature = "native")]
 use super::neural_evaluator::TractNeuralEvaluator;
 use super::random_ai::RandomAI;
 use super::replay::{
     action_category, format_action, DecisionDto, PlayerType, ReplaySession, ReplayStep,
     ScoredActionDto, StateDto,
 };
+#[cfg(feature = "native")]
 use crate::bridge::{action_to_id, encode_state, ACTION_SIZE};
 use crate::game_state::{GameState, TurnPhase};
 use crate::gameplay::{GameEngine, RuleEngine};
@@ -73,6 +78,7 @@ pub struct InteractiveSession {
     pub rng: ChaCha8Rng,
     pub history: Vec<ReplayStep>,
     pub mcts_simulations: usize,
+    #[cfg(feature = "native")]
     pub evaluator: Option<Arc<TractNeuralEvaluator>>,
 }
 
@@ -98,6 +104,7 @@ impl InteractiveSession {
             rng: ChaCha8Rng::seed_from_u64(seed),
             history: vec![initial_step],
             mcts_simulations: 30,
+            #[cfg(feature = "native")]
             evaluator: None,
         };
         sess.maybe_auto_skip_optional();
@@ -105,6 +112,7 @@ impl InteractiveSession {
     }
 
     /// 设置并挂载神经网络评估器 (供 Neural MCTS 深度推演使用)
+    #[cfg(feature = "native")]
     pub fn set_evaluator(&mut self, evaluator: Option<Arc<TractNeuralEvaluator>>) {
         self.evaluator = evaluator;
     }
@@ -143,10 +151,14 @@ impl InteractiveSession {
 
     /// 重置对局并保留或修改玩家配置
     pub fn reset(&mut self, seed: u64, player_kinds: [PlayerKind; 2]) {
+        #[cfg(feature = "native")]
         let evaluator = self.evaluator.clone();
         let mcts_simulations = self.mcts_simulations;
         *self = Self::new(seed, player_kinds);
-        self.evaluator = evaluator;
+        #[cfg(feature = "native")]
+        {
+            self.evaluator = evaluator;
+        }
         self.mcts_simulations = mcts_simulations;
     }
 
@@ -188,17 +200,44 @@ impl InteractiveSession {
             return Err("Game already over".to_string());
         }
 
-        let legals = self.legal_actions();
-        if !legals.contains(&action) {
-            return Err(format!("Illegal action: {:?}", action));
+        // 若处于 OptionalActions 阶段，但玩家直接提交了合法的强制行动（如拿宝石、预留或购卡），
+        // 且规则允许跳过可选行动，则自动执行 SkipOptional 转入强制行动阶段
+        if self.game.phase == TurnPhase::OptionalActions {
+            let optional_legals = self.legal_actions();
+            if optional_legals.contains(&Action::SkipOptional) {
+                let mut trial_game = self.game;
+                if GameEngine::step(&mut trial_game, &Action::SkipOptional).is_ok() {
+                    let mandatory_legals = RuleEngine::legal_actions(&trial_game);
+                    if let Some(canonical) = find_matching_action(&action, &mandatory_legals) {
+                        let round_number = self.game.turn_number;
+                        let player = self.game.current_player;
+                        GameEngine::step(&mut self.game, &Action::SkipOptional)?;
+                        let skip_step = ReplayStep {
+                            step_index: self.history.len(),
+                            round_number,
+                            player,
+                            action_desc: "Skip Optional (Auto)".to_string(),
+                            phase: "OptionalActions".to_string(),
+                            state: StateDto::from(&self.game),
+                            decision: None,
+                        };
+                        self.history.push(skip_step);
+                        return self.step_human(canonical);
+                    }
+                }
+            }
         }
+
+        let legals = self.legal_actions();
+        let canonical_action = find_matching_action(&action, &legals)
+            .ok_or_else(|| format!("Illegal action: {:?}", action))?;
 
         let player = self.game.current_player;
         let round_number = self.game.turn_number;
-        let action_desc = format_action(&action);
+        let action_desc = format_action(&canonical_action);
         let phase_desc = format!("{:?}", self.game.phase);
 
-        GameEngine::step(&mut self.game, &action)?;
+        GameEngine::step(&mut self.game, &canonical_action)?;
 
         let next_step = ReplayStep {
             step_index: self.history.len(),
@@ -232,6 +271,7 @@ impl InteractiveSession {
 
         let player = self.game.current_player;
         let kind = self.player_kinds[player];
+        #[allow(unused_variables)]
         let sims = mcts_sims.unwrap_or(self.mcts_simulations);
 
         let (action, decision) = match kind {
@@ -270,80 +310,108 @@ impl InteractiveSession {
                 (act, Some(decision))
             }
             PlayerKind::Neural => {
-                if sims > 0 && self.evaluator.is_some() {
-                    let evaluator = self.evaluator.as_ref().unwrap();
-                    let legals = RuleEngine::legal_actions(&self.game);
-                    if legals.is_empty() {
-                        (None, None)
-                    } else if legals.len() == 1 {
-                        let chosen = legals[0].clone();
-                        let decision = DecisionDto {
-                            ai_type: format!("neural mcts ({} sims)", sims),
-                            chosen_score: None,
-                            top_candidates: vec![ScoredActionDto {
-                                action_desc: format_action(&chosen),
-                                score: 100.0,
-                                is_chosen: true,
-                            }],
-                        };
-                        (Some(chosen), Some(decision))
-                    } else {
-                        let mcts = RustMCTS::default();
-                        let mut eval_cache = NeuralEvalCache::default();
-                        let search_res = mcts.search_policy(
-                            &self.game,
-                            legals.clone(),
-                            evaluator,
-                            &mut eval_cache,
-                            sims,
-                            false,
-                            0.3,
-                            0.25,
-                            1.0,
-                            &mut self.rng,
-                        );
-
-                        if let Some((best_act, policy)) = search_res {
-                            let mut scored: Vec<(Action, f32)> = legals
-                                .into_iter()
-                                .map(|a| {
-                                    let id = action_to_id(&a);
-                                    let p = if id < ACTION_SIZE { policy[id] } else { 0.0 };
-                                    (a, p)
-                                })
-                                .collect();
-                            scored.sort_unstable_by(|a, b| {
-                                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                            });
-
-                            let top_candidates: Vec<ScoredActionDto> = scored
-                                .into_iter()
-                                .take(8)
-                                .map(|(act, p)| ScoredActionDto {
-                                    action_desc: format_action(&act),
-                                    score: p * 100.0,
-                                    is_chosen: act == best_act,
-                                })
-                                .collect();
-
-                            let root_obs = encode_state(&self.game);
-                            let root_val = evaluator
-                                .evaluate(&root_obs)
-                                .ok()
-                                .map(|p| p.1.win_value * 100.0);
-
+                #[cfg(feature = "native")]
+                {
+                    if sims > 0 && self.evaluator.is_some() {
+                        let evaluator = self.evaluator.as_ref().unwrap();
+                        let legals = RuleEngine::legal_actions(&self.game);
+                        if legals.is_empty() {
+                            (None, None)
+                        } else if legals.len() == 1 {
+                            let chosen = legals[0].clone();
                             let decision = DecisionDto {
                                 ai_type: format!("neural mcts ({} sims)", sims),
-                                chosen_score: root_val,
-                                top_candidates,
+                                chosen_score: None,
+                                top_candidates: vec![ScoredActionDto {
+                                    action_desc: format_action(&chosen),
+                                    score: 100.0,
+                                    is_chosen: true,
+                                }],
                             };
-                            (Some(best_act), Some(decision))
+                            (Some(chosen), Some(decision))
                         } else {
-                            Self::predict_single_step_neural(&self.game, &mut self.rng)
+                            let mcts = RustMCTS::default();
+                            let mut eval_cache = NeuralEvalCache::default();
+                            let search_res = mcts.search_policy(
+                                &self.game,
+                                legals.clone(),
+                                evaluator,
+                                &mut eval_cache,
+                                sims,
+                                false,
+                                0.3,
+                                0.25,
+                                1.0,
+                                &mut self.rng,
+                            );
+
+                            if let Some((best_act, policy)) = search_res {
+                                let mut scored: Vec<(Action, f32)> = legals
+                                    .into_iter()
+                                    .map(|a| {
+                                        let id = action_to_id(&a);
+                                        let p = if id < ACTION_SIZE { policy[id] } else { 0.0 };
+                                        (a, p)
+                                    })
+                                    .collect();
+                                scored.sort_unstable_by(|a, b| {
+                                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                                });
+
+                                let top_candidates: Vec<ScoredActionDto> = scored
+                                    .into_iter()
+                                    .take(8)
+                                    .map(|(act, p)| ScoredActionDto {
+                                        action_desc: format_action(&act),
+                                        score: p * 100.0,
+                                        is_chosen: act == best_act,
+                                    })
+                                    .collect();
+
+                                let root_obs = encode_state(&self.game);
+                                let root_val = evaluator
+                                    .evaluate(&root_obs)
+                                    .ok()
+                                    .map(|p| p.1.win_value * 100.0);
+
+                                let decision = DecisionDto {
+                                    ai_type: format!("neural mcts ({} sims)", sims),
+                                    chosen_score: root_val,
+                                    top_candidates,
+                                };
+                                (Some(best_act), Some(decision))
+                            } else {
+                                Self::predict_single_step_neural(&self.game, &mut self.rng)
+                            }
                         }
+                    } else {
+                        Self::predict_single_step_neural(&self.game, &mut self.rng)
                     }
-                } else {
-                    Self::predict_single_step_neural(&self.game, &mut self.rng)
+                }
+                #[cfg(not(feature = "native"))]
+                {
+                    if let Some((best_act, score, scored_list)) =
+                        HeuristicAI::evaluate_and_select(&self.game, &mut self.rng)
+                    {
+                        let top_candidates: Vec<ScoredActionDto> = scored_list
+                            .iter()
+                            .take(8)
+                            .map(|(act, s)| ScoredActionDto {
+                                action_desc: format_action(act),
+                                score: *s,
+                                is_chosen: act == &best_act,
+                            })
+                            .collect();
+
+                        let decision = DecisionDto {
+                            ai_type: "neural (fallback: heuristic)".to_string(),
+                            chosen_score: Some(score),
+                            top_candidates,
+                        };
+                        (Some(best_act), Some(decision))
+                    } else {
+                        (None, None)
+                    }
                 }
             }
         };
@@ -389,6 +457,7 @@ impl InteractiveSession {
     }
 
     /// 单步纯直觉神经网络推理辅助函数 (0 次 MCTS 推演或回退时使用)
+    #[cfg(feature = "native")]
     fn predict_single_step_neural(
         game: &GameState,
         rng: &mut ChaCha8Rng,
@@ -438,4 +507,38 @@ impl InteractiveSession {
             }
         }
     }
+}
+
+/// 在合法动作列表中智能匹配（支持 TakeTokens 坐标顺序无关匹配）
+pub fn find_matching_action(action: &Action, legals: &[Action]) -> Option<Action> {
+    // 1. 完全精确匹配（快速路径）
+    if let Some(exact) = legals.iter().find(|&a| a == action) {
+        return Some(exact.clone());
+    }
+
+    // 2. 针对 TakeTokens 的坐标顺序容错匹配
+    if let Action::TakeTokens { count, positions } = action {
+        if *count == 0 || *count > 3 {
+            return None;
+        }
+        let count = *count as usize;
+        let mut sorted_input = [(0, 0); 3];
+        sorted_input[..count].copy_from_slice(&positions[..count]);
+        sorted_input[..count].sort_unstable();
+
+        for legal in legals {
+            if let Action::TakeTokens { count: l_count, positions: l_positions } = legal {
+                if *l_count as usize == count {
+                    let mut sorted_legal = [(0, 0); 3];
+                    sorted_legal[..count].copy_from_slice(&l_positions[..count]);
+                    sorted_legal[..count].sort_unstable();
+                    if sorted_input[..count] == sorted_legal[..count] {
+                        return Some(legal.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }

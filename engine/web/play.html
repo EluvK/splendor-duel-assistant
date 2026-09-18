@@ -6,6 +6,7 @@
   <title>璀璨宝石：对决 (Splendor Duel) - 实时人机/双人交互对战</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/interaction.css">
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.min.js"></script>
 </head>
 <body>
 
@@ -26,20 +27,21 @@
         <span style="font-size:0.75rem; color:#38bdf8; font-weight:700;">先手 P0:</span>
         <select id="p0KindSelect">
           <option value="human" selected>👤 人类玩家</option>
-          <option value="neural">🧠 神经网络 (best.pt)</option>
+          <option value="neural">🧠 神经网络</option>
           <option value="heuristic">🤖 启发式 AI</option>
           <option value="random">🎲 随机 AI</option>
         </select>
         <button class="btn-secondary" id="btnSwapPlayers" style="padding: 2px 7px; font-size: 0.72rem;" title="交换双方座位与先后手身份并开始新对局">🔄 交换先后手</button>
         <span style="font-size:0.75rem; color:#f472b6; font-weight:700;">后手 P1:</span>
         <select id="p1KindSelect">
-          <option value="neural" selected>🧠 神经网络 (best.pt)</option>
+          <option value="neural" selected>🧠 神经网络</option>
           <option value="human">👤 人类玩家</option>
           <option value="heuristic">🤖 启发式 AI</option>
           <option value="random">🎲 随机 AI</option>
         </select>
-        <span id="neuralStatusDot" style="font-size:0.75rem; color:#22c55e;" title="神经网络服务状态">●</span>
-        <span id="neuralModelBadge" style="font-size:0.72rem; color:#a1a1aa; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); cursor:pointer; display:none; align-items:center; gap:3px;" title="点击可手动热重载 best.pt 权重">
+        <span id="driverBadge" style="font-size:0.7rem; color:#38bdf8; background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.25); padding:2px 6px; border-radius:4px;" title="当前运行驱动模式">检测中...</span>
+        <span id="neuralStatusDot" style="font-size:0.75rem; color:#eab308;" title="神经网络服务状态">●</span>
+        <span id="neuralModelBadge" style="font-size:0.72rem; color:#a1a1aa; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); cursor:pointer; display:none; align-items:center; gap:3px;" title="点击可重载神经网络权重">
           <span id="neuralModelText">Epoch: --</span>
           <span style="font-size:0.68rem; color:#38bdf8;">🔄</span>
         </span>
@@ -47,7 +49,8 @@
           <span style="font-size:0.75rem; color:#c084fc; font-weight:700;">🌲 神经 MCTS:</span>
           <select id="mctsSimsSelect" style="padding: 2px 5px; font-size: 0.72rem; border-radius: 4px; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.15); color: #fff; cursor: pointer;">
             <option value="0">⚡ 纯直觉网络 (0次)</option>
-            <option value="50">🥉 快速 (50次)</option>
+            <option value="30">🥉 快速 (30次)</option>
+            <option value="50">🥉 适度 (50次)</option>
             <option value="100" selected>🥈 深度 (100次)</option>
             <option value="200">🥇 强力 (200次)</option>
             <option value="1000">🔥 极限 (1000次)</option>
@@ -335,25 +338,36 @@
 
   <script type="module">
     import { GameController } from './js/game-controller.js';
+    import { gameService } from './js/game-service.js';
 
     const controller = new GameController();
     window.controller = controller;
-    controller.fetchState();
+
+    // 初始化并更新驱动徽章
+    gameService.ensureReady().then(() => {
+      const badge = document.getElementById('driverBadge');
+      if (badge) {
+        if (gameService.driverType === 'wasm') {
+          badge.innerText = '⚡ 纯静态 WASM';
+          badge.style.color = '#34d399';
+          badge.style.borderColor = 'rgba(52,211,153,0.3)';
+          badge.style.background = 'rgba(52,211,153,0.1)';
+          badge.title = '运行模式：浏览器本地 WebAssembly + ONNX Runtime Web，零后端依赖';
+        } else {
+          badge.innerText = '🔌 服务端 REST';
+          badge.style.color = '#38bdf8';
+          badge.title = '运行模式：本地 Rust HTTP 服务端';
+        }
+      }
+      controller.updateMctsVisibility();
+      controller.fetchState();
+      controller.checkNeuralStatus();
+    });
 
     // 神经网络状态探测轮询
-    setInterval(async () => {
-      try {
-        const res = await fetch('/api/neural_status');
-        if (res.ok) {
-          const data = await res.json();
-          const dot = document.getElementById('neuralStatusDot');
-          if (dot) {
-            dot.style.color = data.available ? '#22c55e' : '#94a3b8';
-            dot.title = data.available ? '神经网络推理微服务在线' : '神经网络服务未连接';
-          }
-        }
-      } catch(e) {}
-    }, 5000);
+    setInterval(() => {
+      controller.checkNeuralStatus();
+    }, 3000);
   </script>
 </body>
 </html>

@@ -15,6 +15,7 @@ import {
   getPaymentPlanDetails
 } from './shared-components.js';
 import { soundManager } from './sound-manager.js';
+import { gameService } from './game-service.js';
 
 function translateColor(color) {
   const map = {
@@ -218,6 +219,8 @@ export class GameController {
       this.mctsSimsSelect.value = String(this.mctsSims);
       this.mctsSimsSelect.onchange = (e) => {
         this.mctsSims = parseInt(e.target.value, 10) || 0;
+        this.userCustomizedMcts = true;
+        gameService.setMctsSimulations(this.mctsSims);
       };
     }
 
@@ -274,8 +277,13 @@ export class GameController {
     const p0 = document.getElementById('p0KindSelect')?.value || this.playerKinds?.[0];
     const p1 = document.getElementById('p1KindSelect')?.value || this.playerKinds?.[1];
     const hasNeural = (p0 === 'neural' || p1 === 'neural');
+    const isWasm = (gameService.driverType === 'wasm');
     if (this.mctsConfigGroup) {
-      this.mctsConfigGroup.style.display = hasNeural ? 'inline-flex' : 'none';
+      // WASM 纯静态模式下仅支持单步直觉推理，隐藏 MCTS 搜索配置项以避免误导
+      this.mctsConfigGroup.style.display = (hasNeural && !isWasm) ? 'inline-flex' : 'none';
+      if (hasNeural && !isWasm) {
+        this.mctsConfigGroup.title = '设置神经网络 AI 蒙特卡洛树搜索 (MCTS) 推演强度 (本地原生多线程加速)';
+      }
     }
   }
 
@@ -318,9 +326,8 @@ export class GameController {
 
   async checkNeuralStatus() {
     try {
-      const res = await fetch('/api/neural_status');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await gameService.getNeuralStatus();
+      if (data) {
         const dot = document.getElementById('neuralStatusDot');
         const badge = document.getElementById('neuralModelBadge');
         const text = document.getElementById('neuralModelText');
@@ -328,13 +335,22 @@ export class GameController {
         if (data.available) {
           if (dot) {
             dot.style.color = '#22c55e';
-            dot.title = data.mcts_available
-              ? '神经网络微服务在线，且原生 MCTS 深度推演引擎已就绪'
-              : '神经网络推理微服务已连接 (127.0.0.1:8088)';
+            dot.title = data.model_type === 'onnx-web'
+              ? '浏览器本地 ONNX 神经网络引擎已就绪 (WebAssembly 加速)'
+              : '神经网络推理微服务在线';
           }
-          if (badge && text && data.details) {
+          if (badge && text) {
             badge.style.display = 'inline-flex';
-            text.innerText = `Epoch ${data.details.epoch ?? '--'}`;
+            text.innerText = data.model_type === 'onnx-web' ? 'ONNX Web' : `Epoch ${data.details?.epoch ?? '--'}`;
+          }
+        } else if (data.loading) {
+          if (dot) {
+            dot.style.color = '#eab308';
+            dot.title = '神经网络模型正在加载中...';
+          }
+          if (badge && text) {
+            badge.style.display = 'inline-flex';
+            text.innerText = '模型加载中';
           }
         } else {
           if (dot) {
@@ -353,13 +369,11 @@ export class GameController {
     const text = document.getElementById('neuralModelText');
     if (text) text.innerText = '重载中...';
     try {
-      const res = await fetch('/api/neural_reload', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        if (text) text.innerText = `Epoch ${data.epoch ?? '--'}`;
-        alert(`✅ 神经网络权重已成功重载！最新版本: Epoch ${data.epoch}`);
+      const res = await gameService.reloadNeural();
+      if (res && res.ok) {
+        alert('✅ 神经网络权重已成功重载！');
       } else {
-        alert('❌ 重载神经网络失败，请检查服务日志');
+        alert('❌ 重载神经网络失败');
       }
     } catch (e) {
       alert(`❌ 重载网络请求失败: ${e.message}`);
@@ -410,9 +424,8 @@ export class GameController {
     const seed = Math.floor(Math.random() * 100000);
 
     try {
-      const res = await fetch(`/api/game/new?seed=${seed}&p0=${p0}&p1=${p1}&sims=${this.mctsSims}`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await gameService.newGame(seed, p0, p1, this.mctsSims);
+      if (data) {
         this.updateData(data);
       }
     } catch (e) {
@@ -422,9 +435,8 @@ export class GameController {
 
   async fetchState() {
     try {
-      const res = await fetch('/api/game/state');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await gameService.getState();
+      if (data) {
         this.updateData(data);
       }
     } catch (e) {
@@ -445,8 +457,10 @@ export class GameController {
       this.playerKinds = ['human', 'neural'];
     }
     if (data.mcts_simulations !== undefined && this.mctsSimsSelect) {
-      this.mctsSims = data.mcts_simulations;
-      this.mctsSimsSelect.value = String(data.mcts_simulations);
+      if (!this.userCustomizedMcts) {
+        this.mctsSims = data.mcts_simulations;
+        this.mctsSimsSelect.value = String(data.mcts_simulations);
+      }
     }
 
     // 动作幽灵残留追踪提取 (Ghost Highlighting)
@@ -628,10 +642,10 @@ export class GameController {
 
   async showStepDetail(stepIndex) {
     try {
-      const res = await fetch(`/api/game/step?index=${stepIndex}`);
-      if (!res.ok) return;
-      const step = await res.json();
-      this.renderStepDetailModal(step);
+      const step = await gameService.getStep(stepIndex);
+      if (step && !step.error) {
+        this.renderStepDetailModal(step);
+      }
     } catch (e) {
       console.error('showStepDetail failed:', e);
     }
@@ -1670,12 +1684,9 @@ export class GameController {
 
   async syncFullHistory() {
     try {
-      const res = await fetch('/api/game/history');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.steps && data.steps.length !== this.history.length) {
-          this.syncHistoryList(data.steps);
-        }
+      const data = await gameService.getHistory();
+      if (data && data.steps && data.steps.length !== this.history.length) {
+        this.syncHistoryList(data.steps);
       }
     } catch (e) {
       // 静默忽略
@@ -1687,19 +1698,13 @@ export class GameController {
     this.isActionPending = true;
 
     try {
-      const res = await fetch('/api/game/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action })
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await gameService.stepHuman(action);
+      if (data && data.ok) {
         this.updateData(data);
         this.syncFullHistory();
-      } else {
-        const err = await res.json();
-        console.error('Action rejected:', err);
-        alert(`操作无效: ${err.error || '未知错误'}`);
+      } else if (data && data.error) {
+        console.error('Action rejected:', data);
+        alert(`操作无效: ${data.error || '未知错误'}`);
       }
     } catch (e) {
       console.error('submitAction failed:', e);
@@ -1713,13 +1718,10 @@ export class GameController {
     this.isActionPending = true;
 
     try {
-      const res = await fetch(`/api/game/ai_step?sims=${this.mctsSims}`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.ok) {
-          this.updateData(data);
-          this.syncFullHistory();
-        }
+      const data = await gameService.stepAi(this.mctsSims);
+      if (data && data.ok) {
+        this.updateData(data);
+        this.syncFullHistory();
       }
     } catch (e) {
       console.error('stepAi failed:', e);
@@ -1752,6 +1754,14 @@ export class GameController {
 
   async toReplay() {
     try {
+      if (gameService.driverType === 'wasm') {
+        const replayData = await gameService.exportReplayData();
+        if (replayData) {
+          sessionStorage.setItem('splendor_duel_replay_transfer', JSON.stringify(replayData));
+        }
+        window.location.href = 'replay.html';
+        return;
+      }
       const res = await fetch('/api/game/to_replay', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
@@ -1759,6 +1769,7 @@ export class GameController {
       }
     } catch (e) {
       console.error('toReplay failed:', e);
+      window.location.href = 'replay.html';
     }
   }
 }

@@ -1,0 +1,84 @@
+name: Deploy Splendor Duel Web to GitHub Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_url:
+        description: 'ONNX 模型下载直链 (选填，留空则自动从仓库最新 Release 附件下载 best.onnx)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen-cli
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.128 --locked
+
+      - name: Build WASM Core Engine
+        run: |
+          cargo build --package splendor-duel-wasm --target wasm32-unknown-unknown --release
+          wasm-bindgen --target web --out-dir engine/web/pkg target/wasm32-unknown-unknown/release/splendor_duel_wasm.wasm
+
+      - name: Fetch Neural Network Model (Release CDN or Custom URL)
+        run: |
+          mkdir -p engine/web/assets/models
+          MODEL_TARGET="engine/web/assets/models/best.onnx"
+          
+          if [ -n "${{ github.event.inputs.model_url }}" ]; then
+            echo "==> 从用户指定的自定义 URL 下载模型..."
+            curl -fL -o "$MODEL_TARGET" "${{ github.event.inputs.model_url }}" || {
+              echo "::warning::从自定义 URL 下载模型失败，跳过模型打包";
+            }
+          elif [ -f checkpoints/best.onnx ]; then
+            echo "==> 发现本地 checkpoints/best.onnx，直接复制打包..."
+            cp checkpoints/best.onnx "$MODEL_TARGET"
+          else
+            echo "==> 尝试从 GitHub Releases (latest) 下载 best.onnx 附件..."
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/latest/download/best.onnx"
+            curl -fL -s -o "$MODEL_TARGET" "$RELEASE_URL" || {
+              echo "::warning::未在 latest release 中检测到 best.onnx 附件。网站将正常部署，并优雅降级为启发式 AI 对弈。";
+            }
+          fi
+          
+          if [ -f "$MODEL_TARGET" ]; then
+            echo "==> 成功加载神经网络模型！文件大小: $(du -h "$MODEL_TARGET" | cut -f1)"
+          else
+            echo "==> 未打包 ONNX 模型，前端将默认启用启发式 AI。"
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: engine/web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

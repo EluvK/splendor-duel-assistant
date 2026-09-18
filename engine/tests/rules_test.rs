@@ -765,6 +765,56 @@ fn test_payment_with_multiple_gold_substitutions() {
     assert_eq!(game.players[0].tokens.get(GemType::Gold), 0, "两枚黄金被消耗扣除");
 }
 
+#[test]
+fn test_step_human_take_tokens_coordinate_order_tolerance() {
+    let mut sess = InteractiveSession::new(42, [PlayerKind::Human, PlayerKind::Neural]);
+    assert_eq!(sess.game.phase, TurnPhase::MandatoryAction);
 
+    // 找到一条 3 连线合法动作
+    let legals = sess.legal_actions();
+    let take_3 = legals
+        .iter()
+        .find(|a| matches!(a, Action::TakeTokens { count: 3, .. }))
+        .expect("开局盘面必定包含 3 连线")
+        .clone();
+
+    if let Action::TakeTokens { count, positions } = take_3 {
+        // 构造相反顺序的 positions
+        let reversed_positions = [positions[2], positions[1], positions[0]];
+        let reversed_action = Action::TakeTokens {
+            count,
+            positions: reversed_positions,
+        };
+
+        // 验证 step_human 容错执行
+        let res = sess.step_human(reversed_action);
+        assert!(res.is_ok(), "不同坐标点击顺序的合法连线必须被正确接受并执行: {:?}", res.err());
+    }
+}
+
+#[test]
+fn test_step_human_optional_phase_auto_skip() {
+    // 构造处于 OptionalActions 阶段且拥有特权卷轴的状态
+    let mut sess = InteractiveSession::new(100, [PlayerKind::Human, PlayerKind::Neural]);
+    sess.game.phase = TurnPhase::OptionalActions;
+    sess.game.players[sess.game.current_player].privileges = 1;
+
+    // 此时合法可选动作中包含 SkipOptional
+    assert!(sess.legal_actions().contains(&Action::SkipOptional));
+
+    // 人类直接提交强制行动：预留一张牌或拿宝石
+    // 先获取强制行动下的合法动作
+    let mut trial_game = sess.game;
+    trial_game.phase = TurnPhase::MandatoryAction;
+    let mandatory_legals = RuleEngine::legal_actions(&trial_game);
+    let target_take = mandatory_legals
+        .into_iter()
+        .find(|a| matches!(a, Action::TakeTokens { count: 1, .. }))
+        .unwrap();
+
+    // 在 OptionalActions 阶段直接提交该强制行动，应自动跳过可选行动并顺利执行强制行动
+    let step_res = sess.step_human(target_take);
+    assert!(step_res.is_ok(), "OptionalActions 阶段直接提交合法 MandatoryAction 应自动触发 SkipOptional 并成功执行");
+}
 
 

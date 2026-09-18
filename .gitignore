@@ -41,3 +41,7 @@ reference/
 
 # Local
 .env
+
+# WebAssembly build artifacts
+engine/web/pkg/
+engine/web/assets/models/

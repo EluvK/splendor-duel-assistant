@@ -247,3 +247,46 @@ cargo run --bin replay_web
 - 访问 `http://127.0.0.1:8080/play.html` 进入交互对战。
 - 访问 `http://127.0.0.1:8080/inspect_cards.html` 可视化比对精灵图索引与对应卡牌切片。
 - 在浏览器控制台可通过 `window` 查看或调用相关组件函数，利用 Network 选项卡监控 `/api/game/*` 动作请求与返回。
+
+---
+
+## 8. 纯静态化架构与 GitHub Pages 部署方案
+
+为了将系统直接部署到 GitHub Pages 等静态网站托管平台，项目实现了纯前端离线闭环运行架构：
+
+```
+                    +----------------------------------------+
+                    |        浏览器前端 (GitHub Pages)        |
+                    |                                        |
+                    |  +----------------------------------+  |
+                    |  |       GameService 驱动适配层      |  |
+                    |  +----------------------------------+  |
+                    |           /                  \         |
+                    |          v                    v        |
++-------------------+---------------------+  +---------------+------------------------+
+|       Rust Core WASM (engine-wasm)      |  |      ONNX Runtime Web (浏览器运行)       |
+| - 游戏规则权威判定与原子状态转移           |  | - 加载 2.9MB 静态权重 best.onnx         |
+| - 合法动作生成与支付方案计算 (0ms 延迟)   |  | - WebAssembly 前向推理加速             |
+| - 🤖 启发式 AI / 🎲 随机 AI (原生极速)    |  | - 预测 Policy 概率分布与 Value 胜率估值 |
+| - 969 维特征向量编码导出                  |  |                                        |
++-----------------------------------------+  +----------------------------------------+
+```
+
+### 8.1 核心组件
+1. **`engine-wasm` (WebAssembly 引擎模块)**：
+   - 将 Rust 规则引擎、棋盘状态、随机/启发式 AI、969 维特征编码编译为 WASM (`engine/web/pkg/splendor_duel_wasm_bg.wasm`，体积约 440KB)。
+   - 彻底摆脱后台 Rust 进程，规则校验直接在用户浏览器内存内以毫秒级执行。
+2. **ONNX Runtime Web (`assets/models/best.onnx`)**：
+   - 引入 `@microsoft/onnxruntime-web`，利用浏览器 WebAssembly 直接加载仅 2.9MB 的轻量 ONNX 权重文件。
+   - 彻底解耦后台 Python Worker，用户无需配置 Python 或 PyTorch，即可在纯静态网页中与神经网络 AI 对弈。
+3. **`GameService` 统一门面与双驱动 (`js/game-service.js`)**：
+   - `WasmGameDriver`：纯静态环境驱动，自动在浏览器内存中调度 WASM 引擎与 ONNX 推理。
+   - `HttpGameDriver`：保留本地 REST API 调试通道，本地开发不受影响。
+
+### 8.2 一键构建与持续集成
+- **本地编译脚本**：
+  - Windows: `scripts/build_wasm.bat`
+  - Linux / macOS: `bash scripts/build_wasm.sh`
+- **GitHub Actions 自动化部署** (`.github/workflows/deploy-pages.yml`)：
+  - 支持通过 GitHub Actions 手动触发 (`workflow_dispatch`)，自动安装 Rust 工具链并编译 WASM，收集静态网页资源与模型，一键发布至 GitHub Pages。
+
