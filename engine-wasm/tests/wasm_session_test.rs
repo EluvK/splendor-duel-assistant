@@ -136,3 +136,42 @@ fn test_wasm_replay_step_with_neural_and_winrate() {
     assert!((score_f - 65.2).abs() < 1e-3, "胜率分数必须为真实的 65.2% 百分比，当前为: {}", score_f);
 }
 
+#[test]
+fn test_wasm_game_session_save_and_restore() {
+    let mut session = WasmGameSession::new(777, "human", "heuristic");
+
+    // 人类执行第一步
+    let state_raw = session.get_state_json();
+    let state_json: Value = serde_json::from_str(&state_raw).unwrap();
+    let first_legal = &state_json["legal_actions"][0]["action"];
+    let step_res_raw = session.step_human(&first_legal.to_string());
+    let step_res: Value = serde_json::from_str(&step_res_raw).unwrap();
+    assert_eq!(step_res["ok"], true);
+
+    // AI 执行第二步
+    let ai_step_raw = session.step_ai(None);
+    let ai_step: Value = serde_json::from_str(&ai_step_raw).unwrap();
+    assert_eq!(ai_step["ok"], true);
+
+    // 导出持久化状态
+    let state_before_raw = session.get_state_json();
+    let state_before: Value = serde_json::from_str(&state_before_raw).unwrap();
+
+    let saved_state = session.export_saved_state();
+    assert!(!saved_state.is_empty());
+
+    // 模拟新实例通过 saved_state 恢复
+    let restored_session = WasmGameSession::from_saved_state(&saved_state)
+        .expect("从保存状态恢复对局必须成功");
+
+    let restored_state_raw = restored_session.get_state_json();
+    let restored_state: Value = serde_json::from_str(&restored_state_raw).unwrap();
+
+    assert_eq!(restored_state["history_len"], state_before["history_len"]);
+    assert_eq!(restored_state["current_player"], state_before["current_player"]);
+    assert_eq!(restored_state["state"]["turn_number"], state_before["state"]["turn_number"]);
+    assert_eq!(restored_state["state"]["board"], state_before["state"]["board"], "恢复前后棋盘盘面必须完全无损吻合");
+    assert_eq!(restored_state["state"]["players"], state_before["state"]["players"], "恢复前后双方玩家手牌筹码必须完全一致");
+    assert_eq!(restored_state["legal_actions"], state_before["legal_actions"], "恢复后当前合法动作列表必须完全一致");
+}
+

@@ -111,6 +111,30 @@ impl InteractiveSession {
         sess
     }
 
+    /// 从已保存的状态构建交互对战会话（用于状态恢复）
+    pub fn from_saved(
+        seed: u64,
+        player_kinds: [PlayerKind; 2],
+        game: GameState,
+        history: Vec<ReplayStep>,
+        mcts_simulations: usize,
+    ) -> Self {
+        // 基于当前盘面的 rng_seed 与 rng_counter 步进序列初始化 rng，维持随机数序列的连贯性
+        let dynamic_seed = game.rng_seed.wrapping_add(game.rng_counter.wrapping_mul(0x9E3779B97F4A7C15));
+        let mut sess = Self {
+            seed,
+            player_kinds,
+            game,
+            rng: ChaCha8Rng::seed_from_u64(dynamic_seed),
+            history,
+            mcts_simulations,
+            #[cfg(feature = "native")]
+            evaluator: None,
+        };
+        sess.maybe_auto_skip_optional();
+        sess
+    }
+
     /// 设置并挂载神经网络评估器 (供 Neural MCTS 深度推演使用)
     #[cfg(feature = "native")]
     pub fn set_evaluator(&mut self, evaluator: Option<Arc<TractNeuralEvaluator>>) {

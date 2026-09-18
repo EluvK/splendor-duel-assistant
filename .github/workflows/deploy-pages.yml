@@ -44,10 +44,12 @@ jobs:
           cargo build --package splendor-duel-wasm --target wasm32-unknown-unknown --release
           wasm-bindgen --target web --out-dir engine/web/pkg target/wasm32-unknown-unknown/release/splendor_duel_wasm.wasm
 
-      - name: Fetch Neural Network Model (Release CDN or Custom URL)
+      - name: Fetch Neural Network Model & Generate Version Info
         run: |
           mkdir -p engine/web/assets/models
           MODEL_TARGET="engine/web/assets/models/best.onnx"
+          MODEL_META_TARGET="engine/web/assets/models/best.json"
+          VERSION_FILE="engine/web/assets/version.json"
           
           if [ -n "${{ github.event.inputs.model_url }}" ]; then
             echo "==> 从用户指定的自定义 URL 下载模型..."
@@ -57,18 +59,45 @@ jobs:
           elif [ -f checkpoints/best.onnx ]; then
             echo "==> 发现本地 checkpoints/best.onnx，直接复制打包..."
             cp checkpoints/best.onnx "$MODEL_TARGET"
+            if [ -f checkpoints/best.json ]; then
+              cp checkpoints/best.json "$MODEL_META_TARGET"
+            fi
           else
             echo "==> 尝试从 GitHub Releases (latest) 下载 best.onnx 附件..."
             RELEASE_URL="https://github.com/${{ github.repository }}/releases/latest/download/best.onnx"
             curl -fL -s -o "$MODEL_TARGET" "$RELEASE_URL" || {
               echo "::warning::未在 latest release 中检测到 best.onnx 附件。网站将正常部署，并优雅降级为启发式 AI 对弈。";
             }
+            # 尝试同步元数据 json
+            RELEASE_JSON_URL="https://github.com/${{ github.repository }}/releases/latest/download/best.json"
+            curl -fL -s -o "$MODEL_META_TARGET" "$RELEASE_JSON_URL" || true
           fi
           
+          DEPLOY_TIME=$(date -u +"%Y-%m-%d %H:%M UTC")
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
           if [ -f "$MODEL_TARGET" ]; then
-            echo "==> 成功加载神经网络模型！文件大小: $(du -h "$MODEL_TARGET" | cut -f1)"
+            MODEL_SIZE=$(du -h "$MODEL_TARGET" | cut -f1)
+            MODEL_HASH=$(sha256sum "$MODEL_TARGET" | cut -c1-8)
+            echo "==> 成功加载神经网络模型！文件大小: $MODEL_SIZE, 指纹: $MODEL_HASH"
+            cat <<EOF > "$VERSION_FILE"
+          {
+            "deploy_time": "$DEPLOY_TIME",
+            "commit": "$SHORT_SHA",
+            "model_available": true,
+            "model_size": "$MODEL_SIZE",
+            "model_hash": "$MODEL_HASH"
+          }
+          EOF
           else
             echo "==> 未打包 ONNX 模型，前端将默认启用启发式 AI。"
+            cat <<EOF > "$VERSION_FILE"
+          {
+            "deploy_time": "$DEPLOY_TIME",
+            "commit": "$SHORT_SHA",
+            "model_available": false
+          }
+          EOF
           fi
 
       - name: Setup Pages

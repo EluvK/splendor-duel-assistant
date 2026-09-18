@@ -19,6 +19,7 @@ class OnnxPredictor {
     this.ready = false;
     this.error = null;
     this.modelPath = 'assets/models/best.onnx';
+    this.metadata = null;
   }
 
   async loadModel() {
@@ -41,6 +42,10 @@ class OnnxPredictor {
       this.ready = true;
       this.error = null;
       console.log('[OnnxPredictor] 神经网络模型加载成功！');
+
+      // 异步尝试获取模型元数据与部署版本清单
+      this.fetchMetadata().catch(() => {});
+
       return true;
     } catch (err) {
       this.error = err.message || String(err);
@@ -48,6 +53,20 @@ class OnnxPredictor {
       return false;
     } finally {
       this.loading = false;
+    }
+  }
+
+  async fetchMetadata() {
+    try {
+      const [metaRes, verRes] = await Promise.allSettled([
+        fetch('assets/models/best.json'),
+        fetch('assets/version.json'),
+      ]);
+      const meta = (metaRes.status === 'fulfilled' && metaRes.value.ok) ? await metaRes.value.json() : {};
+      const ver = (verRes.status === 'fulfilled' && verRes.value.ok) ? await verRes.value.json() : {};
+      this.metadata = { ...ver, ...meta };
+    } catch (e) {
+      this.metadata = null;
     }
   }
 
@@ -155,9 +174,49 @@ class WasmGameDriver {
 
   ensureSession() {
     if (!this.session) {
+      // 尝试从 sessionStorage 恢复已有对战局势（避免切换复盘页面后丢失对局进度）
+      const saved = sessionStorage.getItem('splendor_duel_play_session');
+      if (saved) {
+        try {
+          this.session = WasmGameSession.from_saved_state(saved);
+          this.session.set_mcts_simulations(this.mctsSims);
+          this.session.set_neural_ready(this.predictor.ready);
+
+          // 依据恢复的会话同步 driver 内部参数，保证先后手与配置一致
+          try {
+            const raw = this.session.get_state_json();
+            const data = JSON.parse(raw);
+            if (data && Array.isArray(data.player_kinds) && data.player_kinds.length === 2) {
+              this.playerKinds = data.player_kinds;
+            }
+            if (data && data.state && data.state.rng_seed !== undefined) {
+              this.seed = data.state.rng_seed;
+            }
+          } catch (err) {}
+
+          console.log('[WasmGameDriver] 成功从会话缓存恢复已有对战局势！');
+          return;
+        } catch (e) {
+          console.error('[WasmGameDriver] 恢复对战局势异常:', e);
+        }
+      }
       this.session = new WasmGameSession(BigInt(this.seed), this.playerKinds[0], this.playerKinds[1]);
       this.session.set_mcts_simulations(this.mctsSims);
       this.session.set_neural_ready(this.predictor.ready);
+      this.persistSession();
+    }
+  }
+
+  persistSession() {
+    if (this.session) {
+      try {
+        const exported = this.session.export_saved_state();
+        if (exported && exported.length > 0) {
+          sessionStorage.setItem('splendor_duel_play_session', exported);
+        }
+      } catch (e) {
+        console.warn('[WasmGameDriver] persistSession 异常:', e);
+      }
     }
   }
 
@@ -179,6 +238,7 @@ class WasmGameDriver {
     this.session = new WasmGameSession(BigInt(this.seed), this.playerKinds[0], this.playerKinds[1]);
     this.session.set_mcts_simulations(this.mctsSims);
     this.session.set_neural_ready(this.predictor.ready);
+    this.persistSession();
     const data = JSON.parse(this.session.get_state_json());
     data.neural_available = this.predictor.ready;
     data.driver_type = 'wasm';
@@ -191,6 +251,9 @@ class WasmGameDriver {
     const raw = this.session.step_human(JSON.stringify(actionPayload));
     const data = JSON.parse(raw);
     data.neural_available = this.predictor.ready;
+    if (data.ok) {
+      this.persistSession();
+    }
     return data;
   }
 
@@ -216,7 +279,11 @@ class WasmGameDriver {
             pred.winrate,
             JSON.stringify(pred.topCandidates)
           );
-          return JSON.parse(raw);
+          const result = JSON.parse(raw);
+          if (result.ok) {
+            this.persistSession();
+          }
+          return result;
         }
       }
       // 若 ONNX 未就绪或推理失败，平滑降级至启发式 AI
@@ -225,7 +292,11 @@ class WasmGameDriver {
 
     // Heuristic 或 Random 直接由 Rust WASM 极速推演
     const raw = this.session.step_ai(currentSims > 0 ? currentSims : undefined);
-    return JSON.parse(raw);
+    const result = JSON.parse(raw);
+    if (result.ok) {
+      this.persistSession();
+    }
+    return result;
   }
 
   async getStep(index) {
@@ -255,6 +326,7 @@ class WasmGameDriver {
       loading: this.predictor.loading,
       error: this.predictor.error,
       model_type: 'onnx-web',
+      details: this.predictor.metadata,
     };
   }
 
@@ -435,6 +507,12 @@ class GameService {
     return null;
   }
 
+  persistSession() {
+    if (this.driver && typeof this.driver.persistSession === 'function') {
+      this.driver.persistSession();
+    }
+  }
+
   async getNeuralStatus() {
     await this.ensureReady();
     return await this.driver.getNeuralStatus();
@@ -475,7 +553,7 @@ class WasmReplayDriver {
     }
     // 异步加载 ONNX 模型
     this.predictor.loadModel().then(ready => {
-      if (this.session) {
+      if (this.session && typeof this.session.set_neural_ready === 'function') {
         this.session.set_neural_ready(ready);
       }
     });
@@ -488,7 +566,9 @@ class WasmReplayDriver {
       if (transferData) {
         try {
           this.session = WasmReplaySession.from_replay_data(transferData);
-          this.session.set_neural_ready(this.predictor.ready);
+          if (typeof this.session.set_neural_ready === 'function') {
+            this.session.set_neural_ready(this.predictor.ready);
+          }
           console.log('[WasmReplayDriver] 成功从对战会话恢复历史局势！');
           sessionStorage.removeItem('splendor_duel_replay_transfer');
           return;
@@ -497,7 +577,24 @@ class WasmReplayDriver {
         }
       }
       this.session = new WasmReplaySession(BigInt(this.seed), this.playerTypes[0], this.playerTypes[1]);
-      this.session.set_neural_ready(this.predictor.ready);
+      if (typeof this.session.set_neural_ready === 'function') {
+        this.session.set_neural_ready(this.predictor.ready);
+      }
+    }
+  }
+
+  async loadReplayData(replayData) {
+    await this.init();
+    try {
+      const jsonStr = typeof replayData === 'string' ? replayData : JSON.stringify(replayData);
+      this.session = WasmReplaySession.from_replay_data(jsonStr);
+      if (typeof this.session.set_neural_ready === 'function') {
+        this.session.set_neural_ready(this.predictor.ready);
+      }
+      return true;
+    } catch (e) {
+      console.error('[WasmReplayDriver] loadReplayData 失败:', e);
+      return false;
     }
   }
 
@@ -592,7 +689,9 @@ class WasmReplayDriver {
     this.seed = seed || 42;
     this.playerTypes = [p0 || 'heuristic', p1 || 'heuristic'];
     this.session = new WasmReplaySession(BigInt(this.seed), this.playerTypes[0], this.playerTypes[1]);
-    this.session.set_neural_ready(this.predictor.ready);
+    if (typeof this.session.set_neural_ready === 'function') {
+      this.session.set_neural_ready(this.predictor.ready);
+    }
     const data = JSON.parse(this.session.get_status_json());
     data.driver_type = 'wasm';
     data.neural_available = this.predictor.ready;
@@ -613,13 +712,14 @@ class WasmReplayDriver {
       loading: this.predictor.loading,
       error: this.predictor.error,
       model_type: 'onnx-web',
+      details: this.predictor.metadata,
     };
   }
 
   async reloadNeural() {
     this.predictor.ready = false;
     const ok = await this.predictor.loadModel();
-    if (this.session) {
+    if (this.session && typeof this.session.set_neural_ready === 'function') {
       this.session.set_neural_ready(ok);
     }
     return { ok };
@@ -675,6 +775,10 @@ class HttpReplayDriver {
   async reloadNeural() {
     const res = await fetch('/api/neural_reload', { method: 'POST' });
     return await res.json();
+  }
+
+  async loadReplayData(_replayData) {
+    return true;
   }
 }
 
@@ -770,6 +874,14 @@ class ReplayService {
   async reloadNeural() {
     await this.ensureReady();
     return await this.driver.reloadNeural();
+  }
+
+  async loadReplayData(replayData) {
+    await this.ensureReady();
+    if (this.driver && typeof this.driver.loadReplayData === 'function') {
+      return await this.driver.loadReplayData(replayData);
+    }
+    return false;
   }
 }
 

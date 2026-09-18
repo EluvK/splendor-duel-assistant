@@ -289,4 +289,33 @@ cargo run --bin replay_web
   - Linux / macOS: `bash scripts/build_wasm.sh`
 - **GitHub Actions 自动化部署** (`.github/workflows/deploy-pages.yml`)：
   - 支持通过 GitHub Actions 手动触发 (`workflow_dispatch`)，自动安装 Rust 工具链并编译 WASM，收集静态网页资源与模型，一键发布至 GitHub Pages。
+  - 构建过程会自动捕获当前 Commit SHA、部署时间戳与模型指纹，生成 `assets/version.json` 供前端读取。
+
+### 8.3 模型导出、版本追踪与更新流程
+1. **模型格式转换与指纹生成**：
+   - 训练产生新的 `checkpoints/best.pt` 后，执行：
+     ```bash
+     python python/export_onnx.py
+     ```
+   - 脚本将自动生成 `checkpoints/best.onnx` 以及包含训练轮次、迭代号、胜率和 SHA256 指纹的元数据文件 `checkpoints/best.json`。
+2. **更新线上版本**：
+   - 在 GitHub Releases 的最新 Release 中，替换上传新导出的 `best.onnx`（及 `best.json`）。
+   - 在 GitHub Actions 中点击 **Run workflow** 重新触发部署。
+3. **前端感知与版本确认**：
+   - 网页右上角徽章将自动呈现为 `Iter 67`、`Epoch 273` 或 `ONNX #<hash>`，并在悬停提示（Tooltip）中完整展示部署时间、Git 版本与模型指纹，便于直观确认最新版本是否生效。
+
+### 8.4 单页应用 (SPA) 架构与对战复盘无损切换
+在纯静态无服务端托管（如 GitHub Pages 或 `python -m http.server`）环境下，若采用传统多页面应用（MPA，即独立 `play.html` 与 `replay.html`），页面切换会触发浏览器整页卸载重载，导致内存中的 WebAssembly 堆状态与推演数据被彻底清空。
+
+为此，系统重构为统一的 **SPA（Single Page Application）架构**：
+1. **宿主页面与共享舞台 (`index.html`)**：
+   - 5×5 宝石棋盘、卡牌金字塔、王室赞助池和双方玩家仪表盘作为核心舞台常驻挂载。
+   - 顶栏采用基于 Hash 的无刷新路由（`#/play` ↔ `#/replay`）。
+2. **视图与控制器协同**：
+   - **实时对战**：挂载 `GameController`，控制双方落子、可选行动引导与操作历史面板。
+   - **复盘分析**：挂载 `ReplayController`，控制单步时间轴推演、Policy 候选评分树与神经网络胜率折线走势图。
+   - **内存态秒级交接**：在静态 WASM 模式下，对战切复盘通过 `gameService.exportReplayData()` 在同进程 JavaScript 内存中直接装载至 `ReplayController`，彻底消除 `sessionStorage` 跨标签页隔离与时序覆盖隐患。
+3. **向后兼容性**：
+   - `play.html` 与 `replay.html` 保留为客户端无感知平滑跳转占位符，兼容旧书签与外链；Rust 后端 `replay_web.rs` 统一路由映射至 `index.html`。
+
 

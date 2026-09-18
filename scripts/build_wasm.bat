@@ -7,8 +7,9 @@ echo ==> Running wasm-bindgen...
 wasm-bindgen --target web --out-dir engine/web/pkg target/wasm32-unknown-unknown/release/splendor_duel_wasm.wasm
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-echo ==> Syncing best.onnx model...
+echo ==> Syncing best.onnx model and metadata...
 if not exist "engine\web\assets\models" mkdir "engine\web\assets\models"
 if exist "checkpoints\best.onnx" copy /y "checkpoints\best.onnx" "engine\web\assets\models\best.onnx"
+if exist "checkpoints\best.json" copy /y "checkpoints\best.json" "engine\web\assets\models\best.json"
 
 echo ==> Done! Output generated in engine\web\pkg

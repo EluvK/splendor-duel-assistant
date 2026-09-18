@@ -1044,3 +1044,52 @@ export function renderPlayerDashboard(p, cardEl, isActing, isNext, prefix, optio
     }
   }
 }
+
+/**
+ * 统一更新神经网络模型状态徽章与 Tooltip 详情
+ * @param {HTMLElement} badge 徽章容器元素
+ * @param {HTMLElement} text 徽章文本元素
+ * @param {Object} data 神经网络状态数据 (来自 gameService.getNeuralStatus)
+ */
+export function updateNeuralModelBadge(badge, text, data) {
+  if (!badge || !text || !data) return;
+  if (data.available) {
+    badge.style.display = 'inline-flex';
+    if (data.model_type === 'onnx-web') {
+      const d = data.details || {};
+      let label = 'ONNX Web';
+      const timeStr = d.export_time || d.time || d.date || '';
+      if (d.message) {
+        label = d.message;
+      } else if (timeStr) {
+        label = `ONNX (${timeStr.slice(5, 10)})`;
+      } else if (d.iteration !== undefined && d.iteration !== null) {
+        label = `Iter ${d.iteration}`;
+      } else if (d.epoch !== undefined && d.epoch !== null) {
+        label = `Epoch ${d.epoch}`;
+      } else if (d.model_hash) {
+        label = `ONNX #${d.model_hash}`;
+      }
+      text.innerText = label;
+
+      const tipLines = ['🧠 浏览器本地 ONNX 神经网络引擎 (WebAssembly 加速)'];
+      if (d.message) tipLines.push(`• 版本标识: ${d.message}`);
+      if (timeStr) tipLines.push(`• 模型时间: ${timeStr}`);
+      if (d.iteration !== undefined && d.iteration !== null) tipLines.push(`• 迭代轮数: Iteration ${d.iteration}`);
+      if (d.epoch !== undefined && d.epoch !== null) tipLines.push(`• 训练轮次: Epoch ${d.epoch}`);
+      if (d.deploy_time) tipLines.push(`• 站点部署: ${d.deploy_time}`);
+      if (d.model_hash) tipLines.push(`• 模型指纹: #${d.model_hash}`);
+      badge.title = tipLines.join('\n') + '\n\n点击可重载神经网络模型';
+    } else {
+      text.innerText = `Epoch ${data.details?.epoch ?? '--'}`;
+      badge.title = '点击可手动热重载服务端权重';
+    }
+  } else if (data.loading) {
+    badge.style.display = 'inline-flex';
+    text.innerText = '模型加载中';
+    badge.title = '正在后台下载与初始化 ONNX 神经网络权重...';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+

@@ -12,7 +12,8 @@ import {
   COLOR_NAMES,
   COLOR_KEYS,
   applyBgaCardSprite,
-  getPaymentPlanDetails
+  getPaymentPlanDetails,
+  updateNeuralModelBadge
 } from './shared-components.js';
 import { soundManager } from './sound-manager.js';
 import { gameService } from './game-service.js';
@@ -140,6 +141,30 @@ export function formatFriendlyAction(desc) {
   return desc;
 }
 
+/**
+ * 客户端精准计算玩家当前是否足以支付购买指定卡牌
+ */
+function canAffordCard(card, player) {
+  if (!card || !card.cost || !player) return false;
+  const bonuses = player.bonuses || [0, 0, 0, 0, 0];
+  const tokens = player.tokens || [0, 0, 0, 0, 0, 0, 0];
+  const goldHave = tokens[6] || 0;
+  let goldNeeded = 0;
+
+  for (const [col, req] of Object.entries(card.cost)) {
+    if (req <= 0) continue;
+    const colIdx = COLOR_KEYS.indexOf(col.toLowerCase());
+    if (colIdx < 0) continue;
+    const bonus = colIdx < 5 ? (bonuses[colIdx] || 0) : 0;
+    const netCost = Math.max(0, req - bonus);
+    const tokenHave = tokens[colIdx] || 0;
+    if (tokenHave < netCost) {
+      goldNeeded += (netCost - tokenHave);
+    }
+  }
+  return goldNeeded <= goldHave;
+}
+
 export class GameController {
   constructor() {
     this.state = null;
@@ -214,6 +239,20 @@ export class GameController {
     document.getElementById('btnToReplay').onclick = () => this.toReplay();
     document.getElementById('p0KindSelect').onchange = () => this.onPlayerKindChange(0);
     document.getElementById('p1KindSelect').onchange = () => this.onPlayerKindChange(1);
+
+    // 拦截顶部导航栏跳转复盘分析的链接，确保当前对局自动导出转储且不丢失进度
+    const navReplayLink = document.getElementById('navReplayTab') || document.querySelector('a.nav-tab[href*="replay"]');
+    if (navReplayLink) {
+      navReplayLink.onclick = (e) => {
+        e.preventDefault();
+        this.toReplay();
+      };
+    }
+
+    // 页面卸载或隐藏时触发持久化保存
+    window.addEventListener('pagehide', () => {
+      gameService.persistSession();
+    });
 
     if (this.mctsSimsSelect) {
       this.mctsSimsSelect.value = String(this.mctsSims);
@@ -332,33 +371,22 @@ export class GameController {
         const badge = document.getElementById('neuralModelBadge');
         const text = document.getElementById('neuralModelText');
 
-        if (data.available) {
-          if (dot) {
+        if (dot) {
+          if (data.available) {
             dot.style.color = '#22c55e';
             dot.title = data.model_type === 'onnx-web'
               ? '浏览器本地 ONNX 神经网络引擎已就绪 (WebAssembly 加速)'
               : '神经网络推理微服务在线';
-          }
-          if (badge && text) {
-            badge.style.display = 'inline-flex';
-            text.innerText = data.model_type === 'onnx-web' ? 'ONNX Web' : `Epoch ${data.details?.epoch ?? '--'}`;
-          }
-        } else if (data.loading) {
-          if (dot) {
+          } else if (data.loading) {
             dot.style.color = '#eab308';
             dot.title = '神经网络模型正在加载中...';
-          }
-          if (badge && text) {
-            badge.style.display = 'inline-flex';
-            text.innerText = '模型加载中';
-          }
-        } else {
-          if (dot) {
+          } else {
             dot.style.color = '#ef4444';
             dot.title = '神经网络未就绪，使用启发式 AI 兜底';
           }
-          if (badge) badge.style.display = 'none';
         }
+
+        updateNeuralModelBadge(badge, text, data);
       }
     } catch (e) {
       // 静默忽略网络探测异常
@@ -864,6 +892,28 @@ export class GameController {
       };
     }
 
+    // 若处于 OptionalActions 阶段且玩家未在特权选宝石，点击棋盘任意宝石时平滑转入连线拿宝石流程
+    if (phase === 'OptionalActions' && this.legalActions.some(a => a.category === 'skip_optional')) {
+      return {
+        ...baseOptions,
+        clickable: true,
+        onCellClick: async (r, c, gem) => {
+          if (!gem) return;
+          await this.submitAction('SkipOptional');
+          setTimeout(() => {
+            const takeActions = this.legalActions.filter(a => a.category === 'take_tokens');
+            if (gem === 'gold') {
+              this.selectedGoldPos = [r, c];
+              soundManager.play('gold_clink');
+              this.render();
+            } else {
+              this.handleBoardCellClickForTokens(r, c, gem, takeActions);
+            }
+          }, 30);
+        }
+      };
+    }
+
     // 强制行动：连线拿取 1~3 颗非黄金宝石，或直接点击黄金开启预留
     if (phase === 'MandatoryAction') {
       const takeActions = this.legalActions.filter(a => a.category === 'take_tokens');
@@ -1012,13 +1062,21 @@ export class GameController {
   renderPyramidArea() {
     const isHumanTurn = this.isHuman && !this.state.winner;
     const isMandatory = isHumanTurn && this.state.phase === 'MandatoryAction';
-    const reserveActions = isMandatory ? this.legalActions.filter(a => a.category === 'reserve_card') : [];
-    const canReserve = isMandatory && reserveActions.length > 0;
-    const interactive = isMandatory;
+    const isOptional = isHumanTurn && this.state.phase === 'OptionalActions';
+    const canSkipOptional = isOptional && this.legalActions.some(a => a.category === 'skip_optional');
+    const canDoAction = isMandatory || canSkipOptional;
+
+    const curPlayer = this.state.players ? this.state.players[this.currentPlayer] : null;
+
+    // 预留卡资格：预留槽未满 3 且 (棋盘上有黄金或存在预留动作)
+    const reserveActions = this.legalActions.filter(a => a.category === 'reserve_card');
+    const boardHasGold = this.state.board && this.state.board.some(row => row.some(gem => gem === 'gold'));
+    const canReserve = canDoAction && curPlayer && curPlayer.reserved_cards.length < 3 && (reserveActions.length > 0 || boardHasGold);
+    const interactive = canDoAction;
 
     // 提取所有可购买的金字塔卡牌
     const affordableIds = new Set();
-    if (isMandatory) {
+    if (canDoAction && curPlayer) {
       this.legalActions
         .filter(a => a.category === 'purchase_card' && !a.action.PurchaseCard.from_reserved)
         .forEach(a => {
@@ -1027,6 +1085,17 @@ export class GameController {
           const card = this.state.pyramid[tierIdx][slot];
           if (card) affordableIds.add(card.id);
         });
+
+      // 在可选行动阶段，通过本地精确规则补齐计算，保持卡牌高亮可用
+      if (isOptional) {
+        for (let t = 0; t < 3; t++) {
+          (this.state.pyramid[t] || []).forEach(card => {
+            if (card && canAffordCard(card, curPlayer)) {
+              affordableIds.add(card.id);
+            }
+          });
+        }
+      }
     }
 
     const makePyramidOptions = (tierIdx, tierName, tierNum) => ({
@@ -1035,13 +1104,16 @@ export class GameController {
       canReserve,
       pendingReserveTarget: this.pendingReserveTarget,
       isReserveGuidance: Boolean(this.selectedGoldPos) || Boolean(this.pendingReserveTarget),
-      currentPlayerState: this.state.players ? this.state.players[this.currentPlayer] : null,
+      currentPlayerState: curPlayer,
       deckInfo: {
         tier: tierNum,
         count: this.state.decks_count[tierIdx],
       },
-      onReserveDeck: () => {
+      onReserveDeck: async () => {
         if (!canReserve || this.state.decks_count[tierIdx] <= 0) return;
+        if (this.state.phase === 'OptionalActions') {
+          await this.submitAction('SkipOptional');
+        }
         // 若已在棋盘上先选定了黄金，直接完成盲抽预留
         if (this.selectedGoldPos) {
           const gold_pos = this.selectedGoldPos;
@@ -1069,10 +1141,16 @@ export class GameController {
           this.render();
         }
       },
-      onPurchase: (card) => {
-        if (!isMandatory) return;
+      onPurchase: async (card) => {
+        if (!canDoAction) return;
         this.pendingReserveTarget = null;
         this.selectedGoldPos = null;
+
+        // 若当前处于 OptionalActions 阶段，先平滑跳过可选行动，直接转入强制行动购卡
+        if (this.state.phase === 'OptionalActions') {
+          await this.submitAction('SkipOptional');
+        }
+
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot >= 0) {
           const buyActs = this.legalActions.filter(a =>
@@ -1088,10 +1166,14 @@ export class GameController {
           }
         }
       },
-      onReserve: (card) => {
+      onReserve: async (card) => {
         if (!canReserve) return;
         const slot = this.state.pyramid[tierIdx].findIndex(c => c.id === card.id);
         if (slot < 0) return;
+
+        if (this.state.phase === 'OptionalActions') {
+          await this.submitAction('SkipOptional');
+        }
 
         // 若已在棋盘上先选定了黄金，直接完成该卡牌预留
         if (this.selectedGoldPos) {
@@ -1163,8 +1245,11 @@ export class GameController {
       }
     }
 
-    btn.onclick = () => {
+    btn.onclick = async () => {
       if (!isLegal) return;
+      if (this.state.phase === 'OptionalActions') {
+        await this.submitAction('SkipOptional');
+      }
       if (this.selectedGoldPos) {
         const gold_pos = this.selectedGoldPos;
         this.selectedGoldPos = null;
@@ -1205,17 +1290,29 @@ export class GameController {
   renderPlayersArea() {
     const isHumanTurn = this.isHuman && !this.state.winner;
     const phase = this.state.phase;
+    const canSkipOpt = (phase === 'OptionalActions') && this.legalActions.some(a => a.category === 'skip_optional');
+    const canDoAction = isHumanTurn && ((phase === 'MandatoryAction') || canSkipOpt);
+    const curPlayer = this.state.players ? this.state.players[this.currentPlayer] : null;
 
     // 己方手牌中可购买的预留卡
     const affordableReservedIds = new Set();
-    if (isHumanTurn && phase === 'MandatoryAction') {
+    if (canDoAction && curPlayer) {
       this.legalActions
         .filter(a => a.category === 'purchase_card' && a.action.PurchaseCard.from_reserved)
         .forEach(a => {
           const slot = a.action.PurchaseCard.slot;
-          const card = this.state.players[this.currentPlayer].reserved_cards[slot];
+          const card = curPlayer.reserved_cards[slot];
           if (card) affordableReservedIds.add(card.id);
         });
+
+      // 在可选阶段通过本地精准规则补齐预留卡可购买状态
+      if (phase === 'OptionalActions') {
+        (curPlayer.reserved_cards || []).forEach(card => {
+          if (card && canAffordCard(card, curPlayer)) {
+            affordableReservedIds.add(card.id);
+          }
+        });
+      }
     }
 
     // 判断暗牌视角掩蔽规则 (人类永远看清自己的暗抽卡，对手 AI 的暗抽卡为牌背)
@@ -1248,9 +1345,12 @@ export class GameController {
     const p0Options = {
       isOpponent: p0IsOpponent,
       playerKind: this.playerKinds[0],
-      interactiveReserved: isHumanTurn && p0IsActive && (phase === 'MandatoryAction'),
+      interactiveReserved: canDoAction && p0IsActive,
       affordableReservedIds,
-      onPurchaseReserved: (card) => {
+      onPurchaseReserved: async (card) => {
+        if (this.state.phase === 'OptionalActions') {
+          await this.submitAction('SkipOptional');
+        }
         const slot = this.state.players[0].reserved_cards.findIndex(c => c.id === card.id);
         if (slot >= 0) {
           const tierStr = card.tier === 3 ? 'Tier3' : (card.tier === 2 ? 'Tier2' : 'Tier1');
@@ -1286,9 +1386,12 @@ export class GameController {
     const p1Options = {
       isOpponent: p1IsOpponent,
       playerKind: this.playerKinds[1],
-      interactiveReserved: isHumanTurn && p1IsActive && (phase === 'MandatoryAction'),
+      interactiveReserved: canDoAction && p1IsActive,
       affordableReservedIds,
-      onPurchaseReserved: (card) => {
+      onPurchaseReserved: async (card) => {
+        if (this.state.phase === 'OptionalActions') {
+          await this.submitAction('SkipOptional');
+        }
         const slot = this.state.players[1].reserved_cards.findIndex(c => c.id === card.id);
         if (slot >= 0) {
           const tierStr = card.tier === 3 ? 'Tier3' : (card.tier === 2 ? 'Tier2' : 'Tier1');
@@ -1387,22 +1490,36 @@ export class GameController {
     }
 
     if (phase === 'OptionalActions') {
-      this.guideText.innerHTML = `${lastAiHint}【可选阶段】可先使用特权卷轴点击棋盘拿取宝石；若补充棋盘则可选行动结束并进入强制行动；亦可直接跳过。`;
-
       const hasReplenish = this.legalActions.some(a => a.category === 'replenish');
+      const hasPrivilege = this.state.players[this.currentPlayer]?.privileges > 0 && !this.state.replenished_this_turn;
+
+      let guideTip = '【可选行动】';
+      if (hasPrivilege && hasReplenish) {
+        guideTip += '可使用特权点选宝石，或补充棋盘；亦可点击【进行主行动】或直接点卡牌/宝石开始行动。';
+      } else if (hasPrivilege) {
+        guideTip += '可使用特权点选宝石；亦可直接点击下方卡牌/宝石开始主行动。';
+      } else if (hasReplenish) {
+        guideTip += '可补充棋盘；亦可直接点击下方卡牌/宝石开始主行动。';
+      } else {
+        guideTip += '点击【进行主行动】或直接点击下方卡牌/宝石开始行动。';
+      }
+
+      this.guideText.innerHTML = `${lastAiHint}${guideTip}`;
+
+      const btnSkip = document.createElement('button');
+      btnSkip.className = 'btn-success';
+      btnSkip.innerText = '⏭ 进行主行动 (拿牌/买卡/拿宝石)';
+      btnSkip.title = '跳过可选行动，直接开始拿取棋盘宝石、购买或预留卡牌';
+      btnSkip.onclick = () => this.submitAction('SkipOptional');
+      this.actionBarButtons.appendChild(btnSkip);
+
       if (hasReplenish) {
         const btnRep = document.createElement('button');
         btnRep.className = 'btn-accent';
-        btnRep.innerText = '🌀 补充棋盘 (送对手特权)';
+        btnRep.innerText = '🌀 补充棋盘 (赠对手特权)';
         btnRep.onclick = () => this.submitAction('ReplenishBoard');
         this.actionBarButtons.appendChild(btnRep);
       }
-
-      const btnSkip = document.createElement('button');
-      btnSkip.className = 'btn-secondary';
-      btnSkip.innerText = '⏭ 跳过可选行动';
-      btnSkip.onclick = () => this.submitAction('SkipOptional');
-      this.actionBarButtons.appendChild(btnSkip);
       return;
     }
 
@@ -1752,24 +1869,76 @@ export class GameController {
     }, 380);
   }
 
+  mountView() {
+    this.isViewMounted = true;
+    if (this.state) {
+      this.render();
+    } else {
+      this.fetchState();
+    }
+    if (!this.isHuman && this.autoStepAi && this.state && !this.state.winner) {
+      this.scheduleAiStep();
+    }
+  }
+
+  unmountView() {
+    this.isViewMounted = false;
+    if (this.aiStepTimer) {
+      clearTimeout(this.aiStepTimer);
+      this.aiStepTimer = null;
+    }
+  }
+
+  persistSession() {
+    if (gameService && typeof gameService.persistSession === 'function') {
+      gameService.persistSession();
+    }
+  }
+
   async toReplay() {
     try {
+      this.persistSession();
       if (gameService.driverType === 'wasm') {
         const replayData = await gameService.exportReplayData();
+        // 若处于 SPA 架构中，直接在同一上下文内内存传递并切换视图，杜绝页面重载
+        if (window.replayController && typeof window.replayController.loadFromReplayData === 'function') {
+          await window.replayController.loadFromReplayData(replayData);
+          if (typeof window.switchView === 'function') {
+            window.switchView('replay');
+            return;
+          }
+        }
+        // 兼容独立旧版页面环境
         if (replayData) {
           sessionStorage.setItem('splendor_duel_replay_transfer', JSON.stringify(replayData));
         }
-        window.location.href = 'replay.html';
+        const search = window.location.search || '';
+        window.location.href = `replay.html${search}`;
         return;
       }
+
+      // HTTP 服务端模式
       const res = await fetch('/api/game/to_replay', { method: 'POST' });
       if (res.ok) {
+        if (typeof window.switchView === 'function') {
+          if (window.replayController && typeof window.replayController.fetchStatus === 'function') {
+            await window.replayController.fetchStatus();
+          }
+          window.switchView('replay');
+          return;
+        }
         const data = await res.json();
-        window.location.href = data.redirect || 'replay.html';
+        const search = window.location.search || '';
+        window.location.href = (data.redirect || 'replay.html') + search;
       }
     } catch (e) {
       console.error('toReplay failed:', e);
-      window.location.href = 'replay.html';
+      if (typeof window.switchView === 'function') {
+        window.switchView('replay');
+      } else {
+        const search = window.location.search || '';
+        window.location.href = `replay.html${search}`;
+      }
     }
   }
 }

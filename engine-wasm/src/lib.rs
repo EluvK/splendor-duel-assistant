@@ -75,6 +75,57 @@ impl WasmGameSession {
         }
     }
 
+    /// 从已保存的会话 JSON 字符串恢复（用于页面切换与持久化）
+    pub fn from_saved_state(state_json: &str) -> Result<WasmGameSession, String> {
+        #[derive(Deserialize)]
+        struct SavedGameSessionData {
+            #[allow(dead_code)]
+            #[serde(default)]
+            version: usize,
+            seed: u64,
+            player_kinds: [String; 2],
+            mcts_simulations: usize,
+            live_game: splendor_duel_engine::game_state::GameState,
+            history: Vec<ReplayStep>,
+        }
+
+        let data: SavedGameSessionData = serde_json::from_str(state_json)
+            .map_err(|e| format!("Failed to parse saved game session (v{}): {e}", 1))?;
+
+        let p0 = PlayerKind::parse(&data.player_kinds[0]);
+        let p1 = PlayerKind::parse(&data.player_kinds[1]);
+
+        let session = InteractiveSession::from_saved(
+            data.seed,
+            [p0, p1],
+            data.live_game,
+            data.history,
+            data.mcts_simulations,
+        );
+
+        Ok(Self {
+            session,
+            neural_ready: false,
+        })
+    }
+
+    /// 导出当前交互对战会话完整状态供恢复
+    pub fn export_saved_state(&self) -> String {
+        let player_kinds = [
+            self.session.player_kinds[0].as_str().to_string(),
+            self.session.player_kinds[1].as_str().to_string(),
+        ];
+        serde_json::json!({
+            "version": 1,
+            "seed": self.session.seed,
+            "player_kinds": player_kinds,
+            "mcts_simulations": self.session.mcts_simulations,
+            "live_game": self.session.game,
+            "history": self.session.history,
+        })
+        .to_string()
+    }
+
     /// 标记浏览器端 ONNX 神经网络推理器是否已就绪
     pub fn set_neural_ready(&mut self, ready: bool) {
         self.neural_ready = ready;

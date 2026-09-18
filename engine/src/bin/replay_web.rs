@@ -679,14 +679,14 @@ fn handle_client(mut stream: TcpStream, state: &Arc<AppState>, web_root: &Path) 
         // ================= 静态文件服务 =================
         ("GET", _) | ("HEAD", _) => {
             let clean_path = path.trim_start_matches('/');
-            let rel_path = if path == "/" || path == "/index.html" || path == "/play" || path == "/play.html" {
-                if web_root.join("play.html").exists() {
+            let rel_path = if path == "/" || path == "/index.html" || path == "/play" || path == "/play.html" || path == "/replay" || path == "/replay.html" {
+                if web_root.join("index.html").exists() {
+                    "index.html".to_string()
+                } else if web_root.join("play.html").exists() {
                     "play.html".to_string()
                 } else {
-                    "index.html".to_string()
+                    clean_path.to_string()
                 }
-            } else if path == "/replay" {
-                "replay.html".to_string()
             } else {
                 clean_path.to_string()
             };
@@ -883,8 +883,9 @@ fn main() {
 
     println!("\n========================================================");
     println!("💎 璀璨宝石：对决 (Splendor Duel) 全功能服务已启动！");
-    println!("🎮 实时人机/双人对战:   http://{addr}/play.html");
-    println!("🎬 AI 自博弈复盘分析:   http://{addr}/replay.html");
+    println!("🎮 统一系统入口 (SPA):  http://{addr}/");
+    println!("🎮 实时人机/双人对战:   http://{addr}/#/play");
+    println!("🎬 AI 自博弈复盘分析:   http://{addr}/#/replay");
     println!("📁 静态网页根目录:      {}", web_root.display());
     println!("========================================================\n");
 
