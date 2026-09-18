@@ -26,15 +26,15 @@
 
 ## 📚 详细文档
 
-想要深入了解技术实现与算法细节？请参阅 `docs` 目录下的完整技术文档 
-
-(Don't, AI generated content warning)
+想要深入了解技术实现与算法细节？请参阅 `docs` 目录下的完整技术文档：
 
 - 📖 [游戏详细规则说明](docs/splendor-duel-rules.md)
 - ⚙️ [Rust 引擎架构设计](docs/engine-architecture.md)
 - 🧠 [AI 网络与强化学习架构](docs/ai-architecture.md)
 - 🔢 [状态与动作编码协议](docs/action-encoding.md)
+- 🎓 [AI 训练与自博弈实战指南](docs/training_guide.md)
 - 🌐 [Web 可视化与对战交互架构](docs/web-architecture.md)
+- 🚀 [研发路线图](docs/roadmap.md)
 
 ---
 

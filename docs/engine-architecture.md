@@ -98,7 +98,7 @@ engine/
 ## 4. 回合细粒度状态机与规则推进
 
 ### 4.1 阶段转换闭环 (`TurnPhase`)
-引擎通过 9 种精确的离散阶段对单回合内的微观决策流转进行解耦：
+引擎通过 8 种精确的离散阶段对单回合内的微观决策流转进行解耦（彻底原子化预留与购买，消除过渡阶段以压缩 MCTS 树深度）：
 
 ```
 [回合开始]
@@ -114,23 +114,23 @@ TurnPhase::OptionalActions  ◄────────────────�
 TurnPhase::MandatoryAction  ◄───────────┘
    │
    ├─► Action::TakeTokens (拿 1~3 连线非黄金标记) ──────────┐
-   ├─► Action::ReserveCard (需盘上有黄金，预留明牌或暗摸) ──────► TurnPhase::SelectReserveGold
-   └─► Action::PurchaseCard (打出金字塔明牌或自己预留牌) ─────┐                           │
-         │                                               │                      Action::TakeGoldToken
-         ├─► 卡牌为 Joker ──► TurnPhase::CardAbilityJoker  │                           │
-         │                         │                     │                           ▼
-         │                    附着基础颜色                │                  after_action_check
-         │                         │                     │                           ▲
-         ▼                         ▼                     │                           │
-     触发卡牌能力连锁 ─────────────────────────────────────┼───────────────────────────┤
-         ├─► ExtraTurn: 赋予额外回合标记                   │                           │
-         ├─► TakePrivilege: 获得特权卷轴                   │                           │
+   ├─► Action::ReserveCard (原子动作: 拿黄金 + 预留明/暗牌) ─┤
+   └─► Action::PurchaseCard (原子动作: 选卡 + 84种支付方案)  │
+         │                                               │
+         ├─► 卡牌为 Joker ──► TurnPhase::CardAbilityJoker  │
+         │                         │                     │
+         │                    附着基础颜色                │
+         │                         │                     │
+         ▼                         ▼                     │
+     触发卡牌能力连锁 ─────────────────────────────────────┤
+         ├─► ExtraTurn: 赋予额外回合标记                   │
+         ├─► TakePrivilege: 获得特权卷轴                   │
          ├─► TakeSameColor ──► TurnPhase::CardAbilitySameColor ─► Action::TakeSameColorToken
-         ├─► StealToken ─────► TurnPhase::CardAbilitySteal ────► Action::StealToken ───┘
-         └─► 无能力 / 完成能力
-                                   │
-                                   ▼
-                       after_ability_check 结算
+         ├─► StealToken ─────► TurnPhase::CardAbilitySteal ────► Action::StealToken
+         └─► 无能力 / 完成能力                             │
+                                   │                     │
+                                   ▼                     │
+                       after_action_check 统一结算 ◄─────┘
                                    │
                      ┌─────────────┴─────────────┐
                      ▼                           ▼
@@ -212,7 +212,8 @@ TurnPhase::GameOver(Reason)  处理 ExtraTurn 或切换到对手
 为了实现对局的可视化分析、调试与实时人机对战，引擎内置了自包含的轻量级原生 HTTP 服务：
 
 - **零外部 Web 框架依赖**：基于标准库 `std::net::TcpListener` 与 `TcpStream` 实现。
-- **双工作模式**：
-  1. **对局回放模式 (`/replay.html`)**：由 `/api/status`, `/api/history`, `/api/jump` 驱动，支持单步前进、后退、时间轴任意跳转及每步决策候选动作概率打分可视化。
-  2. **实时对战模式 (`/play.html`)**：由 `/api/game/action`, `/api/game/restart` 驱动，支持 Human、Neural AI、Heuristic AI、Random 之间的任意对弈与实时 AI 决策提示。
+- **核心工作模式 (单页应用 SPA 架构，基于 Hash 路由 `#/play` 与 `#/replay`)**：
+  1. **实时对战与人机博弈 (`play.html` / `#/play`)**：由 `/api/game/state`、`/api/game/action`、`/api/game/ai_step`、`/api/game/reset`、`/api/game/set_sims` 驱动，支持 Human、Neural AI、Heuristic AI、Random 之间的任意对弈与实时 AI 决策提示。
+  2. **对局回放与深度复盘 (`replay.html` / `#/replay`)**：由 `/api/game/history`、`/api/game/step` 驱动，支持单步前进、后退、时间轴任意跳转及每步决策候选动作概率与神经网络自评胜率折线可视化。
   3. **卡牌资产图鉴 (`/inspect_cards.html`)**：支持 67 张珠宝卡与 4 张王室卡的成本、属性、皇冠、能力的交互式审查。
+  4. **神经网络微服务热重载**：提供 `/api/neural_status` 与 `/api/neural_reload`，支持权重更新实时生效。

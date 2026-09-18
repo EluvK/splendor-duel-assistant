@@ -10,7 +10,7 @@ use crate::gameplay::engine::GameEngine;
 use crate::gameplay::rules::RuleEngine;
 use crate::model::action::Action;
 
-/// 基于有效盘面状态的纳秒级极速 FNV-1a 哈希 (彻底消除 1005 维 f32 全字节 SipHash 开销)
+/// 基于有效盘面状态的纳秒级极速 FNV-1a 哈希 (彻底消除 969 维 f32 全字节 SipHash 开销)
 #[inline]
 pub fn fast_state_hash(state: &GameState) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325; // FNV-1a 64-bit offset basis

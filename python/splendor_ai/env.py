@@ -40,7 +40,7 @@ class SplendorDuelEnv:
         """执行单步动作.
 
         Args:
-            action_id: 0..287 范围内的离散动作 ID.
+            action_id: 0..1855 (0..ACTION_SIZE-1) 范围内的离散动作 ID.
 
         Returns:
             (obs, reward, terminated, truncated, info)
