@@ -13,7 +13,8 @@ import {
   COLOR_KEYS,
   applyBgaCardSprite,
   getPaymentPlanDetails,
-  updateNeuralModelBadge
+  updateNeuralModelBadge,
+  globalHovercard
 } from './shared-components.js';
 import { soundManager } from './sound-manager.js';
 import { gameService } from './game-service.js';
@@ -815,6 +816,7 @@ export class GameController {
 
   render() {
     if (!this.state) return;
+    globalHovercard.hide(true);
 
     // 1. 棋盘渲染
     const boardOptions = this.getBoardRenderOptions();
@@ -1608,7 +1610,37 @@ export class GameController {
     }
 
     if (phase.startsWith('CardAbilityJoker')) {
-      this.guideText.innerHTML = `${lastAiHint}【变色卡定色】变色卡触发连锁能力，请指定该卡附着的宝石颜色。`;
+      this.guideText.innerHTML = `${lastAiHint}【变色卡定色】变色卡触发连锁能力，请指定该卡附着的宝石颜色：`;
+      this.actionBarButtons.innerHTML = '';
+
+      const jokerActions = this.legalActions.filter(a => a.category === 'joker');
+      jokerActions.forEach(act => {
+        const rawCol = act.action.AssignJokerColor.color;
+        const normCol = String(rawCol).toLowerCase();
+        const cnCol = translateColor(normCol);
+        const btn = document.createElement('button');
+        btn.className = 'btn-secondary action-bar-color-btn';
+        btn.innerHTML = `<span class="chip-token-icon token-${normCol} inline-token"></span> 定色: ${cnCol}`;
+        btn.title = `快捷定色为 ${cnCol}宝石 (${rawCol})`;
+        btn.onclick = () => {
+          this.clearModal();
+          this.submitAction(act.action);
+        };
+        this.actionBarButtons.appendChild(btn);
+      });
+
+      const toggleModalBtn = document.createElement('button');
+      toggleModalBtn.className = 'btn-secondary action-bar-color-btn';
+      toggleModalBtn.innerText = '🗗 展开/收起浮窗';
+      toggleModalBtn.onclick = () => {
+        if (this.modalOverlay.style.display === 'none') {
+          this.showJokerColorModal();
+        } else {
+          this.clearModal();
+        }
+      };
+      this.actionBarButtons.appendChild(toggleModalBtn);
+
       this.showJokerColorModal();
       return;
     }
@@ -1638,7 +1670,10 @@ export class GameController {
     if (!buyActs || buyActs.length === 0) return;
     soundManager.play('card_flip');
 
-    this.modalTitle.innerHTML = '<span>💰 卡牌购买支付方案选择</span>';
+    this.initModalDraggable();
+    globalHovercard.hide(true);
+    this.modalOverlay.classList.add('modal-in-game');
+    this.buildModalHeader('💰 卡牌购买支付方案选择');
 
     let cardSummaryHtml = '';
     if (card) {
@@ -1741,6 +1776,13 @@ export class GameController {
     cancelBtn.className = 'btn-secondary';
     cancelBtn.innerText = '取消';
     cancelBtn.onclick = () => this.clearModal();
+
+    const hintSpan = document.createElement('span');
+    hintSpan.className = 'modal-drag-hint';
+    hintSpan.style.marginRight = 'auto';
+    hintSpan.innerHTML = '<span>💡 标题可自由拖拽 · 右上角可透视版图</span>';
+
+    this.modalFooter.appendChild(hintSpan);
     this.modalFooter.appendChild(cancelBtn);
 
     this.modalOverlay.style.display = 'flex';
@@ -1761,12 +1803,163 @@ export class GameController {
     });
   }
 
+  getBoardTokenCounts() {
+    const counts = { white: 0, blue: 0, green: 0, red: 0, black: 0, pearl: 0, gold: 0 };
+    if (!this.state || !this.state.board) return counts;
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 5; c++) {
+        const gem = (this.state.board[r]?.[c] || '').toLowerCase();
+        if (gem && counts[gem] !== undefined) {
+          counts[gem]++;
+        }
+      }
+    }
+    return counts;
+  }
+
+  initModalDraggable() {
+    const modalBox = this.modalOverlay?.querySelector('.modal-box');
+    if (!modalBox || this._modalDragInitialized) return;
+    this._modalDragInitialized = true;
+
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let initialLeft = 0;
+    let initialTop = 0;
+
+    const onPointerDown = (e) => {
+      if (e.target.closest('button') || e.target.closest('.modal-header-actions')) return;
+      const titleEl = e.target.closest('.modal-title');
+      if (!titleEl) return;
+
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = modalBox.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      modalBox.style.position = 'fixed';
+      modalBox.style.left = `${initialLeft}px`;
+      modalBox.style.top = `${initialTop}px`;
+      modalBox.style.margin = '0';
+      modalBox.style.transform = 'none';
+
+      document.addEventListener('pointermove', onPointerMove);
+      document.addEventListener('pointerup', onPointerUp);
+    };
+
+    const onPointerMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      let newLeft = initialLeft + dx;
+      let newTop = initialTop + dy;
+
+      const boxWidth = modalBox.offsetWidth;
+      const boxHeight = modalBox.offsetHeight;
+      const pad = 8;
+
+      newLeft = Math.max(pad, Math.min(window.innerWidth - boxWidth - pad, newLeft));
+      newTop = Math.max(pad, Math.min(window.innerHeight - boxHeight - pad, newTop));
+
+      modalBox.style.left = `${newLeft}px`;
+      modalBox.style.top = `${newTop}px`;
+    };
+
+    const onPointerUp = () => {
+      isDragging = false;
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+    };
+
+    modalBox.addEventListener('pointerdown', onPointerDown);
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Shift' && this.modalOverlay.style.display === 'flex') {
+        modalBox.classList.add('modal-peeking');
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') {
+        modalBox.classList.remove('modal-peeking');
+      }
+    });
+  }
+
+  buildModalHeader(titleText) {
+    const modalBox = this.modalOverlay.querySelector('.modal-box');
+    this.modalTitle.innerHTML = `
+      <div class="modal-title-left" title="按住可随意拖动此窗口">
+        <span class="drag-handle-icon">⠿</span>
+        <span class="modal-title-text">${titleText}</span>
+      </div>
+      <div class="modal-header-actions">
+        <button type="button" class="btn-modal-peek" id="btnModalPeek" title="悬停或点击：半透明透视后方版图信息 (快捷键: 按住Shift)">
+          <span>👁️ 透视版图</span>
+        </button>
+      </div>
+    `;
+
+    const peekBtn = document.getElementById('btnModalPeek');
+    if (peekBtn && modalBox) {
+      peekBtn.onmouseenter = () => {
+        if (!modalBox.classList.contains('modal-translucent-toggled')) {
+          modalBox.classList.add('modal-peeking');
+        }
+      };
+      peekBtn.onmouseleave = () => {
+        modalBox.classList.remove('modal-peeking');
+      };
+      peekBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isToggled = modalBox.classList.toggle('modal-translucent-toggled');
+        peekBtn.classList.toggle('active', isToggled);
+        peekBtn.innerHTML = isToggled
+          ? `<span>👁️ 退出透视</span>`
+          : `<span>👁️ 透视版图</span>`;
+      };
+    }
+  }
+
   showJokerColorModal() {
     const jokerActions = this.legalActions.filter(a => a.category === 'joker');
     if (jokerActions.length === 0) return;
 
-    this.modalTitle.innerText = '🃏 变色复制卡 (Joker) 定色选择';
-    this.modalBody.innerText = '请选择要将该万能变色卡附着到哪种已拥有加成的宝石颜色上：';
+    this.initModalDraggable();
+    globalHovercard.hide(true);
+
+    this.modalOverlay.classList.add('modal-in-game');
+    const modalBox = this.modalOverlay.querySelector('.modal-box');
+    if (modalBox) {
+      modalBox.classList.add('modal-box-joker');
+    }
+
+    this.buildModalHeader('🃏 变色复制卡 (Joker) 定色选择');
+
+    const curPlayer = this.state.players[this.currentPlayer];
+    const bonuses = curPlayer?.bonuses || [0, 0, 0, 0, 0];
+    const tokens = curPlayer?.tokens || [0, 0, 0, 0, 0, 0, 0];
+    const boardCounts = this.getBoardTokenCounts();
+
+    const cardCountsByColor = { white: 0, blue: 0, green: 0, red: 0, black: 0 };
+    (curPlayer?.cards || []).forEach(c => {
+      const col = (c.color || '').toLowerCase();
+      if (cardCountsByColor[col] !== undefined) {
+        cardCountsByColor[col]++;
+      }
+    });
+
+    this.modalBody.innerHTML = `
+      <div class="joker-guide-intro" style="font-size:0.82rem; color:#cbd5e1; line-height:1.45;">
+        请选择该变色卡附着的宝石颜色。选定后，该卡将永久提供对应颜色的 <b>+1 减免</b> 并纳入该颜色王冠/单色胜利路线：
+      </div>
+    `;
+
+    this.modalOptions.className = 'modal-options joker-options';
     this.modalOptions.innerHTML = '';
 
     jokerActions.forEach(act => {
@@ -1774,14 +1967,42 @@ export class GameController {
       const normColor = String(rawColor).toLowerCase();
       const tokenClass = COLOR_CLASSES[normColor] || `token-${normColor}`;
       const cnColor = translateColor(normColor);
+      const colIdx = COLOR_KEYS.indexOf(normColor);
+
+      const curBonus = (colIdx >= 0 && colIdx < 5) ? (bonuses[colIdx] || 0) : 0;
+      const curCards = cardCountsByColor[normColor] || 0;
+      const curTokens = (colIdx >= 0 && colIdx < 7) ? (tokens[colIdx] || 0) : 0;
+      const onBoard = boardCounts[normColor] || 0;
 
       const btn = document.createElement('div');
-      btn.className = 'gem-picker-btn';
-      btn.title = `附着为 ${cnColor}宝石 (${rawColor})`;
+      btn.className = `gem-picker-btn col-${normColor}`;
+      btn.title = `附着为 ${cnColor}宝石 (${rawColor}) - 现有减免: +${curBonus}，棋盘存量: ${onBoard}`;
       btn.innerHTML = `
-        <div class="token ${tokenClass}"></div>
-        <span style="font-size:0.8rem; font-weight:700; color:var(--text-main); margin-top:2px;">${cnColor}宝石</span>
-        <span style="font-size:0.68rem; color:var(--text-muted); text-transform:capitalize;">${rawColor}</span>
+        <div class="gem-picker-top">
+          <div class="token ${tokenClass}"></div>
+          <div class="gem-picker-names">
+            <span class="gem-picker-name">${cnColor}宝石</span>
+            <span class="gem-picker-sub">${rawColor}</span>
+          </div>
+        </div>
+        <div class="gem-picker-stats">
+          <div class="gem-stat-line">
+            <span class="gem-stat-label">我方减免:</span>
+            <span class="gem-stat-val bonus-highlight">+${curBonus}</span>
+          </div>
+          <div class="gem-stat-line">
+            <span class="gem-stat-label">已拥有卡:</span>
+            <span class="gem-stat-val">${curCards} 张</span>
+          </div>
+          <div class="gem-stat-line">
+            <span class="gem-stat-label">手中筹码:</span>
+            <span class="gem-stat-val">${curTokens} 枚</span>
+          </div>
+          <div class="gem-stat-line">
+            <span class="gem-stat-label">棋盘存量:</span>
+            <span class="gem-stat-val">${onBoard} 颗</span>
+          </div>
+        </div>
       `;
       btn.onclick = () => {
         this.clearModal();
@@ -1790,13 +2011,31 @@ export class GameController {
       this.modalOptions.appendChild(btn);
     });
 
-    this.modalFooter.innerHTML = '';
+    this.modalFooter.innerHTML = `
+      <div class="modal-drag-hint">
+        <span>💡 标题可自由拖动 · 悬停右上角“👁️透视版图”随时查看后方棋盘</span>
+      </div>
+    `;
+
     this.modalOverlay.style.display = 'flex';
   }
 
   clearModal() {
     this.modalOverlay.style.display = 'none';
     this.modalOptions.innerHTML = '';
+    this.modalOptions.className = 'modal-options';
+    this.modalOverlay.classList.remove('modal-in-game');
+    const modalBox = this.modalOverlay.querySelector('.modal-box');
+    if (modalBox) {
+      modalBox.classList.remove('modal-peeking');
+      modalBox.classList.remove('modal-translucent-toggled');
+      modalBox.classList.remove('modal-box-joker');
+      modalBox.style.position = '';
+      modalBox.style.left = '';
+      modalBox.style.top = '';
+      modalBox.style.margin = '';
+      modalBox.style.transform = '';
+    }
   }
 
   async syncFullHistory() {
@@ -1812,6 +2051,7 @@ export class GameController {
 
   async submitAction(action) {
     if (this.isActionPending) return;
+    globalHovercard.hide(true);
     this.isActionPending = true;
 
     try {

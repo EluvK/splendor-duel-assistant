@@ -219,11 +219,25 @@
   z-index: 999;
 }
 
+/* 游戏决策类模态框（变色卡定色、购卡支付方案等）：使用轻量透视背景，无模糊滤镜，绝不阻挡查看版图 */
+.modal-overlay.modal-in-game {
+  background: rgba(4, 7, 13, 0.28);
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.modal-overlay.modal-in-game .modal-box {
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+  background: rgba(18, 26, 44, 0.94);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 24px rgba(251, 191, 36, 0.22);
+}
+
 .modal-box {
   background: #141c2e;
   border: 1.5px solid rgba(251, 191, 36, 0.35);
   border-radius: 12px;
-  padding: 18px 22px;
+  padding: 16px 20px;
   max-width: 520px;
   width: 92%;
   box-shadow: 0 20px 45px rgba(0, 0, 0, 0.85), 0 0 20px rgba(251, 191, 36, 0.15);
@@ -231,6 +245,28 @@
   flex-direction: column;
   gap: 12px;
   animation: modalFadeIn 0.18s ease-out;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+/* 变色卡专属紧凑弹窗 */
+.modal-box.modal-box-joker {
+  max-width: 540px;
+  width: 94%;
+}
+
+/* 悬停或切换透视版图状态 */
+.modal-box.modal-peeking {
+  opacity: 0.08 !important;
+  pointer-events: none !important;
+  transition: opacity 0.12s ease;
+}
+
+.modal-box.modal-translucent-toggled {
+  opacity: 0.42;
+  transition: opacity 0.15s ease;
+}
+.modal-box.modal-translucent-toggled:hover {
+  opacity: 0.96;
 }
 
 @keyframes modalFadeIn {
@@ -239,14 +275,69 @@
 }
 
 .modal-title {
-  font-size: 1.05rem;
+  font-size: 1.02rem;
   font-weight: 800;
   color: var(--accent-gold);
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   padding-bottom: 8px;
+  user-select: none;
+}
+
+.modal-title-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: grab;
+}
+
+.modal-title-left:active {
+  cursor: grabbing;
+}
+
+.drag-handle-icon {
+  color: var(--accent-gold);
+  font-size: 0.95rem;
+  opacity: 0.75;
+  display: inline-flex;
+  align-items: center;
+}
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-modal-peek {
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fbbf24;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.74rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.btn-modal-peek:hover {
+  background: rgba(251, 191, 36, 0.22);
+  border-color: #fbbf24;
+  color: #fff;
+}
+
+.btn-modal-peek.active {
+  background: #f59e0b;
+  border-color: #d97706;
+  color: #000;
+  font-weight: 700;
 }
 
 .modal-body {
@@ -486,24 +577,123 @@
   box-shadow: 0 2px 8px rgba(217, 119, 6, 0.45);
 }
 
+.modal-options.joker-options {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+}
+
+@media (max-width: 620px) {
+  .modal-options.joker-options {
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  }
+}
+
 .gem-picker-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  background: #0f1523;
-  border: 1px solid #2e3b52;
-  border-radius: 8px;
-  padding: 8px 14px;
+  gap: 5px;
+  background: rgba(14, 20, 32, 0.92);
+  border: 1.5px solid #2e3b52;
+  border-radius: 10px;
+  padding: 8px 6px 7px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  box-sizing: border-box;
 }
 
 .gem-picker-btn:hover {
-  background: #1b2438;
+  background: rgba(28, 40, 64, 0.98);
   border-color: var(--accent-gold);
   transform: translateY(-2px);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 0 10px rgba(251, 191, 36, 0.25);
+}
+
+.gem-picker-btn:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.gem-picker-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.gem-picker-names {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
+.gem-picker-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.gem-picker-sub {
+  font-size: 0.64rem;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.gem-picker-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 4px;
+  font-size: 0.66rem;
+}
+
+.gem-stat-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.gem-stat-line .stat-num {
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.gem-stat-line .stat-num.bonus-highlight {
+  color: #38bdf8;
+  font-size: 0.72rem;
+}
+
+.modal-drag-hint {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.35;
+  width: 100%;
+}
+
+.action-bar-color-btn {
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+}
+
+.action-bar-color-btn:hover {
+  border-color: var(--accent-gold);
+  color: #fff;
 }
 
 .modal-footer {

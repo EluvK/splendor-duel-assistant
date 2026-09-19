@@ -329,7 +329,9 @@ class CardHovercardManager {
     this.el = null;
     this.showTimer = null;
     this.hideTimer = null;
+    this.currentTarget = null;
     this.currentCard = null;
+    this._hasBoundGlobal = false;
     if (typeof document !== 'undefined' && document.body) {
       this.initDOM();
     }
@@ -339,6 +341,7 @@ class CardHovercardManager {
     if (typeof document === 'undefined') return;
     if (document.getElementById('globalCardHovercard')) {
       this.el = document.getElementById('globalCardHovercard');
+      this.bindGlobalListeners();
       return;
     }
     if (!document.body) return;
@@ -348,30 +351,84 @@ class CardHovercardManager {
     el.style.display = 'none';
     document.body.appendChild(el);
     this.el = el;
+    this.bindGlobalListeners();
+  }
+
+  bindGlobalListeners() {
+    if (this._hasBoundGlobal) return;
+    this._hasBoundGlobal = true;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    // 任何鼠标或触摸按下（点击任意按钮、卡牌、棋盘等），立刻极速隐退浮层，杜绝残留
+    document.addEventListener('pointerdown', () => {
+      this.hide(true);
+    }, { capture: true, passive: true });
+
+    // 页面滚动、窗口失焦时立即隐藏
+    window.addEventListener('scroll', () => this.hide(true), { passive: true });
+    window.addEventListener('blur', () => this.hide(true));
   }
 
   show(targetEl, card, player) {
+    if (!targetEl || !card) return;
     if (!this.el) this.initDOM();
     if (!this.el) return;
-    if (this.hideTimer) clearTimeout(this.hideTimer);
-    if (this.showTimer) clearTimeout(this.showTimer);
+    if (this.hideTimer) {
+      clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+    }
+    if (this.showTimer) {
+      clearTimeout(this.showTimer);
+      this.showTimer = null;
+    }
+
+    this.currentTarget = targetEl;
+    this.currentCard = card;
 
     this.showTimer = setTimeout(() => {
+      // 目标元素若在延时期间已脱离 DOM（如卡牌被买走重新渲染），立刻放弃显示
+      const isAttached = typeof document !== 'undefined' && (
+        (document.body && typeof document.body.contains === 'function')
+          ? document.body.contains(this.currentTarget)
+          : (typeof document.contains === 'function' ? document.contains(this.currentTarget) : true)
+      );
+      if (!this.currentTarget || !isAttached) {
+        this.hide(true);
+        return;
+      }
       this.renderContent(card, player);
-      this.position(targetEl);
+      this.position(this.currentTarget);
       this.el.style.display = 'flex';
       this.el.classList.add('visible');
     }, 60);
   }
 
-  hide() {
-    if (this.showTimer) clearTimeout(this.showTimer);
+  hide(immediate = false) {
+    if (this.showTimer) {
+      clearTimeout(this.showTimer);
+      this.showTimer = null;
+    }
+    if (this.hideTimer) {
+      clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+    }
+    this.currentTarget = null;
+    this.currentCard = null;
+
+    if (immediate) {
+      if (this.el) {
+        this.el.classList.remove('visible');
+        this.el.style.display = 'none';
+      }
+      return;
+    }
+
     this.hideTimer = setTimeout(() => {
       if (this.el) {
         this.el.classList.remove('visible');
         this.el.style.display = 'none';
       }
-    }, 80);
+    }, 50);
   }
 
   renderContent(card, player) {
@@ -475,25 +532,33 @@ class CardHovercardManager {
       </div>
     `;
 
-    this.el.querySelector('.hovercard-left').appendChild(previewEl);
+    const leftBox = this.el.querySelector('.hovercard-left');
+    if (leftBox) {
+      leftBox.appendChild(previewEl);
+    }
   }
 
   position(targetEl) {
+    if (!targetEl || typeof targetEl.getBoundingClientRect !== 'function') return;
     const rect = targetEl.getBoundingClientRect();
-    const cardRect = this.el.getBoundingClientRect();
+    const cardRect = (this.el && typeof this.el.getBoundingClientRect === 'function')
+      ? this.el.getBoundingClientRect()
+      : { width: 360, height: 280 };
     const padding = 12;
+    const winWidth = typeof window !== 'undefined' ? (window.innerWidth || 1920) : 1920;
+    const winHeight = typeof window !== 'undefined' ? (window.innerHeight || 1080) : 1080;
 
     // 默认居于目标卡牌右侧，若溢出则居于左侧
     let left = rect.right + padding;
-    if (left + 360 > window.innerWidth) {
+    if (left + 360 > winWidth) {
       left = rect.left - 360 - padding;
     }
     if (left < padding) left = padding;
 
     let top = rect.top + (rect.height / 2) - 100;
     if (top < padding) top = padding;
-    if (top + 280 > window.innerHeight) {
-      top = window.innerHeight - 280 - padding;
+    if (top + 280 > winHeight) {
+      top = winHeight - 280 - padding;
     }
 
     this.el.style.left = `${Math.round(left)}px`;
@@ -593,6 +658,8 @@ export function renderBoard(boardData, containerEl, options = {}) {
  * 渲染卡牌列表（金字塔货架或预留卡槽）
  */
 export function renderCardsList(cards, container, options = {}) {
+  // 重新渲染卡牌列表前立即强制隐藏浮层，防止旧 DOM 节点被销毁导致无法触发 mouseleave 残留
+  globalHovercard.hide(true);
   container.innerHTML = '';
 
   // 如果提供了牌堆信息，首位放置对应的等级牌库卡背元素
@@ -665,6 +732,9 @@ export function renderCardsList(cards, container, options = {}) {
     el.onmouseleave = () => {
       globalHovercard.hide();
     };
+    el.addEventListener('pointerdown', () => {
+      globalHovercard.hide(true);
+    });
 
     const costsDetail = Object.entries(c.cost)
       .filter(([_, amount]) => amount > 0)
@@ -707,6 +777,7 @@ export function renderCardsList(cards, container, options = {}) {
         buyBtn.innerText = '💎 购买卡牌';
         buyBtn.onclick = (e) => {
           e.stopPropagation();
+          globalHovercard.hide(true);
           options.onPurchase(c, fromReserved);
         };
         overlay.appendChild(buyBtn);
@@ -718,6 +789,7 @@ export function renderCardsList(cards, container, options = {}) {
         resBtn.innerText = isPendingReserveCard ? '✖ 取消待选' : '📌 预留卡牌';
         resBtn.onclick = (e) => {
           e.stopPropagation();
+          globalHovercard.hide(true);
           options.onReserve(c);
         };
         overlay.appendChild(resBtn);
@@ -737,6 +809,7 @@ export function renderCardsList(cards, container, options = {}) {
  * 按照 5 种基础颜色分列，每列自下而上层叠只露出顶部卡头，并在列头整合永久减免 Bonus
  */
 export function renderPurchasedCards(cards, container, bonuses = [0, 0, 0, 0, 0]) {
+  globalHovercard.hide(true);
   container.innerHTML = '';
   const BASE_COLORS = ['white', 'blue', 'green', 'red', 'black'];
   const cardsByColor = {
@@ -857,6 +930,7 @@ export function renderPlayerRoyals(royals, container) {
  * 渲染中央王室卡池
  */
 export function renderRoyalsPool(royals, container, options = {}) {
+  globalHovercard.hide(true);
   container.innerHTML = '';
   if (!royals || royals.length === 0) {
     container.innerHTML = '<span style="font-size:0.7rem; color:var(--text-muted); padding:2px;">王室卡已全部被认领</span>';
