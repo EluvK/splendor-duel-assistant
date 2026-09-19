@@ -9,9 +9,22 @@ Supports:
 
 import argparse
 from pathlib import Path
+import sys
 import time
 from typing import Optional, Tuple
 import torch
+
+# 修复 Windows 控制台下 GBK 编码输出 Emoji 时崩溃的问题
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from splendor_ai._engine import evaluate_neural_match
 from splendor_ai.arena import Arena
@@ -85,6 +98,48 @@ def parse_args() -> argparse.Namespace:
         type=str,
         choices=["net", "heuristic", "random"],
         default=None,
+    )
+
+    # 全代际循环对抗赛模式 (Round-Robin Tournament)
+    parser.add_argument(
+        "--round-robin",
+        "--tournament",
+        action="store_true",
+        help="Run full round-robin tournament comparing all iter_*.pt checkpoints",
+    )
+    parser.add_argument(
+        "--ckpt-dir",
+        type=str,
+        default="checkpoints",
+        help="Directory containing checkpoints for round-robin evaluation",
+    )
+    parser.add_argument(
+        "--step",
+        type=int,
+        default=1,
+        help="Stride step for sampling checkpoints in round-robin mode (e.g. 5)",
+    )
+    parser.add_argument(
+        "--latest",
+        type=int,
+        default=None,
+        help="Only evaluate the latest N checkpoints in round-robin mode",
+    )
+    parser.add_argument(
+        "--include-heuristic",
+        action="store_true",
+        help="Include HeuristicAI in the round-robin tournament",
+    )
+    parser.add_argument(
+        "--include-best",
+        action="store_true",
+        help="Include best.pt in the round-robin tournament",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default="checkpoints/tournament_results",
+        help="Output directory for tournament CSV, JSON, and HTML reports",
     )
 
     return parser.parse_args()
@@ -194,6 +249,27 @@ def load_python_agent(
 
 def main() -> None:
     args = parse_args()
+
+    # 循环锦标赛 / 多模型对抗评测模式
+    if args.round_robin or args.tournament:
+        from tournament import run_tournament
+
+        # 若命令行未显式指定 --sims，循环赛模式默认使用 0 sims (极速纯直觉 PolicyNet 对决)
+        sims = args.sims if "--sims" in sys.argv else 0
+        # 若命令行未显式指定 --pairs，循环赛模式默认使用 25 (共 50 局严格换座对决)
+        pairs = args.pairs if "--pairs" in sys.argv else 25
+
+        run_tournament(
+            ckpt_dir=args.ckpt_dir,
+            pairs=pairs,
+            sims=sims,
+            step=args.step,
+            latest=args.latest,
+            include_heuristic=args.include_heuristic,
+            include_best=args.include_best,
+            out_dir=args.out_dir,
+        )
+        return
 
     if args.profile:
         from profile_ckpt import run_benchmark
